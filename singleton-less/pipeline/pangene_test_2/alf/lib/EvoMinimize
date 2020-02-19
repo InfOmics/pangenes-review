@@ -1,0 +1,342 @@
+#
+#	Minimization algorithm based on EvolutionaryOptimization
+#
+#	Uses the functional, the gradient in an optimal way
+#	This is a rewriting of the original EvoMinimize
+#
+#	Gaston H. Gonnet (Oct 5th, 2010)
+#
+
+
+# class to hold n-dimensional points and their values
+ndimPoint := proc( functional:numeric, x:list(numeric),
+	gradient:{0,list(numeric)},
+	hessian:{0,MatrixDecomposition} )
+if nargs=2 then noeval(procname(functional,x,0,0))
+elif nargs=3 then noeval(procname(functional,x,gradient,0))
+elif nargs=4 then noeval(procname(args))
+else error('invalid number of arguments') fi end:
+CompleteClass( ndimPoint );
+
+
+
+# class to hold the decomposition (Cholesky or eigendecomposition)
+# of a hessian matrix
+MatrixDecomposition := proc(
+	original:matrix(numeric),
+	CholeskyR:{0,matrix(numeric)},
+	Lambda:{0,array(numeric)},
+	Vt:{0,matrix(numeric)} )
+local V;
+if nargs=1 then
+    if length(original) <> length(original[1]) then
+	error('matrix has to be square and non-null') fi;
+    R := traperror(Cholesky(original));
+    if type(R,matrix(numeric)) then noeval(procname(original,R,0,0))
+    else lam := Eigenvalues( original, V );
+	 noeval(procname(original,0,lam,transpose(V)))
+    fi
+elif nargs=4 then noeval(procname(args))
+else error('invalid number of arguments') fi
+end:
+CompleteClass( MatrixDecomposition );
+
+LinearSolve := proc( A:{matrix(numeric),MatrixDecomposition}, b:array(numeric) )
+if type(A,matrix) then
+     n := length(A);
+     if n <> length(A[1]) then error('matrix has to be square and non-null')
+     elif n <> length(b) then error('dimensions of A and x differ') fi;
+     GaussElim(A,b)
+elif A[CholeskyR] <> 0 then
+     R := A[CholeskyR];
+     n := length(R);
+     # A * x = b;    R * R' * x = b;    R' * x = y;    R * y = b
+     y := CreateArray(1..n);
+     for i to n do y[i] := (b[i]-sum(R[i,j]*y[j],j=1..i-1)) / R[i,i] od;
+     x := CreateArray(1..n);
+     for i from n by -1 to 1 do
+	 x[i] := (y[i] - sum(R[j,i]*x[j], j=i+1..n)) / R[i,i]
+     od;
+     x
+else vt := A['Vt'];
+     n := length(vt);
+     d := vt*b;
+     sum( vt[i] * (d[i] / A['Lambda',i]), i=1..n )
+fi
+end:
+
+
+EvoMinimize := proc( f_:procedure, f1_:procedure, f2_:procedure,
+	inipoint_:list(numeric), inieps_:positive, finaleps_:positive )
+global EvoMinimize_Parameters;
+
+# copy all parameters to locals to make them accessible by lexical
+# scoping to the rest of the functions
+f := f_;  f1 := f1_;  f2 := f2_;  inipoint := copy(inipoint_);
+inieps := inieps_;  finaleps := finaleps_;  sfinaleps := sqrt(finaleps);
+
+n := length(inipoint);
+
+# this code is identical to Brent's minimization except for the
+# first phase of selection of a second valid point.
+FollowLine := proc( p1:ndimPoint, h:list(numeric) ; (nt=3):posint )
+external Curreps;
+    # initialization
+    a := 0;  fa := p1['functional'];
+    b := 1;
+    to nt do
+	fb := traperror(f(p1['x']+b*h));
+	if printlevel >= 3 then lprint( 'FollowLine: init', b, fb ) fi;
+	if type(fb,numeric) then break fi;
+	c := b;
+	b := .3819660112501051518 * b;
+    od;
+    if not type(fb,numeric) then return(FAIL) fi;
+    if fa < fb then
+	t := a;  a := b;  b := t;
+	t := fa;  fa := fb;  fb := t;
+    fi;
+
+    # exponential search
+    if a=0 and b < 1 then # it is already done above
+    else c := ( 1.618033988749894848*b - a ) * 1.618033988749894848;
+	 to nt+2 do
+	     fc := traperror(f(p1['x']+c*h));
+	     if printlevel >= 3 then lprint( 'FollowLine: exps', c, fc ) fi;
+	     if not type(fc,numeric) or fc >= fb then break fi;
+	     a := b;  fa := fb;
+	     b := c;  fb := fc;
+	     c := ( 1.618033988749894848*b - a ) * 1.618033988749894848;
+	 od
+    fi;
+
+    # minimization (just do 5 steps)
+    to FollowLine_nmin do
+	x := a+c-b;
+	fx := traperror(f(p1['x']+x*h));
+	if printlevel >= 3 then lprint( 'FollowLine: min', x, fx ) fi;
+	if type(fx,numeric) and fx <= fb then
+	     a := b;  b := x;  fa := fb;  fb := fx;
+	else c := a;  a := x;  fc := fa;  fa := fx;
+	fi;
+    od;
+
+    if fb >= p1['functional'] or b=0 then
+	 Curreps := max(inieps*1e-8,Curreps*0.9);  FAIL
+    else if |b| < 1 then Curreps := max(inieps*1e-8,Curreps*0.9)
+	 elif |b| > 1 then Curreps := min(10*inieps,1.1*Curreps) fi;
+	 ndimPoint(fb,p1['x']+b*h,0,0)
+    fi
+end:
+
+
+
+# Apply newton's method when we are near final convergence
+# to profit from a good hessian
+RepeatNewton := proc( p10:ndimPoint, he:MatrixDecomposition )
+p1 := p10;
+if p1['hessian'] <> 0 or he[CholeskyR]=0 then return(FAIL) fi;
+sd := p1['gradient'];
+if sd=0 then
+    sd := traperror(f1(p1['x']));
+    if not type(sd,array(numeric,n)) then return(FAIL) fi;
+    p1['gradient'] := sd
+fi;
+nsd1 := sqrt(sd^2);
+p0 := p1;
+if nsd1 < sfinaleps then return(Finished(p1)) fi;
+for iter do
+    inc := LinearSolve(he,sd);
+
+    lprint( 'RepeatNewton: FollowLine( p1, -inc )' );
+    p2 := FollowLine( p1, -inc );
+    if p2=FAIL then return(p1) fi;
+
+    sd := traperror(f1(p2['x']));
+    if not type(sd,array(numeric,n)) then return(p2) fi;
+    p2['gradient'] := sd;
+    nsd2 := sqrt(sd^2);
+    if printlevel >= 3 then
+	printf( 'RepeatNewton: f=%.12g, |f1|=%g, improv=%g\n',
+	    p2['functional'], nsd2, nsd2/nsd1 ) fi;
+    if nsd2 < sfinaleps then return(Finished(p2))
+    elif nsd2 > RepeatNewtonFactor * nsd1 then return(p2) fi; # did not shrink enough
+    p1 := p2;  nsd1 := nsd2
+od;
+end:
+
+
+NewtonSpectral := proc( p1:ndimPoint )
+    sd := p1['gradient'];
+    if sd=0 then
+	sd := traperror(f1(p1['x']));
+	if not type(sd,array(numeric,n)) then return(FAIL) fi;
+	p1['gradient'] := sd
+    fi;
+    for i to n while |sd[i]| <= sfinaleps*|p1['x',i]| do od;
+    if i > n then return( Finished(p1) ) fi;
+
+    he := p1['hessian'];
+    if he=0 then
+	he := traperror(f2(p1['x']));
+	if not type(he,array(numeric,n,n)) then return(FAIL) fi;
+	he := MatrixDecomposition(he);
+	p1['hessian'] := he
+    fi;
+
+    if he['CholeskyR'] = 0 then
+	lam := he['Lambda'];
+	epslam := 100*DBL_EPSILON*max( seq(|w|,w=lam) );
+	Vt := he['Vt'];
+	d := -Vt*sd;
+	if sum( If( w < -epslam, 1, 0 ), w=lam ) = 0 then
+	    # the non positive-definitiveness is too weak (or zero)
+	    # use standard newton in the significant directions
+	    inc := sum( [seq( If( lam[i]>=epslam, Vt[i]*d[i]/lam[i], NULL),
+		i=1..n )]);
+	    if printlevel >= 3 then printf( 'almost positive-definite\n' ) fi;
+	    p2 := FollowLine( p1, inc, max(n,10) );
+	    return( If( not type(p2,ndimPoint) or
+			p2['functional'] >= p1['functional'], FAIL, p2 ))
+	fi;
+	incsd := sum( [seq( If( lam[i]<=0, Vt[i]*d[i], NULL), i=1..n )]);
+	if printlevel >= 3 then
+	    printf( '\nNewtonSpectral: %d negative eigenvalues\n',
+		sum( If(w<=0,1,0), w=lam) ) fi;
+	p2 := FollowLine( p1, incsd, max(n,10) );
+	if not type(p2,ndimPoint) or p2['functional'] >= p1['functional'] then
+	    # if it fails, it may have gone over the minimum, try with
+	    # a much smaller increment
+	    p2 := FollowLine( p1, min(Curreps,1e-4)*incsd, max(n,10) );
+	    if not type(p2,ndimPoint) or p2['functional'] >= p1['functional']
+		then return(FAIL) fi
+	fi;
+	return( p2 )
+    fi;
+
+    # case where the hessian is positive definite
+    if printlevel >= 3 then
+	lprint( '\nNewtonSpectral, hessian positive definite') fi;
+    inc := LinearSolve(he,-sd);
+    r := FollowLine( p1, inc, max(n,10) );
+    if not type(r,ndimPoint) then r := p1 fi;
+
+    # if during a normal Newton step the increment is around 1,
+    # then repeat Newton, as it is likely to be in convergence
+    s1 := sum(r['x']) - sum(p1['x']);  s2 := sum(inc);
+    if s2 <> 0 and s1/s2 > 0.5 and s1/s2 < 2 then
+	return( RepeatNewton(r,he) ) fi;
+
+    if s1=0 then
+	if printlevel >= 3 then lprint('Cholesky gave a 0 increment') fi;
+	r := FollowLine( p1, 1e-4*inc, max(n,15) );
+	if not type(r,ndimPoint) then
+	    lprint('Cholesky did not succeed');
+	    retrn(r) fi;
+    fi;
+
+    for i to n while |inc[i]| <= finaleps*|p1['x',i]| do od;
+    if i > n then If( type(r,ndimPoint), Finished, Finished(r) ) else r fi
+end:
+
+
+# create initial set of solutions
+fx := traperror(f(inipoint));
+if type(fx,numeric) then Pop := [ndimPoint(fx,inipoint,0,0)]
+else Pop := [] fi;
+to 9 do
+    p1 := NewIniNormal();
+    if type(p1,ndimPoint) then Pop := append(Pop,p1) fi
+od;
+Curreps := inieps;
+
+Pop := sort(Pop);
+if Pop=[] then error('cannot find initial values') fi;
+Pop := [Pop[1]];
+NSlast := 0;
+Norms := [];
+
+for iter do
+    Pop := sort(Pop);
+    printf( 'iter %d, Curreps=%.3g, %d points: %a\n', iter, Curreps,
+	length(Pop), [seq(w['functional'],w=Pop)] );
+    if Curreps < sfinaleps then break fi;
+
+    # always compute the gradient of the first one
+    p1 := Pop[1];
+    sd := p1['gradient'];
+    if sd=0 then
+	 sd := traperror(f1(p1['x']));
+	 if not type(sd,array(numeric,n)) then
+	      if iter > 100 then
+		   error( 'failed to evaluate gradient for', p1 ) fi;
+	      Pop := Pop[2..-1]
+	 fi;
+	 p1['gradient'] := sd
+    fi;
+    for i to n while |sd[i]| <= sfinaleps*|p1['x',i]| do od;
+    if i > n then break fi;
+    NormSD := sqrt(sd^2);
+    if length(Norms) < 7 then Norms := append(Norms,NormSD) fi;
+    if iter=1 then AveNormSD := NormSD
+    else AveNormSD := AveNormSD*AveNormSD_Damp + (1-AveNormSD_Damp)*NormSD fi;
+    printf( '|sd|=%g, ave(|sd|)=%g\n', NormSD, AveNormSD );
+
+    # try NewtonSpectral
+    if iter=6 then
+	 Norms := sort(Norms);
+	 AveNormSD6 := Norms[round((length(Norms)+1)/2)]
+    fi;
+    if iter > NSlast+NoSpectralBeforeSD and (iter > MinIterBeforeNewton or
+	iter > 6 and AveNormSD < AveNormSD_lim*AveNormSD6 ) then
+	 printf( 'NewtonSpectral: %.12g, |sd|=%g\n', p1['functional'], NormSD );
+	 NSlast := iter;
+	 p2 := NewtonSpectral(p1);
+	 if type(p2,Finished(ndimPoint)) then Pop := [p2[1]];  break
+	 elif type(p2,ndimPoint) then Pop := [p2,op(Pop)];  next
+	 fi
+    fi;
+
+    dir := -Curreps / NormSD * sd;
+
+    # Gram-Schmidt orthogonalization of sd
+    for i to length(Pop)-1 do
+	dir0 := Pop[i,'x'] - Pop[i+1,'x'];
+	alpha := dir*dir0 / dir0^2;
+	printf( 'orthogonalization between %.12g and %.12g, cos=%g\n',
+	    Pop[i,'functional'], Pop[i+1,'functional'],
+	    alpha*sqrt(dir0^2)/sqrt(dir^2) );
+	dir := dir - alpha*dir0
+    od;
+
+    # Steepest descent
+    p2 := FollowLine( p1, dir, 10 );
+    if type(p2,ndimPoint) and p2['functional'] < p1['functional'] then
+	 Pop := [p2,op(Pop)];
+    elif length(Pop) > 1 then Pop := [Pop[1]]
+    else Curreps := Curreps/100 fi;
+
+    if length(Pop) >= StepsForCG then
+	 # apply conjugate gradient step
+	 p1 := Pop[1];
+	 lprint( 'Conjugate gradient step' );
+	 p2 := FollowLine( p1, p1['x'] - Pop[-1,'x'], 10 );
+
+	 if type(p2,ndimPoint) and p2['functional'] < p1['functional'] then
+	      Pop := [p2]
+	 else Pop := Pop[1..-2] fi;
+    fi;
+od;
+
+r := Pop[1];
+[r['x'],r['functional']]
+end:
+
+# global parameter used to tune the algorithm
+if not type(FollowLine_nmin,posint) then FollowLine_nmin := 5 fi:
+if not type(StepsForCG,posint) then StepsForCG := 5 fi:
+if not type(NoSpectralBeforeSD,posint) then NoSpectralBeforeSD := 10 fi:
+if not type(RepeatNewtonFactor,numeric) then RepeatNewtonFactor := 0.75 fi:
+if not type(MinIterBeforeNewton,posint) then MinIterBeforeNewton := 100 fi:
+if not type(AveNormSD_lim,positive) then AveNormSD_lim := 0.3 fi:
+if not type(AveNormSD_Damp,positive) then AveNormSD_Damp := 0.85 fi:

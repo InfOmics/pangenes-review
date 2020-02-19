@@ -1,0 +1,17 @@
+#
+#	Sort function with a function which has a single argument
+#	Done externally to save n*log(n) computations of the function
+#				Gaston H. Gonnet (Oct 31, 2004)
+sort_1arg := proc( l, p )
+ll := length(l);
+if type(l,list(numeric)) and ll < 2^17-1 then r := CreateArray(1..ll)
+else r := CreateArray(1..ll,'') fi;
+
+# do the p() evaluation in a for-loop to allow gc when needed
+pairs := [seq( [l[i],i], i=1..ll )];
+for z in pairs do z[1] := p(z[1]) od;
+
+i := 1;
+for z in sort( pairs ) do r[i] := l[z[2]];  i := i+1 od;
+r
+end:

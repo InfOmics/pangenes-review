@@ -1,0 +1,167 @@
+LSBestSum := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric )
+description
+'Least Squares approximation using the best sum of independent variables.
+LSBestSum finds the best pair of variables which can be replaced by
+their sum.  This pair is best in the sense of increasing the norm of
+the residuals by the least amount.
+
+ Problem:  Given a matrix of A (dim n x m) and a vector b (dim n), we want
+	to find a vector x (dim m)  such that Ax ~ b, where x has two values
+	which are identical.  This approximation is in the least squares
+	sense, i.e. ||Ax-b||^2 is minimum.
+
+ The calling arguments are:
+	AtA is a matrix (dim m x m) which is the product A^t * A
+	btA is a vector (dim m) which is the product b^t * A
+	btb is the norm squared of b, i.e. b^t * b
+
+ Output: The output is a list with three values:  [i,j,norm], where
+	i and j are integers and are the indices of the variables which
+	   are replaced by their sum.
+	norm is the value of the norm of the residuals with this sum,
+	   i.e. norm = ||Ax-b||^2
+
+See Also: ?LSBestSumDelete  ?LSBestDelete';
+
+#				Gaston H. Gonnet (Aug 1998)
+#	code generation from file SvdReduce.test.M
+
+m := length(AtA);
+if m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<2 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+     fi;
+
+Gi := matrix_inverse(AtA);
+x := Gi * btA;
+xbtA := x*btA;
+xs := CreateArray(1..m);
+for i to m do xs[i] := [x[i],i] od;
+xs := sort( xs, x->x[1] );
+
+nmin := DBL_MAX;
+
+for k from 2 to m do
+    i := xs[k-1,2];
+    j := xs[k,2];
+    htx := (x[i]-x[j])^2 / (Gi[i,i]-2*Gi[i,j]+Gi[j,j]);
+    if htx < nmin then imin := i;  jmin := j;  nmin := htx fi;
+    od;
+    
+[imin, jmin, btb-xbtA+nmin]
+end:
+
+LSBestDelete := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric )
+description
+'Least Squares approximation removing the least significant variable.
+LSBestDelete finds the least significant independent variable to remove.
+This variable is least significant in the sense that increases the norm
+of the residuals by the least amount.  This is the reverse process of
+Stepwise regression, where we start with all the independent variables
+and remove the one with the least norm increase at a time.
+
+ Problem:  Given a matrix of A (dim n x m) and a vector b (dim n), we want
+	to find a vector x (dim m)  such that Ax ~ b, where x has one entry
+	which is zero.  This approximation is in the least squares sense,
+	i.e. ||Ax-b||^2 is minimum.
+
+ The calling arguments are:
+	AtA is a matrix (dim m x m) which is the product A^t * A
+	btA is a vector (dim m) which is the product b^t * A
+	btb is the norm squared of b, i.e. b^t * b
+
+ Output: The output is a list with two values:  [i,norm], where
+	i is the index of the variable removed
+	norm is the value of the norm of the residuals without this variable
+	   i.e. norm = ||Ax-b||^2
+
+See Also: ?LSBestSum  ?LSBestSumDelete';
+
+#				Gaston H. Gonnet (Aug 1998)
+#	code generation from file SvdReduce.test2.M
+
+m := length(AtA);
+if m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<2 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+     fi;
+
+Gi := matrix_inverse(AtA);
+x := Gi * btA;
+xbtA := x * btA;
+nmin := DBL_MAX;
+
+for i to m do
+    htx := x[i]^2/Gi[i,i];
+    if htx < nmin then imin := i;  nmin := htx fi;
+    od;
+    
+[imin, btb-xbtA+nmin]
+end:
+
+
+LSBestSumDelete := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric )
+description
+'Least Squares approximation using the best sum of independent variables
+or best deleted variable.
+LSBestDelete finds the best pair of variables which can be replaced by
+their sum or the best variable that can be removed.  This is best in the
+sense of increasing the norm of the residuals by the least amount.
+This function does the work of both LSBestSum and LSBestDelete in one
+pass.
+
+ Problem:  Given a matrix of A (dim n x m) and a vector b (dim n), we want
+	to find a vector x (dim m)  such that Ax ~ b, where x has two values
+	which are identical or one value which is zero.  This approximation
+	is in the least squares sense, i.e. ||Ax-b||^2 is minimum.
+
+ The calling arguments are:
+	AtA is a matrix (dim m x m) which is the product A^t * A
+	btA is a vector (dim m) which is the product b^t * A
+	btb is the norm squared of b, i.e. b^t * b
+
+ Output: The output is a list with three values:  [i,j,norm], where
+	i and j are integers and are the indices of the variables which
+	   are replaced by their sum.  If i=0 then j is the variable to
+	   be removed.
+	norm is the value of the resulting norm of the residuals,
+	   i.e. norm = ||Ax-b||^2
+
+See Also: ?LSBestSum  ?LSBestDelete';
+
+#				Gaston H. Gonnet (Aug 1998)
+#	code generation from file SvdReduce.test.M
+
+m := length(AtA);
+if m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<2 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+     fi;
+
+Gi := matrix_inverse(AtA);
+x := Gi * btA;
+xbtA := x * btA;
+xs := CreateArray(1..m);
+for i to m do xs[i] := [x[i],i] od;
+xs := sort( xs, x->x[1] );
+
+imin := 0;  jmin := xs[1,2];
+nmin := x[jmin]^2/Gi[jmin,jmin];
+
+for k from 2 to m do
+
+    i := xs[k-1,2];
+    j := xs[k,2];
+
+    htx := x[j]^2/Gi[j,j];
+    if htx < nmin then imin := 0;  jmin := j;  nmin := htx fi;
+
+    htx := (x[i]-x[j])^2 / (Gi[i,i]-2*Gi[i,j]+Gi[j,j]);
+    if htx < nmin then imin := i;  jmin := j;  nmin := htx fi;
+
+    od;
+    
+if imin>0 and x[imin]*x[jmin] < 0 then
+    error('assertion failed, contact author') fi;
+[imin, jmin, btb-xbtA+nmin]
+end:

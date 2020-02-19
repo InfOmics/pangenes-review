@@ -1,0 +1,74 @@
+#
+# MultiplePrint( Texts:array(string), Names:array(string) )
+#
+# Print the result of a multiple alignment (labeled by Names)
+#
+#				Gaston H. Gonnet (Feb 15, 1991)
+#
+MultiplePrint := proc( Ptt:[array(array),array(string)], Names:array(string) )
+
+PV := Ptt[1];  Texts := Ptt[2];
+n := length(Texts);
+lt := length(Texts[1]);
+if n <> length(Names) then error('length mismatch') fi;
+
+# Compute the bottom line
+botlin := CreateString(lt);
+for i to lt do
+    for j from 2 to n while Texts[j,i] = Texts[1,i] do od;
+    if j>n then botlin[i] := '*'
+    elif MostProbAA(PV[i]/sum(PV[i])) <> '.' then botlin[i] := '.' fi
+    od;
+
+if assigned(Title) then printf('Multiple alignment for %s\n\n', Title) fi;
+lprint(date());
+width := Set(screenwidth=80);  Set(screenwidth=width);
+width := width-6;
+maxwidth := 0;
+lines := 3;
+for i to n do maxwidth := max(maxwidth,lt) od;
+
+for origoffs by width to maxwidth do
+
+    printf('\n     %d ..%d\n',origoffs,origoffs+width-1);
+    for j to n do
+	printf('%2.2s - %s\n', Names[j],
+	    Texts[ j, origoffs .. min(origoffs+width-1,lt)] )
+	od;
+    printf('     %s\n', botlin[ origoffs..min(origoffs+width-1,lt) ] );
+    lines := lines + n + 2;
+    if lines >= 61-n and n <= 61 then printf('\n');  lines := 0 fi;
+    od;
+
+NULL
+end:
+#
+#  PrintScript: Print (into a file) the standard information
+#	of the result of an small all-against-all matching
+#
+#				Gaston H Gonnet (Mar 1991)
+#
+if not type(DB,database) or
+   not type(AllAll,array(array)) or
+   not type(Ptt,[array(array(numeric,20)),array(string)]) then
+	error('invalid DB, AllAll or Ptt')
+else Set(quiet);
+     OpenWriting( DB[FileName] . '.print' );
+
+     ne := length(AllAll);
+     NewNames := CreateArray(1..ne):
+     for i to ne do NewNames[i] := DB[entry,i] od:
+     CrossReference(NewNames);
+     printf('\n');
+
+     lab := [];
+     for z in Leaves(tree) do lab := append(lab,z[1]) od:
+     MultiplePrint(Ptt,lab);
+     printf('\n');
+
+     PrintPV(Ptt[1],0.05);
+
+     OpenWriting(terminal);
+     Set(quiet=false);
+
+     fi:

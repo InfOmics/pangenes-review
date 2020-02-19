@@ -1,0 +1,367 @@
+#
+#	Best Basis linear regression, as in Scientific Computation
+#	by Gonnet and Scholl
+#
+SvdBestBasis := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric,
+	NData:posint, names:list(string), k:integer, svmin:numeric, try:integer,
+	startset:list(posint) )
+global SvdBestHash, SvdHashSig, SvdGoodBases, SvdGoodPerms, SvdBest_A,
+    SvdBest_d, Svd_svmin;
+
+#				Gaston H. Gonnet (Mar 1997)
+#	Extensive changes	Gaston H. Gonnet (May 1997)
+#	Avoid recomputing G.E.	Gaston H. Gonnet (Jun 1998)
+
+if nargs=6 then return( procname(args,0,15) )
+elif nargs=7 then return( procname(args,15) ) fi;
+m := length(AtA);
+if m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<2 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+elif length(names) <> m then error('wrong number of names')
+elif k<1 or k>m then error('incorrect value for k')
+elif nargs=9 and (max(startset) > m or length(startset) <> k) then
+     error('incorrect range in startset')
+elif k<=2 then return( SvdBestBasisExact(args[1..7]) )
+elif k=m then return( SvdAnalysis(AtA,btA,btb,NData,names,svmin) ) fi;
+Svd_svmin := svmin;
+
+
+# return the best until try non-improvements
+    minerr := DBL_MAX;
+    SvdBestHash := CreateArray(1..2,1..131063);
+    SvdHashSig := CreateArray(1..m):
+    for i to m do SvdHashSig[i] := round(Rand()*2147483647) od:
+    SvdGoodBases := SvdGoodPerms := NULL;
+    SvdBest_A := CreateArray(1..k,1..k);  SvdBest_d := CreateArray(1..k);
+    if printlevel > 1 then
+	printf( 'running random permutation optimizations\n' ) fi;
+    itim := 1;
+    for it while it-itim < try do
+	if printlevel>1 then printf(
+	     '%d local minima, %d iters since last improvement, %d iters',
+		 length([SvdGoodBases]), it-itim, it-1 );
+	    if length([SvdGoodBases]) < it-1 and length([SvdGoodBases]) > 0 then
+		printf( ',  %d estimated minima', MaxLikelihoodSize( it-1,
+		    length([SvdGoodBases]) )) fi;
+	    printf( '\n' )
+	    fi;
+	if it=1 and nargs=9 then rp := startset
+	else rp := CreateRandPermutation(m) fi;
+	t := SvdBestBasis2( AtA, btA, btb, NData, names, k, rp[1..k] );
+	if length(t)=1 then next fi;
+	err := t[1,Norm2Err];
+	if err < minerr then minerr := err;  best := op(1,t);  itim := it+1 fi;
+	if printlevel>2 then print(op(1,t)) fi;
+	SvdGoodBases := SvdGoodBases, op(1,t);
+	SvdGoodPerms := SvdGoodPerms, op(2,t);
+	od;
+    SvdGoodBases := [SvdGoodBases];
+    SvdGoodPerms := [SvdGoodPerms];
+    return( best )
+end:
+
+
+SvdBestBasis2 := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric,
+	NData:posint, names:list(string), k:integer, bestv:list(integer) )
+global SvdBestHash;
+option internal;
+description 'find a local minimum starting from a given permutation';
+
+i0 := SvdBestSearch(bestv);
+if SvdBestHash[2,i0] <> 0 then return( [DBL_MAX] ) fi;
+if printlevel > 2 then
+     printf( 'transpose(b)*b = %.6g\n', btb );
+     printf( 'initial permutation (|r|^2=%.6g) includes variables:\n',
+	 btb+SvdBestBasis3( AtA, btA, bestv, k, i0 ) );
+     for i to k do printf( '  %s', names[bestv[i]] ) od;
+     printf( '\n' );
+     fi;
+
+t := SvdBestBasis5( AtA, btA, btb, NData, names, bestv );
+if t=repeated then
+      if printlevel>2 then printf( 'early detection of repeat\n' ) fi;
+      return( [DBL_MAX] )
+elif type(t,list) then return( [SvdBestBasis4( AtA, btA, btb,
+	NData, names, bestv, k ), bestv] ) fi;
+
+if printlevel > 2 then printf( 'singular AtA, running Gram-Schmidt\n' ) fi;
+m := length(AtA);
+# run Gram-Schmidt to select a new random permutation
+GS := nperm := [];
+for i in CreateRandPermutation(m) while length(GS) < k do
+    v := AtA[i];
+    v2 := v*v;
+    if v2=0 then next fi;
+    v := v / sqrt(v2);
+    for j to length(GS) do v := v - (v*GS[j]) * GS[j] od;
+    v2 := v*v;
+    if v2 > 1e-24 then
+	 GS := append( GS, v/sqrt(v2) );
+	 nperm := append(nperm,i)
+    fi;
+od:
+if length(GS) < k then error('cannot find an independent basis of size '.k) fi;
+SvdBestBasis2( AtA, btA, btb, NData, names, k, nperm )
+end:
+
+
+
+SvdBestBasis3 := proc( AtA, btA, perm, k, i0 )
+local V;
+global SvdBestHash, SvdBest_A, SvdBest_d;
+option internal;
+
+if SvdBestHash[2,i0] <> 0 then return( SvdBestHash[2,i0] ) fi;
+for i to k do
+    SvdBest_d[i] := btA[perm[i]];
+    AtAi := AtA[perm[i]];
+    for j from i to k do
+	SvdBest_A[i,j] := SvdBest_A[j,i] := AtAi[perm[j]] od od;
+
+d := traperror(GaussElim(SvdBest_A,SvdBest_d));
+if d <> lasterror then
+    r := SvdBest_A*d-SvdBest_d;
+    maxerr := 0;
+    for i to k do if SvdBest_d[i] <> 0 then
+	maxerr := max( maxerr, abs(r[i]/SvdBest_d[i]) ) fi od;
+    if maxerr < 3000*DBL_EPSILON then
+	err := -SvdBest_d*d;  SvdBestHash[2,i0] := err;  return(err) fi
+    fi;
+lambda := Eigenvalues(SvdBest_A,V);
+SvdBest_d := SvdBest_d * V;
+svmin := abs(lambda[k])*1000*DBL_EPSILON;
+err := 0;
+for i to k do if lambda[i] > svmin then
+    err := err - SvdBest_d[i]^2/lambda[i] fi od;
+SvdBestHash[2,i0] := err
+end:
+
+
+SvdBestBasis4 := proc( AtA, btA, btb, NData, names, perm, k )
+global SvdBest_A, SvdBest_d;
+option internal;
+
+nam := CreateArray(1..k);
+for i to k do
+    SvdBest_d[i] := btA[perm[i]];
+    nam[i] := names[perm[i]];
+    AtAi := AtA[perm[i]];
+    for j from i to k do
+	SvdBest_A[i,j] := SvdBest_A[j,i] := AtAi[perm[j]] od od;
+
+r := SvdAnalysis(SvdBest_A,SvdBest_d,btb,NData,nam,Svd_svmin);
+
+r[SolutionVector] := CreateArray(1..length(AtA));
+for z in r[SensitivityAnalysis] do
+    i := SearchArray(z[1],names);
+    if i < 1 then error('should not happen') fi;
+    r[SolutionVector,i] := z[2]
+    od;
+r
+end:
+
+
+#
+#  Compute the local optimal permutation using an O(k^2) algorithm
+#   return the new best permutation or FAIL or repeated
+#
+#				Gaston H.Gonnet (June 1998)
+#
+SvdBestBasis5 := proc( AtA, btA, btb, NData, names, perm )
+global SvdBestHash;
+option internal;
+
+k := length(perm);
+n := length(AtA);
+b := CreateArray(1..k-1):
+c := CreateArray(1..k-1):
+A := CreateArray(1..k-1,1..k-1):
+inp := CreateArray(1..n):
+
+for i to k do inp[perm[i]] := 1 od;
+
+for i to k-1 do
+    AtAp := AtA[perm[i+1]];
+    for j from i to k-1 do A[i,j] := A[j,i] := AtAp[perm[j+1]] od;
+    b[i] := btA[perm[i+1]];
+    od:
+
+lastchange := 0;
+j0 := 1;
+
+do  if j0=lastchange then return(perm) fi;
+
+    pk := perm[j0];
+    inp[pk] := 0;
+
+    Ainv := traperror(matrix_inverse(A));
+    if Ainv=lasterror then return(FAIL) fi;
+    cond := max(max(A),-min(A)) * max(max(Ainv),-min(Ainv));
+    if cond > 3e8 then
+	if printlevel > 2 then
+	     printf('SvdBestBasis: condition number too high: %g\n', cond) fi;
+	return(FAIL) fi;
+    A1b := Ainv*b;
+    btA1b := b*A1b;
+
+    lowest := DBL_MAX;
+    berr := 0;
+    for pk to n do if inp[pk]=0 then
+
+	j := 0;  AtAp := AtA[pk];
+	for i to k do if i<>j0 then j := j+1;  c[j] := AtAp[perm[i]] fi od;
+	c0 := AtA[pk,pk];
+	b0 := btA[pk];
+
+	A1c := Ainv*c;
+	bA1c := b*A1c;
+	cA1b := c*A1b;
+	den := (c0 - c*A1c);
+	if |den| <= 100*DBL_EPSILON*|c0| then next fi;
+
+	x0 := (b0 - cA1b) / den;
+	nr := (bA1c-b0)*x0 - btA1b;
+	err := ( (abs(bA1c)+abs(b0))*(abs(b0)+abs(cA1b))/abs(den) +
+	    abs(btA1b) ) * DBL_EPSILON;
+	if abs(nr-lowest) < err+berr then
+	     if err<berr then lowest := nr;  bpk := pk;  berr := err fi
+	elif nr < lowest then lowest := nr;  bpk := pk;  berr := err fi;
+
+	fi od;
+
+    inp[bpk] := 1;
+    if perm[j0] <> bpk then
+	if printlevel > 2 then
+	    printf( 'norm decreased to %.7f,  %s --> %s (%d,%d)\n',
+		btb+lowest, names[perm[j0]], names[bpk], j0, bpk ) fi;
+	perm[j0] := bpk;
+	lastchange := j0;
+	i0 := SvdBestSearch(perm);
+	if SvdBestHash[2,i0] <> 0 then return( 'repeated' ) fi;
+	SvdBestHash[2,i0] := lowest
+	fi;
+
+    # swap columns/rows
+    if j0 < k then
+	 j := 0;  AtAp := AtA[bpk];
+	 for i to k do if i<>j0+1 then
+	     j := j+1;  A[j,j0] := A[j0,j] := AtAp[perm[i]] fi od;
+	 b[j0] := btA[bpk];
+	 j0 := j0+1
+    elif lastchange = 0 then return(perm)
+    else for i to k-1 do
+	     AtAp := AtA[perm[i+1]];
+	     for j from i to k-1 do A[i,j] := A[j,i] := AtAp[perm[j+1]] od;
+	     b[i] := btA[perm[i+1]];
+	     od:
+	 j0 := 1
+	 fi;
+
+    od;
+end:
+
+
+
+SvdBestSearch := proc( p )
+global SvdBestHash;
+option internal;
+description 'search the permutation in the global hash table SvdBestHash,
+  return the index where it is found or where it should be inserted';
+
+  h := sum( SvdHashSig[p[i]], i=1..length(p) );
+  i0 := mod( round( abs(h) ), 131063 )+1;
+  i1 := mod( round( 3*abs(h) ), 131063-1 );
+
+  mx := -DBL_MAX;
+  to 20 do
+	if SvdBestHash[1,i0] = 0 then
+	     SvdBestHash[1,i0] := h;  return( i0 )
+	elif SvdBestHash[1,i0] = h then return( i0 )
+	elif SvdBestHash[2,i0] > mx then mx := SvdBestHash[2,i0];  i2 := i0 fi;
+	i0 := mod(i0+i1,131063) + 1;
+	od;
+
+  SvdBestHash[1,i2] := h;  SvdBestHash[2,i2] := 0;  return( i2 )
+
+end:
+
+SvdReduceGood := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric,
+	NData:posint, names:list(string) )
+global SvdGoodBases, SvdGoodPerms, SvdBest_A, SvdBest_d;
+option internal;
+description
+'SvdReduceGood must be used after SvdBestBasis has been run.  It uses the
+global list SvdGoodPerms to eliminate the best variable of each local
+minimum at a time.  The best resulting approximations, in descending
+number of variables, is printed.';
+
+m := length(AtA);
+if not type(SvdGoodPerms,list(list)) then
+    error('SvdGoodPerms does not contain a list of permutations,
+	SvdBestBasis should be run first')
+elif length(SvdGoodPerms)=0 or length(SvdGoodPerms[1]) <= 3 then return()
+elif m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<2 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+elif length(names) <> m then error('wrong number of names') fi;
+k := length(SvdGoodPerms[1])-1;
+SvdBest_A := CreateArray(1..k,1..k);
+SvdBest_d := CreateArray(1..k);
+
+OldPerms := SvdGoodPerms;
+NewPerms := NULL;
+errg := DBL_MAX;
+for z in SvdGoodPerms do
+    errdel := DBL_MAX;
+    bestv := z[2..-1];
+    for i from 0 to k do
+	if i>0 then bestv[i] := z[i] fi;
+	i0 := SvdBestSearch(bestv);
+	err := SvdBestBasis3( AtA, btA, bestv, k, i0 );
+	if err < errdel then errdel := err;  bestdel := copy(bestv) fi
+	od;
+    NewPerms := NewPerms, bestdel;
+    if errdel < errg then errg := errdel;  bestg := bestdel fi
+    od;
+
+print( SvdBestBasis4( AtA, btA, btb, NData, names, bestg, k ) );
+SvdGoodPerms := [NewPerms];
+procname(args);
+SvdGoodPerms := OldPerms;
+NULL
+end:
+
+
+
+# SvdBestBasisExact do k=1,2 exactly
+SvdBestBasisExact := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric,
+	NData:posint, names:list(string), k:integer, svmin:numeric )
+m := length(AtA);
+
+bestnorm := DBL_MAX;
+if k=1 then
+     for i1 to m do
+	 r := SvdAnalysis( [[AtA[i1,i1]]], [btA[i1]], btb, NData,
+	      [names[i1]], svmin );
+	 if r[Norm2Err] < bestnorm then
+	      bestnorm := r[Norm2Err];  best := r fi
+	 od;
+elif k=2 then
+     for i1 to m do for i2 from i1+1 to m do
+	 r := SvdAnalysis( [ [AtA[i1,i1],AtA[i1,i2]],
+			     [AtA[i2,i1],AtA[i2,i2]] ],
+		[btA[i1],btA[i2]], btb, NData, [names[i1],names[i2]], svmin );
+	 if r[Norm2Err] < bestnorm then
+	      bestnorm := r[Norm2Err];  best := r fi
+	 od od;
+else error('should not happen') fi;
+
+best[SolutionVector] := CreateArray(1..m);
+for z in best[SensitivityAnalysis] do
+    i := SearchArray(z[1],names);
+    if i < 1 then error('should not happen') fi;
+    best[SolutionVector,i] := z[2]
+    od;
+best
+end:

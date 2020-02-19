@@ -1,0 +1,105 @@
+#####################################################################
+#                                                                   #
+#  TaxonID to 5-Letter-Code mapping routines                        #
+#                                   Adrian Altenhoff, Oct 2008      #
+#                                                                   #
+#####################################################################
+
+
+module external SpeciesCode, TaxonId, UpdateSpeciesCode, Tax2Five, Five2Tax;
+local T2F, F2T; 
+
+UpdateSpeciesCode := proc()
+    page := ReadURL('ftp://ftp.uniprot.org/pub/databases/uniprot/knowledgebase/docs/speclist.txt', rawFile);
+    ConvertSpeciesCode(page);
+end:
+
+ConvertSpeciesCode := proc(s_:string) 
+    global T2F, F2T:
+    option internal;
+    
+    # search end of header
+    pat := '__________\n'; lp := length(pat);
+    off := SearchString(pat,s_); if off<=0 then error('no header found') fi;
+    s := s_[off+lp+1..-1];
+
+    # remove HTML tags
+    s2 := CreateString(length(s));
+    j := 1; inTag:=false;
+    for i to length(s) do 
+        if s[i]='<' then assert(not inTag); inTag := true;
+        elif s[i]='>' then assert(inTag); inTag := false; next;
+        elif inTag then next;
+        else s2[j] := s[i]; j := j+1; fi;
+    od:
+    assert(not inTag); s2 := s2[1..j-1];
+   
+    # parse the species code and the taxonomic id from each line. 
+    T2F := []; cntLine := CreateString(16);
+    for line in SplitLines(s2) do
+        if length(line)=1 and line[1]='\n' then break; # reached end
+        elif length(line)>16 and line[1..16]=cntLine then next; # Common name or synonym
+        else 
+             t := sscanf(line, '%5s %1s %d: N=%s');
+             if length(t)<>4 then error('could not parse '''.line.''''); fi:
+             T2F := append(T2F, [t[1],t[3]]);
+        fi:
+    od:
+    
+    F2T := transpose(sort(T2F)):
+    T2F := transpose(sort(T2F,x->x[2])):
+    verbose := Set(quiet=true):
+    OpenWriting(speciesFile):
+    printf('__SpeciesCodeT2F := %A:\n', T2F);
+    printf('__SpeciesCodeF2T := %A:\n', F2T): 
+    OpenWriting(previous):
+    Set(quiet=verbose):
+    CallSystem('gzip -f9 '.speciesFile):
+end:
+
+SpeciesCode := proc(s:posint)
+    if not assigned(T2F) then 
+        error('No Species code data file found. Use UpdateSpeciesCode()'
+              .' to download and convert');
+    fi:
+    k := SearchOrderedArray(s, T2F[2]);
+    if k <= 0 or k>length(T2F[2]) or T2F[2,k]<>s then
+    	error('TaxId '.s.' unknown');
+    else return(T2F[1,k]) fi;
+end:
+
+TaxonId := proc(s_:string)
+    if not assigned(F2T) then 
+        error('No Species code data file found. Use UpdateSpeciesCode()'
+              .' to download and convert');
+    fi:
+    if s_='RATNO' then s := 'RAT'       # official is not 5 letters long
+    elif s_='PIGXX' then s := 'PIG'     # official is not 5 letters long   
+    elif s_='CAEBI' then s := 'CAEBE'   # genomes renamed (backwards comp)
+    elif s_='FUGRU' then s := 'TAKRU'   # genomes renamed (backwards comp)
+    elif s_='MAGMM' then s := 'MAGSA'   # genomes renamed (backwards comp)
+    elif s_='DIAST' then s := 'ACIET'   # genomes renamed (backwards comp)
+    elif s_='CAPI1' then return(73382); # no 5-letter code exists
+    else s := s_ fi;
+    k := SearchOrderedArray(s, F2T[1]):
+    if k<=0 or k>length(F2T[1]) or F2T[1,k]<>s then 
+        error('Species code '.s.' unknown');
+    else return( F2T[2,k] ) fi:
+end:
+
+Tax2Five := proc(x:posint) option internal; SpeciesCode(x) end:
+Five2Tax := proc(s:string) option internal; TaxonId(s) end:
+
+##############################################################################
+#  Initialization of module variables                                        #
+##############################################################################
+speciesFile := datadirname.'/speciescode.drw':
+err := traperror(ReadProgram(speciesFile)):
+if err = lasterror then 
+    UpdateSpeciesCode():
+fi:
+if assigned(__SpeciesCodeT2F) then T2F := __SpeciesCodeT2F fi:
+if assigned(__SpeciesCodeF2T) then F2T := __SpeciesCodeF2T fi:
+
+
+end: #module

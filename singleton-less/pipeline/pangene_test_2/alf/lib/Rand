@@ -1,0 +1,416 @@
+
+#
+#  Rand() definition and associated methods for generation of
+#   random objects
+#
+#				Gaston H. Gonnet (August 1998)
+#
+Rand := proc() option builtin, numeric, polymorphic; 154 end:
+
+
+
+list_Rand := proc( li:{structure,list} ) local i;  option internal;
+if type(li,list) then [seq( Rand(li[i]), i=1..length(li) )]
+elif type(li,structure) and op(0,li)=list and length(li)=1 then
+     [ seq( Rand(li[1]), i=1..Rand(5..20) )]
+else error(args,'invalid arguments') fi
+end:
+
+set_Rand := proc( se:set ) option internal;
+ se[ round( length(se)*Rand()+0.5 )] end:
+posint_Rand := proc() option internal; Rand(1..100) end:
+
+
+symbol_Rand := proc( sy:symbol ) option internal;
+fn := symbol( sy . '_Rand' );
+if type(fn,procedure) then return( fn() )
+else error('cannot generate a random '.sy) fi
+end:
+
+
+
+sample_text := 'Antonio, the merchant of Venice, is sad; his friends try to \
+cheer him up.  Bassanio, Antonio''s closest friend, asks Antonio for financial \
+help in wooing Portia, the rich heiress of Belmont.  Antonio''s fortune is at \
+sea, so he cannot provide Bassanio with cash, but he agrees to inquire where \
+money is and leaves with Bassanio to find somebody who will loan him the \
+money.  Portia and Nerissa lament the lottery provision in the will of \
+Portia''s dead father: a potential suitor must choose between three caskets; \
+the suitor who chooses the correct casket, which contains a portrait of \
+Portia, wins Portia''s hand. Suitors risk much: if [they] choose wrong never \
+to speak to lady afterward in way of marriage. Portia and Nerissa then mock \
+the suitors who have already come courting.  Bassanio and Antonio ask Shylock, \
+a rich Jewish moneylender, for a loan of three-thousand ducats.  Shylock \
+offers to lend the money under the condition that, if Antonio is unable to pay \
+back the appointed amount on the appointed day, Antonio must forfeit a pound \
+of his fair flesh. Antonio agrees. The Prince of Morocco arrives in Belmont to \
+woo Portia.  Launcelot Gobbo decides to leave the service of Shylock, plays \
+tricks on his sand-blind father, and becomes Bassanio''s servant.  Jessica, \
+Shylock''s daughter, says goodbye to Launcelot and makes plans to elope with \
+Lorenzo, a Christian friend to Antonio and Bassanio.  The Prince of Morocco \
+and the Prince of Arragon choose the wrong caskets.  Shylock discovers that \
+his daughter has eloped with a Christian and that Antonio''s ships will not \
+arrive in time to repay the loan; Shylock decides that he will demand the \
+pound of flesh promised to him in Antonio''s bond.  Bassanio arrives in \
+Belmont, chooses the right casket, and wins the right to marry Portia; his \
+friend Gratiano wins the hand of Nerissa, and the four of them plan a double \
+wedding.  Friends from Venice arrive in Belmont to tell Bassanio that Shylock \
+is demanding a pound of flesh from Antonio.  Portia and Nerissa agree to marry \
+quickly and to send their husbands, with a lot of money, back to Venice to \
+help Antonio.  Once the husbands are gone, Portia asks Lorenzo and Jessica to \
+house-sit while she and Nerissa go to a monastery.  Instead of going to the \
+monastery, Portia and Nerissa devise a plan to disguise themselves as men and \
+join their husbands in Venice.  The Duke of Venice sends for Bellario, a \
+learned doctor, to have him determine the judgment regarding Shylock''s demand \
+for Antonio''s pound of flesh. The Duke receives a letter, which states that \
+Bellario is sick and is sending in his place a young doctor of Rome named \
+Balthasar to preside over the courtroom.  Various forms of justice and mercy \
+prevail.  After the court renders its verdicts, the Christians return to \
+Belmont where things with rings ensue.';
+
+string_Rand := proc() option internal;
+for i1 from round( Rand()*(length(sample_text)-1) ) + 1 by -1 to 1
+    while sample_text[i1] <> ' ' do od;
+for i2 from min( i1 + 5 + round(50*Rand()), length(sample_text))
+    to length(sample_text) while sample_text[i2] <> ' ' do od;
+sample_text[i1+1..i2-1]
+end:
+
+
+
+#
+#  Normal_Rand - Generate a random number with Normal N(0,1) distribution
+#
+#					Gaston H. Gonnet (Aug 17, 2001)
+#
+#	From Knuth, vol II.  
+#
+#	As of Sun May 22 08:51:51 CEST 2011 implemented in the kernel gg.
+
+
+#Normal_Rand := proc( distr:Normal(numeric,nonnegative) )
+#global Normal_Rand_2;
+# 
+#if nargs>0 then distr[1]+sqrt(distr[2])*Normal_Rand()
+#elif Normal_Rand_2 <> 0 then t := Normal_Rand_2;  Normal_Rand_2 := 0;  t
+#else do
+#	x1 := 2*Rand() - 1;
+#	x2 := 2*Rand() - 1;
+#	w := x1^2 + x2^2;
+#	if w <= 1 then break fi
+#	od;
+#     w := sqrt( -2*ln(w) / w );
+#     Normal_Rand_2 := x1*w;
+#     x2*w
+#     fi
+#end:
+#Normal_Rand_2 := 0:
+
+
+
+numeric_Rand := x -> Rand():
+positive_Rand := x -> Rand():
+
+
+#
+#  Random Array
+#
+array_Rand := proc( typ ) option internal;
+if length(typ) < 2 then error('invalid arguments') fi;
+dims := [typ[2..-1]];
+n := length(dims);
+if not type(dims,list(posint)) then error('invalid dimensions') fi;
+r := CreateArray( seq( 1..dims[i], i=1..n ));
+inds := [seq(1,i=1..n)];
+
+do  r[op(inds)] := Rand(typ[1]);
+    for i from n by -1 to 1 do
+	if inds[i] = dims[i] then inds[i] := 1
+	else inds[i] := inds[i]+1;  break fi;
+	od;
+    if i < 1 then return( r ) fi
+    od;
+end:
+
+
+matrix_Rand := proc( typ ) option internal;
+if nargs=0 then procname(matrix(integer))
+elif type(typ,structure(anything,matrix)) and
+     type([op(typ)],[anything,posint,posint]) then
+     array_Rand(array(op(typ)))
+elif type(typ,structure(anything,matrix)) and
+     type([op(typ)],[anything,posint]) then
+     array_Rand(array(typ[1],typ[2],typ[2]))
+elif type(typ,structure(anything,matrix)) and length(typ)=1 then
+     i1 := round( 5*Rand()+2 );
+     i2 := round( 5*Rand()+2 );
+     array_Rand(array(typ[1],i1,i2))
+else error(typ,'is an invalid argument for a matrix type') fi
+end:
+
+
+integer_Rand := proc() option internal; round( 10*Normal_Rand() ) end:
+
+
+
+range_Rand := proc( r ) option internal;
+if type(r,integer..integer) then
+     if r[1] > r[2] then error( r, 'invalid range for Rand' ) fi;
+     round( (r[2]-r[1]+1)*Rand() + r[1] - 0.5 )
+elif type(r,numeric..numeric) then
+     if r[1] > r[2] then error( 'invalid range for Rand' ) fi;
+     Rand()*(r[2]-r[1]) + r[1]
+else error( r, 'invalid range for Rand' ) fi
+end:
+
+
+Binomial_Rand := proc( bi:Binomial(integer,numeric) )
+n := bi[1];
+p := bi[2];
+np := n*p;
+if n<0 or p<0 or p>1 then error(bi,'invalid arguments for binomial')
+elif np=0 then 0
+elif p > 0.5 then n - procname(Binomial(n,1-p))
+elif np < 20 then
+     # do it explicitly
+     x := Rand();
+     F := exp( n*ln1x(-p) ); # equivalent to F := (1-p)^n
+     if x <= F then return(0) fi;
+     Fi := F;
+     for i to n do
+	  Fi := Fi * (n-i+1) * p / (i*(1-p));
+	  F := F+Fi;
+	  if i>np and Fi < DBL_EPSILON or x <= F then return(i) fi
+	  od;
+     return(n)
+
+# use reduction idea from Knuth Vol2, 3.4.1.F
+# modified by GG to use O(log(log(n))) steps instead of O(log(n))
+else a := round(np)+1;
+     b := n+1-a;
+     X := Beta_Rand(Beta(a,b));
+     if X > p then procname(Binomial(a-1,p/X))
+     else a + procname(Binomial(b-1,(p-X)/(1-X))) fi
+     fi
+end:
+
+# Generate a multinomial sample following
+# Brown and Bromberg, 1984, The American Statistician
+# (March 17th: GG made some small fixes, but this function is
+# hopelessly slow for very large N, e.g. N=1e14)
+#Multinomial_Rand := proc(mn:Multinomial(posint,list(numeric)))
+#N := mn[1];
+#ps := mn[2];
+#k := length(ps);
+#if |sum(ps)-1| > DBL_EPSILON then error('probabilities don''t add up to 1') fi;
+#if k <= sqrt(N) then lp := N-k
+#else lp := round(N-sqrt(N)-sqrt(k-sqrt(N))) fi;
+#ls := [seq(p*lp,p=ps)];
+#if N>50 then
+#    do
+#        x := [seq(Rand(Poisson(l)),l=ls)];
+#        sx := sum(x);
+#	if sx = N then return(x) elif sx < N then break fi
+#    od:
+#else x := [seq(0,k)];  sx := 0 fi;
+#cum := copy(ps);
+#for i from 2 to k do cum[i] := cum[i]+cum[i-1] od:
+#to N-sx do
+#    y := SearchOrderedArray(Rand(),cum)+1;
+#    x[y] := x[y]+1
+#od:
+#return(x);
+#end:
+
+# recursive version based on an efficient Binomial
+# Gaston Gonnet (March 17, 2009)
+Multinomial_Rand := proc(mn:Multinomial({0,posint},list(numeric)))
+N := mn[1];
+ps := mn[2];
+k := length(ps);
+if |sum(ps)-1| > DBL_EPSILON then error('probabilities don''t add up to 1')
+elif N=0 then return( [seq(0,k)] )
+elif k=1 then return([N])
+elif k=2 then n1 := Binomial_Rand(Binomial(N,ps[1]));  return([n1,N-n1]) fi;
+
+j := floor(k/2);
+ps1 := ps[1..j];  ps2 := ps[j+1..-1];
+sps1 := sum(ps1);
+n1 := Binomial_Rand(Binomial(N,sps1));
+return( [op(procname(Multinomial(n1,ps1/sps1))),
+	 op(procname(Multinomial(N-n1,ps2/sum(ps2))))] )
+end:
+
+
+
+Poisson_Rand := proc( p:Poisson(numeric) )
+al := p[1];
+if al<0 then error(p,'parameter of poisson distribution cannot be negative')
+elif al <= 40 then
+     # do it explicitly
+     x := Rand();
+     F := exp(-al);
+     if x <= F then return(0) fi;
+     Fi := F;
+     for i do
+	  Fi := Fi * al / i;
+	  F := F+Fi;
+	  if i>al and Fi < DBL_EPSILON or x <= F then return(i) fi
+	  od;
+else n := round(10000*al);
+     Binomial_Rand( Binomial(n,al/n) )
+     fi
+end:
+
+Geometric_Rand := proc( g:Geometric(numeric) )
+p := g[1];
+if p<=0 or p>1 then error(g,'invalid parameter for geometric distribution') fi;
+if p=1 then 0
+else floor(ln(Rand())/ln(1-p)) fi
+end:
+
+
+Exponential_Rand := proc( e:Exponential(numeric,positive) )
+e[1] - ln(Rand()) * e[2]
+end:
+
+
+# From Knuth Seminumerical Algorithms, 3.4.1 Algorithm A.
+GammaDist_Rand := proc( g:GammaDist(positive) )
+a := g[1];
+if a=0 then return(0)
+elif a <= 1 then
+     p := 1/(a*exp(-1)+1);
+     do  U := Rand();
+	 V := Rand();
+	 if U < p then X := V^(1/a);  q := exp(-X)
+	 else X := 1-ln(V);  q := X^(a-1) fi;
+	 if Rand() < q then return(X) fi
+	 od
+     fi;
+
+do  Y := tan(Pi*Rand());
+    X := sqrt(2*a-1)*Y + a - 1;
+    if X <= 0 or Rand() > (1+Y^2) * exp( (a-1)*ln(X/(a-1)) - sqrt(2*a-1)*Y )
+	then next fi;
+    return(X)
+    od
+end:
+
+
+Beta_Rand := proc( b:Beta(nonnegative,nonnegative) )
+X1 := GammaDist_Rand( GammaDist(b[1]) );
+X1 / (X1+GammaDist_Rand( GammaDist(b[2]) ) )
+end:
+
+
+FDist_Rand := proc( f:FDist(positive,positive) )
+ChiSquare_Rand( ChiSquare(f[1]) )  / ChiSquare_Rand( ChiSquare(f[2]) )
+end:
+
+
+Student_Rand := proc( s:Student(positive) )
+Normal_Rand() / sqrt( ChiSquare_Rand( ChiSquare(s[1]) ) * s[1] )
+end:
+
+
+
+ChiSquare_Rand := proc( chi2:ChiSquare(nonnegative) )
+2 * GammaDist_Rand( GammaDist( chi2[1]/2 ))
+end:
+
+#
+#       Interface to Rand(Protein) and Rand(Protein(len))
+#
+Protein_Rand := proc( pr:Protein(posint) ) option internal;
+if nargs=0 then return(procname(Protein(40))) fi;
+if type(AF,array(numeric,20)) then CreateRandSeq( pr[1], AF )
+else CreateRandSeq( pr[1], [0.07847686, 0.05333770, 0.04550482, 0.05365628,
+	0.01883286, 0.03767407, 0.05833139, 0.07345925, 0.02350371, 0.05799139,
+	0.09427608, 0.05877789, 0.02278976, 0.04072986, 0.04557204, 0.06037097,
+	0.06167775, 0.01306329, 0.03273344, 0.06924059] )
+     fi
+end:
+
+#
+#       Interface to Rand(DNA) and Rand(DNA(len))
+#
+DNA_Rand := proc( pr:DNA(posint) ) option internal;
+if nargs=0 then return(procname(DNA(60))) fi;
+if type(AF,array(numeric,4)) then CreateRandSeq( pr[1], AF )
+elif type(AF,array(numeric,20)) and |sum(AF[i],i=[1,5,8,17])-1| < 0.002 then
+     t := [seq( AF[i], i=[1,5,8,17] )];
+     CreateRandSeq( pr[1], t/sum(t) )
+else CreateRandSeq( pr[1], [0.3256, 0.1919, 0.2052, 0.2773] )
+     fi
+end:
+
+#
+#       Interface to Rand(CodingDNA) and Rand(CodingDNA(len))
+#
+CodingDNA_Rand := proc( pr:CodingDNA(posint) ) option internal;
+if nargs=0 then return(procname(CodingDNA(60))) fi;
+if mod(pr[1],3) <> 0 then error(pr,'length must be a multiple of 3') fi;
+p := Protein_Rand( Protein(pr[1]/3) );
+r := CreateString( pr[1] );
+for i to length(p) do
+    c := AToCodon( p[i] );
+    c := c[ round( Rand()*length(c) + 0.5 ) ];
+    r[3*i-2] := c[1];  r[3*i-1] := c[2];  r[3*i] := c[3];
+    od;
+r
+end:
+
+
+Entry_Rand := proc() option internal;
+if not type(DB,database) then error('DB must be assigned a database') fi;
+Entry( round( Rand()*DB[TotEntries] + 0.5 ) )
+end:
+
+
+Sequence_Rand := proc() option internal;
+if not type(DB,database) then error('DB must be assigned a database') fi;
+Sequence( Entry( round( Rand()*DB[TotEntries] + 0.5 ) ))
+end:
+
+
+Tree_Rand := proc( n:posint, hei:numeric ) option internal;
+if nargs=0 then return( procname(Rand(3..20),0) ) fi;
+if n=1 then Leaf( Leaf.Rand(10^3..10^4), hei+Rand(0.1..20) )
+else n1 := Rand(1..n-1);
+     hei2 := hei + Rand(0.1..15);
+     Tree( procname(n1,hei2), hei2, procname(n-n1,hei2) )
+fi
+end:
+
+
+# cd, dec 2006
+MNormal_Rand := proc(distr:MNormal(array,matrix),ns)
+    option internal;
+    if nargs = 1 then nsamples := 1 else nsamples := ns fi;
+
+    dim := length(distr[1]);
+    if length(distr[2]) <> dim then
+        error('Dimension of the mean vector and covariance matrix'.
+            ' do not match.');
+    fi;
+    res := CreateArray(1..nsamples,1..dim);
+    for i to nsamples do for j to dim do
+        res[i,j] := Rand(Normal(0,1));
+    od: od:
+
+    # now transform the samples according to mu and cov
+    # tmp is the transformation matrix EV*sqrt(diag(Eig))
+    ew := Eigenvalues(distr[2],noeval(ev));
+    if min(ew) < 0 then error('Covariance-matrix not positive definite'); fi;
+    tmp := copy(ev);
+    for i to dim do for j to dim do
+        tmp[i,j] := tmp[i,j]*sqrt(ew[j]);
+    od: od:
+    for i to nsamples do
+        res[i] := tmp*res[i]+distr[1]
+    od:
+    # if only one value was asked, return it as a vector and not a dim*1 matrix
+    return(If(nargs=1,op(res),res));
+end:
+

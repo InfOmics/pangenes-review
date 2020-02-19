@@ -1,0 +1,45 @@
+ComputeParents := proc(t:Tree; (parents=table()) : table)
+   if not type(t,Leaf) then
+      parents[t[Right]] := t;
+      parents[t[Left]] := t;
+      parents := procname(t[Right],parents);
+      parents := procname(t[Left],parents);
+   fi;
+   parents;
+end:
+
+DrawLaTeXTree := proc (t:Tree)
+   global nodeid;
+
+#   parents := ComputeParents(t);
+   n_leaves := length(Leaves(t));
+   nodeid := 0;
+
+   printf('\\tikzstyle{inner node}=[draw,fill,circle,minimum size=1mm,inner sep=0]\n');
+   printf('\\tikzstyle{leaf node}=[draw,fill=yellow,rectangle,font=\\sf]\n');
+   printf('\\tikzstyle{branch annotation}=[midway,above,sloped,font=\\tiny]\n');
+   printf('\\newcommand{\\darwinyscale}{.5}\n\n');
+   printf('\\begin{tikzpicture}\n');
+   DrawLaTeXTree_Vertical(t,0);
+   printf('\\end{tikzpicture}\n');
+end:
+
+DrawLaTeXTree_Vertical := proc (t:Tree)
+   global nodeid;
+   y := -|t[Height]|;
+   if type(t,Leaf) then
+      x := nodeid;
+      nodeid := nodeid+1;
+      printf('\\node[leaf node] (node%d) at (%d,%f*\\darwinyscale) {%s};\n',x,x,y,t[Label]);
+      x;
+   else
+      l := DrawLaTeXTree_Vertical(t[Left]);
+      x := nodeid;
+      nodeid := nodeid+1;
+      r := DrawLaTeXTree_Vertical(t[Right]);
+      printf('\\node[inner node] (node%d) at (%d,%f*\\darwinyscale) {};\n',x,x,y);
+      printf('\\draw (node%d) -- (node%d) node[branch annotation] {%.2f};\n',x,l,t[Left][Height]-t[Height]);
+      printf('\\draw (node%d) -- (node%d) node[branch annotation] {%.2f};\n',x,r,t[Right][Height]-t[Height]);
+      x;
+   fi;
+end;

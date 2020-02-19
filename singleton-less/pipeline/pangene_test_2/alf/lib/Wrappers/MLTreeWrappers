@@ -1,0 +1,1129 @@
+module external RAxML, RAxML8, PhyML, PhyML_2_0, FastTree, WritePHYLIP; 
+###############################################################################
+#
+#   RAxML 
+#
+#   RAxML is a wrapper function to compute ML trees by RAxML. See
+#   http://icwww.epfl.ch/~stamatak/index-Dateien/Page443.htm
+#   for program homepage and for publications:
+#
+#   Alexandros Stamatakis, Michael Ott, and Thomas Ludwig
+#   RAxML-OMP: An Efficient Program for Phylogenetic Inference on SMPs. 
+#   In Proceedings of 8th International Conference on Parallel Computing 
+#   Technologies (PaCT2005), Volume  3606 of Lecture Notes in Computer Science, 
+#   288-302, Springer Verlag, September 2005.
+#
+#   Alexandros Stamatakis. RAxML-VI-HPC: Maximum Likelihood-based Phylogenetic 
+#   Analyses with Thousands of Taxa and Mixed Models, Bioinformatics
+#   22(21):2688-2690, 2006
+#
+#                                        Adrian Altenhoff, Jan 12, 2009
+###############################################################################
+
+RAxML := proc(msa_:{list(string),MAlignment} ;
+        labels:list(string),
+        'subst'=((subst='GONNET'):{'GONNET','JTT','DAYHOFF','WAG','BLOSUM62',
+                                   'MTREV','RTREV','CPREV','MTMAM','VT','GTR'}),
+        'inv_sites'=((inv_sites=false):boolean),
+        'estimate_basefreqs'=((estBFreq=false):boolean),
+        'start_tree'=((start_tree='MP'):{Tree,'random','MP'}),
+        'nr_runs'=((nr_runs=10):posint),
+        'bootstrap'=((bs=0):{0,posint}),
+        'rates'=((rates='MIX'):{'CAT','GAMMA','MIX'}),
+        'threaded'=((threaded=0):{0,posint}),
+        'eps'=((eps=0.1):positive),
+        'binary'=((binary=''):string))
+    
+    # path of external programs
+    selection := GetWrapperChoice('Tree/RAxML-7.0.4/raxmlHPC64', 'raxmlHPC', binary, 'relPath32'='Tree/RAxML-7.0.4/raxmlHPC32');
+    if selection = BINARY_HARDCODED then
+        raxml_single := binary;
+        raxml_multicore := binary;
+    elif selection = BINARY_IN_PATH then
+        raxml_single := 'raxmlHPC';
+        raxml_multicore := 'raxmlHPC-PTHREADS';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        raxml_single := GetWrapperDir().'Tree/RAxML-7.0.4/raxmlHPC64';
+        raxml_multicore := GetWrapperDir().'Tree/RAxML-7.0.4/raxmlHPC-PTHREADS64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        raxml_single := GetWrapperDir().'Tree/RAxML-7.0.4/raxmlHPC32';
+        raxml_multicore := GetWrapperDir().'Tree/RAxML-7.0.4/raxmlHPC-PTHREADS32';
+    else
+        error('unknown selection');
+    fi;
+    
+    
+    labels := msa_['labels'];
+    msa_['labels'] := [seq(string(i),i=1..length(msa_['InputSeqs']))];
+    
+    # set paths for raxml files
+    wdir := GetTmpDir();
+    pid := sprintf('%d_%d', getpid(), Rand(1..1e8));
+    msaFN := wdir . 'msa.' . pid;
+    resFN := pid;
+    inputTreeFN := wdir . 'input.' . pid . '.nh';
+    protModelFN := wdir . 'protSubstModel.'.pid.'.txt';
+    bstFN := 'BST'.pid;
+    mlBstFN := 'ML_BST'.pid;
+    fnPre := GetTmpDir().'t'.pid;
+    
+    # check for parameter combination
+    if rates='CAT' and nr_runs>1 then 
+    	error('Likelihoods computed under the rate model ''CAT'''.
+            'can''t be compared to each other. Use ''MIX'' or ''GAMMA''');
+    fi:
+    
+    # write MSA to file in phylipp format
+    WritePHYLIP(msaFN, msa_, If(assigned(labels),labels,NULL) );
+    
+    # start bilding the comand line: choose version
+    cmd := If(threaded>0, raxml_multicore . ' -T '.threaded, raxml_single):
+    
+    # set seqFN, working directory
+    cmd := cmd . ' -s ' . msaFN . ' -w ' . wdir;
+    
+    # choose substitution model, rates, invariant sites and estimation of base freqs
+    cmd := cmd . ' -m ' . If(subst<>'GTR','PROT','GTR') . rates . If(inv_sites,'I','');
+    if subst='GONNET' then 
+        if not type(AF,list(numeric)) then CreateDayMatrices() fi:
+        S := CreateArray(1..20,1..20):
+        for i to 20 do for j to 20 do 
+            S[i,j] := logPAM1[i,j]/AF[i];
+        od od:
+        
+        q := Set(quiet=true); OpenWriting(protModelFN);
+        for i to 20 do for j to 20 do printf('%.10g\t',S[i,j]) od: printf('\n') od:
+        for i to 20 do printf('%.10g\n', AF[i]) od:
+        OpenWriting(previous); Set(quiet=q):
+        cmd := cmd . 'JTT' . If(estBFreq,'F','') . ' -p '.protModelFN;
+    elif subst<>'GTR' then
+        cmd := cmd . subst . If(estBFreq,'F','');
+    fi:
+   
+    # add resultFN
+    cmd := cmd . ' -n ' . resFN;
+
+    # set the number of ML searches on original MSA.
+    if nr_runs>1 then cmd := cmd .' -# '.nr_runs fi:
+ 
+    # check, whether a starting tree is provided or 
+    # starting with a random tree is asked.
+    if type(start_tree,Tree) then
+        q := Set(quiet=true); OpenWriting(inputTreeFN);
+        lprint(Tree_Newick(start_tree).';');
+        OpenWriting(previous); Set(quiet=q);
+        cmd := cmd . ' -t '.inputTreeFN;
+    elif start_tree='random' then
+        cmd := cmd . ' -d';
+    fi:
+
+    # set likelihood epsilon
+    cmd := sprintf('%s -e %.10g', cmd, eps);
+    
+    if printlevel > 2 then prints(cmd) fi:
+    t := time(all);
+    res := TimedCallSystem(cmd, 259200):
+    t := time(all) - t;
+    
+    if res[1]<>0 then
+    printf('!------------------------------ RAxML %A\n', res);
+        printf('**** Error while executing RAxML ****');
+        printf('  ** All stored in %serrors/ **\n', wdir);
+        prints(res[2]):
+        TimedCallSystem('mkdir -p '.wdir.'errors; mv '.wdir.'*'.pid .
+            '* '.wdir.'errors/');
+        CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	   inputTreeFN . ' ' . protModelFN);
+        error('Error while executing RAxML');
+    elif nr_runs>1 then
+        # check, which run produced the best tree
+        k := SearchMultipleString('Best Likelihood in run number',
+            ':','likelihood','\n', res[2]);
+            
+        if k=[] then
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	       inputTreeFN . ' ' . protModelFN);
+            error('unexpected error');
+        fi:
+        bestRun := eval(parse( res[2,k[1]+30..k[2]] ));
+        if not type(bestRun, {posint,0}) then 
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+                          inputTreeFN . ' ' . protModelFN);
+            error('Best Likelihood not parseble');
+        fi:
+
+        lk := sscanf(res[2,k[3]+11..k[4]],'%f')[1];
+    	mltreeFN := wdir.'RAxML_result.'.resFN.'.RUN.'.bestRun;
+
+    else
+        k := SearchMultipleString('\nLikelihood   :','\n', res[2]);
+        if k=[] then
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	       inputTreeFN . ' ' . protModelFN);
+
+            error('unexpeded error');
+        fi:
+
+        lk := sscanf(res[2,k[1]+2..k[2]],'Likelihood  : %f')[1];
+        mltreeFN := wdir.'RAxML_result.'.resFN;
+        bestRun := 0;
+    fi:
+    pattern := sprintf('Overall Time for %d Inference%s', nr_runs, 
+                       If(nr_runs>1,'s',''));
+    k := SearchMultipleString(pattern,'\n', res[2]);
+    
+    alphaEst := invSiteEst := freqs := -1;
+    
+    # get best configurations/parameters
+    grepcmd := sprintf('grep -P "^Inference\\[%d\\]:" %sRAxML_info.%s',bestRun,
+    	wdir,resFN);
+    confLineBestRun := TimedCallSystem(grepcmd)[2,1..-2]:
+    if rates<>'CAT' then
+    	k := SearchString('alpha[0]:', confLineBestRun);
+    	err := traperror(sscanf( confLineBestRun[k+1..-1],'alpha[0]: %f')[1]);
+    	if err<>lasterror then alphaEst := err fi:
+    fi:
+    if inv_sites then 
+    	k := SearchString('invar[0]:', confLineBestRun);
+    	err := traperror(sscanf(confLineBestRun[k+1..-1], 'invar[0]: %f')[1]);
+    	if err<>lasterror then invSiteEst := err fi:
+    fi:
+    if estBFreq then
+    	# get startpos of the base frequences, and append the newline for finish
+    	k := SearchAllString('pi(',res[2]):
+    	k := append(k, SearchString('\n',res[2,k[-1]..k[-1]+20])+k[-1]);
+    	freqs := CreateArray(1..20):
+    	for j to length(k)-1 do
+    		tmp := sscanf(res[2,k[j]..k[j+1]-1], 'pi(%[^)]): %f');
+    		freqs[ AToInt(tmp[1]) ] := tmp[2];
+    	od:
+    fi:
+
+    if bs=0 then 
+    	tree := ParseNewickTree( ReadRawFile(mltreeFN) );
+    else
+    	# compute bootstraps and map values onto mltree
+    	bscmd := cmd[1..SearchString(' -n ',cmd)];
+    	bsColcmd := copy(bscmd);
+    	bscmd := bscmd . ' -n '.bstFN.' -x 12345 -# '.bs;
+        printf('%s\n', bscmd);
+    	bsres := TimedCallSystem(bscmd):
+    	if bsres[1]<>0 then 
+    		printf('**** Bootstrap failed ****\n%s\n\n',bsres[2]);
+    		tree := ParseNewickTree( ReadRawFile(mltreeFN) );
+    	else
+    		# mapping bs values onto mltree
+    		bsColcmd := bsColcmd . ' -n ' . mlBstFN . ' -f b -z ' .
+    			wdir . 'RAxML_bootstrap.' . bstFN . ' -t '.mltreeFN;
+    		bsColres := TimedCallSystem(bsColcmd):
+    		if bsColres[1]<>0 then 
+    			printf('**** Mapping of bootstrap values on ML ' .
+    			       'tree failed ****\n%s\n\n', bsColres[2]);
+    			tree := ParseNewickTree( ReadRawFile(mltreeFN) ):
+    		else
+    			tree := ParseNewickTree(ReadRawFile(
+    				wdir.'RAxML_bipartitions.'.mlBstFN));
+    		fi:
+    	fi:
+    fi:
+    
+    # cleanup
+    CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+        inputTreeFN . ' ' . protModelFN);
+    
+    for leaf in Leaves(tree) do leaf[1] := labels[parse(leaf[1])]; od;
+    msa_['labels'] := labels;
+    
+    treeRes := TreeResult(tree, 'ML', 'Likelihood'=lk, 'SubstModel'=subst, 
+                            'Method'='RAxML', 'CPUtime'=t);    
+    if freqs <> -1 then
+        treeRes['BaseFreqs'] := freqs;
+    fi;
+    if invSiteEst <> -1 then
+        treeRes['InvSites'] := invSiteEst;
+    fi;
+    if alphaEst <> -1 then
+        treeRes['Alpha'] := alphaEst;
+    fi;
+    return(treeRes);
+end:
+
+RAxML8 := proc(msa_:{list(string),MAlignment} ;
+        labels:list(string),
+        'subst'=((subst='GONNET'):{'GONNET','JTT','DAYHOFF','WAG','BLOSUM62',
+                                   'MTREV','RTREV','CPREV','MTMAM','VT','GTR'}),
+        'inv_sites'=((inv_sites=false):boolean),
+        'estimate_basefreqs'=((estBFreq=false):boolean),
+        'start_tree'=((start_tree='MP'):{Tree,'random','MP'}),
+        'nr_runs'=((nr_runs=10):posint),
+        'bootstrap'=((bs=0):{0,posint}),
+        'rates'=((rates='GAMMA'):{'CAT','GAMMA','CATI'}),
+        'threaded'=((threaded=0):{0,posint}),
+        'eps'=((eps=0.1):positive),
+        'binary'=((binary=''):string))
+    
+    # path of external programs
+    selection := GetWrapperChoice('Tree/RAxML-8.1.1/raxmlHPC64', 'raxmlHPC', binary, 'relPath32'='Tree/RAxML-8.1.1/raxmlHPC32');
+    if selection = BINARY_HARDCODED then
+        raxml_single := binary;
+        raxml_multicore := binary;
+    elif selection = BINARY_IN_PATH then
+        raxml_single := 'raxmlHPC';
+        raxml_multicore := 'raxmlHPC-PTHREADS';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        raxml_single := GetWrapperDir().'Tree/RAxML-8.1.1/raxmlHPC64';
+        raxml_multicore := GetWrapperDir().'Tree/RAxML-8.1.1/raxmlHPC-PTHREADS64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        raxml_single := GetWrapperDir().'Tree/RAxML-8.1.1/raxmlHPC32';
+        raxml_multicore := GetWrapperDir().'Tree/RAxML-8.1.1/raxmlHPC-PTHREADS32';
+    else
+        error('unknown selection');
+    fi;
+    
+    
+    labels := msa_['labels'];
+    msa_['labels'] := [seq(string(i),i=1..length(msa_['InputSeqs']))];
+    
+    # set paths for raxml files
+    wdir := GetTmpDir();
+    pid := sprintf('%d_%d', getpid(), Rand(1..1e8));
+    msaFN := wdir . 'msa.' . pid;
+    resFN := pid;
+    inputTreeFN := wdir . 'input.' . pid . '.nh';
+    protModelFN := wdir . 'protSubstModel.'.pid.'.txt';
+    bstFN := 'BST'.pid;
+    mlBstFN := 'ML_BST'.pid;
+    fnPre := GetTmpDir().'t'.pid;
+    
+    # check for parameter combination
+    if rates='CAT' and nr_runs>1 then 
+    	error('Likelihoods computed under the rate model ''CAT'''.
+            'can''t be compared to each other. Use ''MIX'' or ''GAMMA''');
+    fi:
+    
+    # write MSA to file in phylipp format
+    WritePHYLIP(msaFN, msa_, If(assigned(labels),labels,NULL) );
+    
+    # start bilding the comand line: choose version
+    cmd := If(threaded>0, raxml_multicore . ' -T '.threaded, raxml_single):
+    
+    # set seqFN, working directory
+    cmd := cmd . ' -s ' . msaFN . ' -w ' . wdir;
+    
+    # choose substitution model, rates, invariant sites and estimation of base freqs
+    cmd := cmd . ' -m ' . If(subst<>'GTR','PROT','GTR') . rates . If(inv_sites,'I','');
+    if subst='GONNET' then 
+        if not type(AF,list(numeric)) then CreateDayMatrices() fi:
+        S := CreateArray(1..20,1..20):
+        for i to 20 do for j to 20 do 
+            S[i,j] := logPAM1[i,j]/AF[i];
+        od od:
+        
+        q := Set(quiet=true); OpenWriting(protModelFN);
+        for i to 20 do for j to 20 do printf('%.10g\t',S[i,j]) od: printf('\n') od:
+        for i to 20 do printf('%.10g\n', AF[i]) od:
+        OpenWriting(previous); Set(quiet=q):
+        cmd := cmd . 'JTT' . If(estBFreq,'F','') . ' -p '.protModelFN;
+    elif subst<>'GTR' then
+        cmd := cmd . subst . If(estBFreq,'F','');
+    fi:
+   
+    # add resultFN
+    cmd := cmd . ' -n ' . resFN;
+
+    # add random number seed
+    cmd := cmd . ' -p 2352890 ';  
+    # set the number of ML searches on original MSA.
+    if nr_runs>1 then cmd := cmd .' -# '.nr_runs fi:
+ 
+    # check, whether a starting tree is provided or 
+    # starting with a random tree is asked.
+    if type(start_tree,Tree) then
+        q := Set(quiet=true); OpenWriting(inputTreeFN);
+        lprint(Tree_Newick(start_tree).';');
+        OpenWriting(previous); Set(quiet=q);
+        cmd := cmd . ' -t '.inputTreeFN;
+    elif start_tree='random' then
+        cmd := cmd . ' -d';
+    fi:
+
+    # set likelihood epsilon
+    cmd := sprintf('%s -e %.10g', cmd, eps);
+    
+    if printlevel > 2 then prints(cmd) fi:
+    t := time(all);
+    res := TimedCallSystem(cmd, 259200):
+    t := time(all) - t;
+    
+    if res[1]<>0 then
+    printf('!------------------------------ RAxML %A\n', res);
+        printf('**** Error while executing RAxML ****');
+        printf('  ** All stored in %serrors/ **\n', wdir);
+        prints(res[2]):
+        TimedCallSystem('mkdir -p '.wdir.'errors; mv '.wdir.'*'.pid .
+            '* '.wdir.'errors/');
+        CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	   inputTreeFN . ' ' . protModelFN);
+        error('Error while executing RAxML');
+    elif nr_runs>1 then
+        # check, which run produced the best tree
+        k := SearchMultipleString('Best Likelihood in run number',
+            ':','likelihood','\n', res[2]);
+            
+        if k=[] then
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	       inputTreeFN . ' ' . protModelFN);
+            error('unexpected error');
+        fi:
+        bestRun := eval(parse( res[2,k[1]+30..k[2]] ));
+        if not type(bestRun, {posint,0}) then 
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+                          inputTreeFN . ' ' . protModelFN);
+            error('Best Likelihood not parseble');
+        fi:
+
+        lk := sscanf(res[2,k[3]+11..k[4]],'%f')[1];
+    	mltreeFN := wdir.'RAxML_result.'.resFN.'.RUN.'.bestRun;
+
+    else
+        k := SearchMultipleString('\nLikelihood   :','\n', res[2]);
+        if k=[] then
+            CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+    	       inputTreeFN . ' ' . protModelFN);
+
+            error('unexpeded error');
+        fi:
+
+        lk := sscanf(res[2,k[1]+2..k[2]],'Likelihood  : %f')[1];
+        mltreeFN := wdir.'RAxML_result.'.resFN;
+        bestRun := 0;
+    fi:
+    pattern := sprintf('Overall Time for %d Inference%s', nr_runs, 
+                       If(nr_runs>1,'s',''));
+    k := SearchMultipleString(pattern,'\n', res[2]);
+    
+    alphaEst := invSiteEst := freqs := -1;
+    
+    # get best configurations/parameters
+    grepcmd := sprintf('grep -P "^Inference\\[%d\\]:" %sRAxML_info.%s',bestRun,
+    	wdir,resFN);
+    confLineBestRun := TimedCallSystem(grepcmd)[2,1..-2]:
+    if rates<>'CAT' then
+    	k := SearchString('alpha[0]:', confLineBestRun);
+    	err := traperror(sscanf( confLineBestRun[k+1..-1],'alpha[0]: %f')[1]);
+    	if err<>lasterror then alphaEst := err fi:
+    fi:
+    if inv_sites then 
+    	k := SearchString('invar[0]:', confLineBestRun);
+    	err := traperror(sscanf(confLineBestRun[k+1..-1], 'invar[0]: %f')[1]);
+    	if err<>lasterror then invSiteEst := err fi:
+    fi:
+    if estBFreq then
+    	# get startpos of the base frequences, and append the newline for finish
+    	k := SearchAllString('pi(',res[2]):
+    	k := append(k, SearchString('\n',res[2,k[-1]..k[-1]+20])+k[-1]);
+    	freqs := CreateArray(1..20):
+    	for j to length(k)-1 do
+    		tmp := sscanf(res[2,k[j]..k[j+1]-1], 'pi(%[^)]): %f');
+    		freqs[ AToInt(tmp[1]) ] := tmp[2];
+    	od:
+    fi:
+
+    if bs=0 then 
+    	tree := ParseNewickTree( ReadRawFile(mltreeFN) );
+    else
+    	# compute bootstraps and map values onto mltree
+    	bscmd := cmd[1..SearchString(' -n ',cmd)];
+    	bsColcmd := copy(bscmd);
+    	bscmd := bscmd . ' -n '.bstFN.' -x 12345 -# '.bs;
+        printf('%s\n', bscmd);
+    	bsres := TimedCallSystem(bscmd):
+    	if bsres[1]<>0 then 
+    		printf('**** Bootstrap failed ****\n%s\n\n',bsres[2]);
+    		tree := ParseNewickTree( ReadRawFile(mltreeFN) );
+    	else
+    		# mapping bs values onto mltree
+    		bsColcmd := bsColcmd . ' -n ' . mlBstFN . ' -f b -z ' .
+    			wdir . 'RAxML_bootstrap.' . bstFN . ' -t '.mltreeFN;
+    		bsColres := TimedCallSystem(bsColcmd):
+    		if bsColres[1]<>0 then 
+    			printf('**** Mapping of bootstrap values on ML ' .
+    			       'tree failed ****\n%s\n\n', bsColres[2]);
+    			tree := ParseNewickTree( ReadRawFile(mltreeFN) ):
+    		else
+    			tree := ParseNewickTree(ReadRawFile(
+    				wdir.'RAxML_bipartitions.'.mlBstFN));
+    		fi:
+    	fi:
+    fi:
+    
+    # cleanup
+    CallSystem('rm -f '.wdir.'RAxML*' . pid . '* ' . msaFN . ' ' .
+        inputTreeFN . ' ' . protModelFN);
+    
+    for leaf in Leaves(tree) do leaf[1] := labels[parse(leaf[1])]; od;
+    msa_['labels'] := labels;
+    
+    treeRes := TreeResult(tree, 'ML', 'Likelihood'=lk, 'SubstModel'=subst, 
+                            'Method'='RAxML', 'CPUtime'=t);    
+    if freqs <> -1 then
+        treeRes['BaseFreqs'] := freqs;
+    fi;
+    if invSiteEst <> -1 then
+        treeRes['InvSites'] := invSiteEst;
+    fi;
+    if alphaEst <> -1 then
+        treeRes['Alpha'] := alphaEst;
+    fi;
+    return(treeRes);
+end:
+
+
+PhyML := proc(msa:{list(string),MAlignment} ; ids:list(string),
+    'subst'=((subst='JTT'):{'HKY85','JC69','K80','F81','F84','TN93',
+        'GTR','LG','WAG','JTT','MtREV','Dayhoff','DCMut','RtREV','CpREV',
+	'VT','Blosum62','MtMam','MtArt','HIVw','HIVb'}),
+    'nr_bootstrap'=((nr_bootstrap=0):{numeric,0}),
+    'inv_sites'=((inv_sites='e'):{positive,0,'e'}),
+    'rate_cats'=((rate_cats=4):numeric),
+    'gamma_dist'=((gamma_dist='e'):{positive,'e'}),
+    'start_tree'=((start_tree='MP'):{Tree,'MP','BioNJ'}),
+    'opt_topo'=((opt_topo=true):boolean),
+    'opt_branch'=((opt_branch=true):boolean),
+    'opt_rates'=((opt_rates=true):boolean),
+    'seqtype'=((seqtype='AA'):{'AA','DNA'}),
+    'search_heuris'=((search_heuris='NNI'):{'NNI','SPR','BEST'}),
+    'LnLperSite'=((LnLperSite=false):boolean),
+    'binary'=((binary=''):string),
+    'min_diff_lk_local'=((min_diff_lk_local=0.0001):numeric))
+    
+    fnPre := GetTmpDir().'t'.string(getpid()).'_'.string(Rand(1..1e8));
+    seqfn := fnPre.'infile';
+   
+    labels := msa['labels'];
+    msa['labels'] := [seq(string(i),i=1..length(msa['InputSeqs']))];
+    st := '':
+    if type(start_tree, Tree) then
+        st := copy(start_tree);
+        for leaf in Leaves(st) do
+            leaf[1] := SearchArray(leaf[1], labels);
+        od;
+    fi:
+   
+    selection := GetWrapperChoice('Tree/PhyML_3.0/PhyML_3.0_linux64', 
+    'PhyML_3.0', binary, 'relPath32'='Tree/PhyML_3.0/PhyML_3.0_linux32');
+    if selection = BINARY_HARDCODED then
+        phymlfn := binary;
+    elif selection = BINARY_IN_PATH then
+        phymlfn := 'PhyML_3.0';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        phymlfn := GetWrapperDir().'Tree/PhyML_3.0/PhyML_3.0_linux64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        phymlfn := GetWrapperDir().'Tree/PhyML_3.0/PhyML_3.0_linux32';
+    else
+        error('unknown selection');
+    fi;
+    
+    WritePHYLIP(seqfn, msa, If( assigned(ids), ids, NULL) );
+    
+    if type(start_tree,Tree) then
+        gcp := Set(printgc=false);
+        OpenWriting(fnPre.'starttopo');
+        prints(Tree_Newick(st).';' );
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        intr := '-u '.fnPre.'starttopo ';
+    elif start_tree = 'MP' then
+        intr := '-p ';
+    else
+	intr := '';
+        # start tree is BioNJ
+    fi;
+    optp := '';
+    if opt_topo then optp := optp.'t'; fi;
+    if opt_branch then optp := optp.'l'; fi;
+    if opt_rates then optp := optp.'r'; fi;
+    if length(optp) > 0 then 
+        optp := '-o '.optp;
+    else
+        optp := '-o n';
+    fi;
+    
+    params := sprintf('-i %s -d %s -q %s -m %s -b %s -v %s'.
+              '-c %s -a %s %s -s %s %s %s --quiet', 
+              seqfn, If(seqtype='AA','aa','nt'), intr, subst, 
+              string(nr_bootstrap), string(inv_sites), string(rate_cats),
+              string(gamma_dist), optp, search_heuris,
+              If(LnLperSite, '--print_site_lnl', ''),
+              If(min_diff_lk_local <> 0.0001, 
+                '--min_diff_lk_local '.string(min_diff_lk_local), '' )); 
+    
+    cmd := sprintf('%s %s', phymlfn, params);
+   
+    #dprint(cmd);
+
+    if printlevel >= 2 then prints(cmd) fi:
+    t := time(all);
+    res := TimedCallSystem(cmd, 259200);
+    t := time(all) - t;
+    if res[1] <> 0 then error('unsuccessful call: '.cmd) fi;
+    
+    stre := ReadRawFile(fnPre.'infile_phyml_tree');
+    tr := ParseNewickTree(stre);
+    for leaf in Leaves(tr) do leaf[1] := labels[parse(leaf[1])]; od;
+    msa['labels'] := labels;
+    
+    alpha := pinv := -1;
+    ll := SplitLines(ReadRawFile(fnPre.'infile_phyml_stats'));
+    for lli in ll do
+        if SearchString('Log-likelihood:', lli) > -1 then
+            logli := sscanf(lli, '. Log-likelihood: %f')[1];
+        elif rate_cats <> 1 and 
+            SearchString('Gamma shape parameter:', lli) > -1 then
+            alpha := sscanf(lli, '  - Gamma shape parameter: %f')[1];
+        elif inv_sites <> 0 and
+            SearchString('Proportion of invariant:', lli) > -1 then
+            pinv := sscanf(lli, '. Proportion of invariant: %f')[1];
+        fi;
+    od;
+
+    lnlsite := []:
+    if LnLperSite then
+        lnlfile := SplitLines(ReadRawFile(fnPre.'infile_phyml_lk')):
+        for i from 8 to length(lnlfile) do
+            lnline := sscanf(lnlfile[i], '%i %f %f %f %f %f %f %f'):
+            lnlsite := append(lnlsite, log(lnline[2])):
+        od:
+    fi:
+    
+    CallSystem('rm -f '.fnPre.'infile '.fnPre.'infile_phyml_tree '.
+                fnPre.'infile_phyml_stats ');
+    if type(start_tree,Tree) then CallSystem('rm '.fnPre.'starttopo'); fi;
+    if LnLperSite then CallSystem('rm '.fnPre.'infile_phyml_lk'): fi;
+
+    treeRes := TreeResult( tr, 'ML', 'Likelihood'=logli, 'SubstModel'=subst, 
+                            'Method'='Phyml 3.0', 'CPUtime'=t);
+    if alpha <> -1 then
+        treeRes['Alpha'] := alpha;
+    fi;
+    if pinv <> -1 then
+        treeRes['InvSites'] := pinv;
+    fi;
+    if LnLperSite then
+        treeRes['LnLperSite'] := lnlsite:
+    fi:
+    return(treeRes);
+end:
+
+PhyML_2_0 := proc(msa:MAlignment;
+    ids_:list(string),
+    'subst'=((subst='JTT'):{'JTT','Dayhoff','WAG','mtREV','DCMut','CpREV','VT','Blosum62', 'HKY', 'GTR', 'JC69'}),
+    'nr_bootstrap'=((nr_bootstrap=0):{posint,0}),
+    'inv_sites'=((inv_sites='e'):{positive,0,'e'}),
+    'rate_cats'=((rate_cats=4):posint),             #nr of rate categories
+    'gamma_dist'=((gamma_dist='e'):{positive,'e'}),  #shape of gamma distribution. <0.7:high variation; >1.5low variation
+    'start_tree'=((start_tree='BIONJ'):{Tree,'BIONJ'}),
+    'opt_topo'=((opt_topo=true):boolean),
+    'opt_branch'=((opt_branch=true):boolean),
+    'nr_runs'=((nr_runs=1):posint),
+    'seqtype'=((seqtype='AA'):{'AA','DNA'}))
+    
+    if type(inv_sites,numeric) and inv_sites>1.0 then 
+        error('invalid ratio of invariant sites: '.inv_sites) 
+    fi;
+    if opt_topo and not opt_branch then 
+        error('invalid argument combination: can''t optimize topo without branch lengths.') 
+    fi;
+    
+    
+    N := length(msa):
+    l := length(msa[1]):
+    
+    gcstat := Set(printgc=false):
+    #print(seqFile);
+    OpenWriting(seqFile):
+    printf('%d %d\n', N, l):
+    
+    if not assigned(ids_) then
+        ids := CreateArray(1..N):
+        for i to N do
+            ids[i] := sprintf('%d',i);
+        od:
+    else
+        ids := copy(ids_):
+    fi:
+    
+    LabWidth := max( zip(length(ids)) ) + 3:
+    for i to N do
+        ids[i] := ids[i] . CreateString( LabWidth - length(ids[i]) );
+    od:
+    
+    for i to N do
+        Aseq := copy(msa[i]):
+        for k to l do if Aseq[k]='_' then Aseq[k] := '-' fi od:
+        
+        printf('%s%s\n', ids[i], Aseq):
+    od:
+    OpenWriting(previous):
+    
+    if nr_runs>1 then error('not yet implemented multiple runs') fi:
+    
+    if type(start_tree,Tree) then
+        for i in Prefix(start_tree) do i[Height] := |i[Height]| od;
+        OpenWriting(inTreeFile);
+        printf('%s\n', Darwin2UnrootedNewick(start_tree));
+        OpenWriting(previous);
+    fi:
+    
+    if seqtype = 'AA' then seqtypeI := 1; ttr := '';
+    else seqtypeI := 0; ttr := ' e '; fi;
+    
+    cmd := phyml.' '.seqFile.' '.string(seqtypeI).' s 1 '.nr_bootstrap.' '
+       .subst.' '
+       .ttr
+       .inv_sites.' '
+       .rate_cats . ' ' . gamma_dist . ' '
+       .If(type(start_tree,Tree), inTreeFile, start_tree) . ' '
+       .If(opt_topo,'y','n') . ' ' . If(opt_branch,'y','n');
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := tima('all') - cputime;
+    
+    if res[1]<>0 or SearchString('Err:', res[2])>-1 then
+        print('Error while executing Phyml');
+        printf('%s\n',res[2]);
+        error('Error while executing Phyml');
+    fi:
+    
+    tree := ParseNewickTree(SearchDelim('\n',ReadRawFile(seqFile.'_phyml_tree.txt'))[1]);
+    
+    lk := sscanf( ReadRawFile(seqFile.'_phyml_lk.txt'), '%f' )[1];
+    
+    CallSystem('rm -f '.seqFile.'* '.inTreeFile.' '.rootedOut );
+    
+    
+    Set(printgc=gcstat):
+    treeRes := TreeResult(tree, 'ML', 'Likelihood'=lk, 'SubstModel'=subst,
+                            'Method'='Phyml 2.x', 'CPUtime'=cputime);
+    return( treeRes );
+end:
+
+###############################################################################
+#
+#   CodonPhyML
+#
+#   CodonPhyML is a wrapper function to compute ML trees by CodonPhyML. See
+#   http://sourceforge.net/projects/codonphyml/
+#   for program homepage and for publications:
+#
+#   Zanetti, Gil and Anisimova, 
+#   CodonPhyML: Fast Maximum Likelihood Phylogeny Estimation under Codon Models,
+#	2011 (preprint)
+#
+#                                        Stefan Zoller, Jun 21, 2011
+###############################################################################
+
+
+CodonPhyML := proc(msa:{list(string),MAlignment} ;
+    ids:list(string),
+    'subst'=((subst='JTT'):{'HKY85','JC69','K80','F81','F84','TN93',
+        'GTR','LG','WAG','JTT','MtREV','Dayhoff','DCMut','RtREV','CpREV',
+        'VT','Blosum62','MtMam','MtArt','HIVw','HIVb', 'GY', 'MG', 'YAP'}),
+    'nr_bootstrap'=((nr_bootstrap=0):{numeric,0}),
+    'inv_sites'=((inv_sites='e'):{positive,0,'e'}),
+    'rate_cats'=((rate_cats=4):numeric),
+    'gamma_dist'=((gamma_dist='e'):{positive,'e'}),
+    'start_tree'=((start_tree='MP'):{Tree,'MP','BioNJ'}),
+    'opt_topo'=((opt_topo=true):boolean),
+    'opt_branch'=((opt_branch=true):boolean),
+    'opt_rates'=((opt_rates=true):boolean),
+    'seqtype'=((seqtype='AA'):{'AA','DNA', 'CODON'}),
+    'search_heuris'=((search_heuris='NNI'):{'NNI','SPR','BEST'}),
+    'binary'=((binary=''):string),
+    'parametricsubst'=((parametricsubst=''):{'', 'ECM', 'PCM'}),
+    'freqmod'=((freqmod='CF3X4'):{'CF3X4', 'F3X4', 'F1X4', 'F1XCODONS'}),
+    'freqest'=((freqest='e'):{'e', 'm', list(numeric)}),
+    'kapsemipar'=((kapsemipar=1):numeric),
+    'kapmode'=((kapmode='e'):{false, 'e', numeric}),
+    'omegaest'=((omegaest='e'):{false, 'e', 'f'}),
+    'omegamod'=((omegamod='DM0'):{'DM0', 'DMODEL', 'DGAMMA'}),
+    'omegacat'=((omegacat=false):{numeric, boolean}),
+    'omegainit'=((omegainit=false):{numeric, list(numeric), boolean}),
+    'omegagdist'=((omegagdist=false):{boolean, list(numeric)}),
+    'pcs'=((pcs=2):numeric),
+    'ratemat'=((ratemat='K07'):{'K07', 'S05', 'USR'}),
+    'usermat'=((usermat=''):string),
+    'LnLperSite'=((LnLperSite=false):boolean)
+    )
+    
+    fnPre := GetTmpDir().'t'.string(getpid()).'_'.string(Rand(1..1e8));
+    seqfn := fnPre.'infile';
+    
+    labels := msa['labels'];
+    msa['labels'] := [seq(string(i),i=1..length(msa['InputSeqs']))];
+    
+    selection := GetWrapperChoice('Tree/CodonPhyML/codonphyml_linux64', 'codonphyml', 
+                            binary, 'relPath32'='Tree/CodonPhyML/codonphyml_linux32');
+    if selection = BINARY_HARDCODED then
+        codonphymlfn := binary;
+    elif selection = BINARY_IN_PATH then
+        codonphymlfn := 'codonphyml';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        codonphymlfn := GetWrapperDir().'Tree/CodonPhyML/codonphyml_linux64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        codonphymlfn := GetWrapperDir().'Tree/CodonPhyML/codonphyml_linux32';
+    else
+        error('unknown selection');
+    fi;
+    
+    WritePHYLIP(seqfn, msa, If( assigned(ids), ids, NULL) );
+    
+    if type(start_tree,Tree) then
+        gcp := Set(printgc=false);
+        OpenWriting(fnPre.'starttopo');
+        prints(Tree_Newick(start_tree).';' );
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        intr := '-u '.fnPre.'starttopo ';
+    elif start_tree = 'MP' then
+        intr := '-p ';
+    else
+	intr := '';
+        # start tree is BioNJ
+    fi;
+    optp := '';
+    if opt_topo then optp := optp.'t'; fi;
+    if opt_branch then optp := optp.'l'; fi;
+    if opt_rates then optp := optp.'r'; fi;
+    if length(optp) > 0 then 
+        optp := '-o '.optp;
+    else
+        optp := '-o n';
+    fi;
+
+    # construct model definition for codonphyml
+    tempmodel := subst:
+    if parametricsubst <> '' then
+        if not member(subst, ['GY', 'MG', 'YAP']) then
+            error('if a semiparametric model is chosen, you need to choose 
+            [GY,MG,YAP] as substitution model');
+        fi:
+        if parametricsubst = 'ECM' or parametricsubst = 'PCM' then
+            tempmodel := tempmodel . 'ECM'. ratemat;
+        fi:
+        if not omegaest = false then
+            tempmodel := tempmodel . 'W':
+        fi:
+        if not kapmode = false then
+            tempmodel := tempmodel . 'K':
+        fi:
+    fi:
+
+    if member(subst, ['GY', 'MG', 'YAP']) then
+        tempmodel := tempmodel . freqmod:
+    fi:
+
+    if tempmodel <> subst then
+        subst := tempmodel;
+    fi:
+
+    # construct frequency string
+    freqstring := '':
+    if type(freqest, list) then
+        freqstring := '"':
+        for i to length(freqest)-1 do
+            freqstring := freqstring . ',' . freqest[i]:
+        od:
+        freqstring := freqstring . freqest[i] . '"':
+    else
+        freqstring := freqest:
+    fi:
+
+    # construct kappa string
+    kappastring := '':
+    if parametricsubst <> '' then
+        kappastring := 'KAP' . kapsemipar:
+    else
+        kappastring := kapmode:
+    fi:
+
+    # construct omega string
+    omegastring := '':
+    if omegaest <> false then
+        omegastring := omegaest . '_' . omegamod:
+        if omegamod = 'DMODEL' and omegacat <> false then
+            omegastring := omegastring . '_' . omegacat:
+            if omegainit <> false then
+                if type(omegainit, list) then
+                    omegastring := omegastring . '_':
+                    for i to length(omegainit)-1 do
+                        omegastring := omegastring . omegainit[i] . ',':
+                    od:
+                    omegastring := omegastring . omegainit[i]:
+                fi:
+            fi:
+        elif omegamod = 'DM' and omegainit <> false then
+            omegastring := omegastring . '_' . omegainit:
+        elif omegacat <> false then
+            omegastring := omegastring . '_' . omegacat:
+            if omegagdist <> false then
+                omegastring := omegastring . '_' . omegagdist[1] . ',' . omegagdist[2]:
+            fi:
+        fi:
+    fi:
+
+    if usermat <> '' then
+        CallSystem('cp ' . usermat . ' ' . fnPre . 'usermatrix.ecm'):
+    fi:
+
+    params := sprintf('-i %s -d %s -q %s -m %s -b %s -v %s '.
+              '-c %s -a %s %s -s %s -f %s -t %s -w %s %s %s --quiet', seqfn, 
+              lowercase(seqtype), intr, subst, string(nr_bootstrap), 
+              string(inv_sites), string(rate_cats),
+              string(gamma_dist), optp, search_heuris, freqstring, 
+              kappastring, omegastring, 
+              If(parametricsubst = 'PCM', '--PCAMODEL '.pcs, ''),
+              If(LnLperSite, '--print_site_lnl', ''));
+    
+    cmd := sprintf('%s %s', codonphymlfn, params);
+    
+    if printlevel >= 2 then prints(cmd) fi:
+    t := time(all);
+    res := TimedCallSystem(cmd, 259200);
+    t := time(all) - t;
+    if res[1] <> 0 then error('unsuccessful call: '.cmd) fi;
+    
+    stre := ReadRawFile(fnPre.'infile_phyml_tree.txt');
+    tr := ParseNewickTree(stre);
+    for leaf in Leaves(tr) do leaf[1] := labels[parse(leaf[1])]; od;
+    msa['labels'] := labels;
+  
+    alpha := pinv := omega := kappa := -1;
+    ll := SplitLines(ReadRawFile(fnPre.'infile_phyml_stats.txt'));
+    for lli in ll do
+        if SearchString('. Log-likelihood:', lli) > -1 then
+            logli := sscanf(lli, '. Log-likelihood: %f')[1];
+        elif rate_cats <> 1 and 
+            SearchString('Gamma shape parameter:', lli) > -1 then
+            alpha := sscanf(lli, '  - Gamma shape parameter: %f')[1];
+        elif inv_sites <> 0 and
+            SearchString('Proportion of invariant:', lli) > -1 then
+            pinv := sscanf(lli, '. Proportion of invariant: %f')[1];
+        #elif kapmod = 'e' and
+        #    SearchString('. Transition/transversion ratio:', lli) > -1 then
+        #    kappa := sscanf(lli, '. Transition/transversion ratio: %f')[1]:
+        #elif kapmod = 'e' and kapsemipar = 4 and
+        #    SearchString('. Emp. Transition/transversion ratio:', lli) > -1 then
+        #    kappa := sscanf(lli, '. Emp. Transition/transversion ratio:   nts: %f ntv: %f'):
+        #elif omegaest = 'e' and
+        #    SearchString('. Nonsynonymous/synonymous ratio:', lli) > -1 then
+        #    omega := sscanf(lli, '. Nonsynonymous/synonymous ratio: %f')[1]:
+        fi;
+    od;
+
+
+    lnlsite := []:
+    if LnLperSite then
+        lnlfile := SplitLines(ReadRawFile(fnPre.'infile_phyml_lk.txt')):
+        for i from 8 to length(lnlfile) do
+            lnline := sscanf(lnlfile[i], '%i %f %f %f %f %f %f %f'):
+            lnlsite := append(lnlsite, log(lnline[2])):
+        od:
+    fi:
+
+    
+    CallSystem('rm -f '.fnPre.'infile '.fnPre.'infile_phyml_tree.txt '.
+                fnPre.'infile_phyml_stats.txt');
+    if type(start_tree,Tree) then CallSystem('rm '.fnPre.'starttopo'); fi;
+    if LnLperSite then CallSystem('rm '.fnPre.'infile_phyml_lk.txt'): fi;
+
+    
+    treeRes := TreeResult( tr, 'ML', 'Likelihood'=logli, 'SubstModel'=subst,      
+                            'Method'='CodonPhyML', 'CPUtime'=t);
+    if alpha <> -1 then
+        treeRes['Alpha'] := alpha;
+    fi;
+    if pinv <> -1 then
+        treeRes['InvSites'] := pinv;
+    fi;
+    if LnLperSite then
+        treeRes['LnLperSite'] := lnlsite:
+    fi:
+    
+    #
+    # It would be possible to include the following information as well; but we
+    # would need to adapt TreeResult to hold 'omega', 'kappa' and 'PC'. No big
+    # deal; just not used yet and therefore not implemented.
+    #
+    # if omega <> -1 then
+    #     treeRes['Omega'] := omega;
+    # fi:
+    # if kappa <> -1 then
+    #     treeRes['Kappa'] := kappa;
+    # fi:
+    # if parametricsubst = 'PCM' then
+    #     treeRes['PC'] := pcs:
+    # fi:
+    return(treeRes);
+end:
+
+WritePHYLIP := proc(fn:string, msa_:{list(string),MAlignment} ;
+        labs_:list(string),
+        (replMissing=false):boolean)
+
+    if type(msa_,MAlignment) then 
+        msa := msa_['AlignedSeqs'];
+        labs := copy(msa_['labels']);
+    else 
+        msa := msa_:
+        if not assigned(labs_) then 
+            labs := [seq( sprintf('L%d', i), i=1..length(msa))]:
+        else labs := copy(labs_): fi:
+    fi:
+
+    # check msa:
+    #  1) not completely identical seqs
+    #  2) ids differ
+    N := length(msa):
+    l := length(msa[1]):
+    if length(labs)<>N then error('Number of sequences and labels must match') fi:
+    for i to N do for j from i+1 to N do 
+        #if msa[i]=msa[j] then 
+        #    error('At least 2 sequences are exactely the same: '.i.', '.j) fi; 
+        if labs[i]=labs[j] then 
+            error('The labels of sequences '.i.' and '.j.' are equal') fi:
+    od od:
+ 
+    gcstat := Set(printgc=false);
+    LabWidth := max(zip(length(labs))) + 3;
+    ids := copy(labs);
+    for i to N do ids[i] := ids[i].CreateString(LabWidth-length(ids[i])); od;
+    OpenWriting(fn);
+    printf('%d %d\n', N, l);
+    for i to N do
+        Aseq := copy(msa[i]):
+        for k to l do
+        if Aseq[k]='_' then Aseq[k] := '-' fi; 
+        if replMissing and member(Aseq[k],{'X','x','B','b','Z','z'}) then
+            Aseq[k] := '-';
+        fi;
+        od:
+        printf('%s%s\n', ids[i], Aseq):
+    od:
+    OpenWriting(previous):
+end:
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+FastTree := proc(msa:{list(string),MAlignment}; ids:list(string),
+              'subst'=((subst='JTT'):{'JTT', 'WAG', 'GTR', 'JC'}),
+              'seqtype'=((seqtype='AA'):{'AA', 'DNA'}),
+              'intree'=((intree=''):{Tree, ''}),
+              ## newick_file to set the starting tree(s)
+              'intree1'=((intree1=''):{Tree, ''}),
+              ## newick_file to use this starting tree for all the alignments
+              'quote'=((quote=false):boolean),
+              ## allow spaces and other restricted characters (but not ' ) in sequence names and quote names in the output tree (fasta input only; FastTree will not be able to read these trees back in)
+              'pseudo'=((pseudo=false):boolean),
+              ## to use pseudocounts (recommended for highly gapped sequences)
+              'noml'=((noml=false):boolean),
+              ## turn off maximum-likelihood
+              'nome'=((nome=false):boolean),
+              ## turn off minimum-evolution NNIs and SPRs
+              'cat'=((cat=20):posint),
+              ## to specify the number of rate categories of sites (default 20)
+              ## or -nocat to use constant rates
+              'gamma'=((gamma=false):boolean),
+              ## after optimizing the tree under the CAT approximation, rescale the lengths to optimize the Gamma20 likelihood
+              'opts'=((opts=''):string),
+              'binary'=((binary=''):string)
+              )
+  pid := getpid();
+  tmpDir := GetTmpDir();
+
+  seqin := tmpDir.'seqs.fa.'.pid;
+  treeout := tmpDir.'treeout'.pid;
+  intreeFn := tmpDir.'intree'.pid;
+  intree1Fn := tmpDir.'intree1'.pid;
+
+  selection := GetWrapperChoice('Tree/FastTree-2.1.7/FastTree','FastTree',binary);
+  if selection = BINARY_HARDCODED then
+    FastTreeFn := binary;
+  elif selection = BINARY_IN_PATH then
+    FastTreeFn := 'FastTree';
+  elif selection = BINARY_IN_WRAPPER_FOLDER then
+    FastTreeFn := GetWrapperDir().'Tree/FastTree-2.1.7/FastTree';
+  else
+    error('no such selection');
+  fi;
+  WriteFasta(msa['AlignedSeqs'], msa['labels'], seqin);
+  sleep(1);
+  cmdSed := sprintf('sed -i ''s/_/-/g'' %s', seqin);
+  TimedCallSystem(cmdSed);
+  sleep(2);
+  cmd := sprintf('%s -out %s -cat %d', FastTreeFn, treeout, cat);
+  if type(intree, Tree) then
+    WriteTreeNewick(intreeFn, intree);
+    cmd := cmd.' -intree '.intreeFn;
+  fi;
+  if type(intree1, Tree) then
+    WriteTreeNewick(intree1Fn, intree1);
+    cmd := cmd.' -intree1 '.intree1Fn;
+  fi;
+  if quote then
+    cmd := cmd.' -quote ';
+  fi;
+  if pseudo then
+    cmd := cmd.' -pseudo ';
+  fi;
+  if noml then
+    cmd := cmd.' -noml ';
+  fi;
+  if nome then
+    cmd := cmd.' -nome ';
+  fi;
+  if gamma then
+    cmd := cmd.' -gamma ';
+  fi;
+  if seqtype = 'DNA' then
+    cmd := cmd.' -nt ';
+    if subst = 'GTR' then
+      cmd := cmd.' -gtr ';
+    fi;
+  else
+    if subst = 'WAG' then
+      cnd := cmd.' -wag ';
+    fi;
+  fi;
+
+  cmd := cmd.opts;
+  cmd := cmd.' '.seqin;
+
+  prints(cmd);
+  cputime := time(all);
+  res := TimedCallSystem(cmd);
+  cputime := time(all) - cputime;
+  if res[1] = -1 then
+    error('could not run FastTree: '.res[2].'; code='.res[1]);
+  fi;
+  tr := ParseNewickTree(ReadRawFile(treeout));
+  treeRes := TreeResult(tr, 'ML', 'SubstModel'=subst,
+               'Method'='FastTree', 'CPUtime'=cputime);
+  # cleaning
+  DeleteFiles([seqin, treeout]);
+  if type(intree1, Tree) then
+    DeleteFiles([intree1Fn]);
+  fi;
+  if type(intree, Tree) then
+    DeleteFiles([intreeFn]);
+  fi;
+  return(treeRes);
+end:
+
+end: # module

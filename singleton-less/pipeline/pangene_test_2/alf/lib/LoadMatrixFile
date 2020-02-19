@@ -1,0 +1,92 @@
+# Function to load a matrix file in PAML compatible format. Creates a 1-PAM matrix and assigns it
+# to the global variables NewLogPAM1 and logPAM1
+# it is assumed that the order of amino acids and codons is always the same and the matrix is
+# re-ordered to correspond to the order used by Darwin.
+LoadMatrixFile := proc(file:string)
+    #global AF, logPAM1, CodonLogPAM1, NewLogPAM1;
+    
+    # parse PAML matrix file format    
+    f := SplitLines(ReadRawFile(file)):
+    tmpmat := [[]]:
+    tmpfreqs := []:
+    i := 1:
+    while i <= length(f) and (f[i] = '' or f[i] = '\r' or f[i] = '\n' or f[i] = '\r\n') do i := i+1 od:
+    if i > length(f) then error('unexpected end of file') fi:
+    
+    #parse matrix
+    do
+        tokens := SearchDelim(' ', f[i]):
+        newline := []:
+        for j to length(tokens) do
+            if tokens[j] = '' or tokens[j] = '\r' or tokens[j] = '\n' or tokens[j] = '\r\n' then next fi:
+            newline := append(newline, op(sscanf(tokens[j], '%g'))):
+        od:
+        tmpmat := append(tmpmat,newline):
+        
+        i := i + 1:
+        if f[i] = '' or f[i] = '\r' or f[i] = '\n' or f[i] = '\r\n' then break fi
+    od:
+    
+    if length(tmpmat) = 20 then
+        #mtype := 'Peptide':
+        msize := 20:
+        SA := ['A',  'R',  'N',  'D',  'C',  'Q',  'E',  'G',  'H',  'I',  'L',  'K',  'M',  'F',  'P',  'S',  'T',  'W',  'Y',  'V']:
+        convfunc := AToInt;
+    elif length(tmpmat) = 61 then
+        #mtype := 'Codon':
+        msize := 64:
+        SA := ['TTT', 'TTC', 'TTA', 'TTG', 'TCT', 'TCC', 'TCA', 'TCG', 'TAT', 'TAC', 'TGT', 'TGC', 'TGG', 'CTT', 'CTC', 'CTA', 'CTG', 'CCT', 'CCC', 'CCA',
+        'CCG', 'CAT', 'CAC', 'CAA', 'CAG', 'CGT', 'CGC', 'CGA', 'CGG', 'ATT', 'ATC', 'ATA', 'ATG', 'ACT', 'ACC', 'ACA', 'ACG', 'AAT', 'AAC', 'AAA',
+        'AAG', 'AGT', 'AGC', 'AGA', 'AGG', 'GTT', 'GTC', 'GTA', 'GTG', 'GCT', 'GCC', 'GCA', 'GCG', 'GAT', 'GAC', 'GAA', 'GAG', 'GGT', 'GGC', 'GGA',
+        'GGG', 'TAA', 'TAG', 'TGA']:
+        convfunc := CodonToCInt;
+    else
+        error('no a valid matrix file'):
+    fi:
+
+    matrix := CreateArray(1..msize, 1..msize, 0):
+    freqs := CreateArray(1..msize, 0):
+
+    while i <= length(f) and (f[i] = '' or f[i] = '\r' or f[i] = '\n' or f[i] = '\r\n') do i := i+1 od:
+    if i > length(f) then error('unexpected end of file') fi:
+
+    tokens := SearchDelim(' ', f[i]):
+    for j to length(tokens) do
+        if tokens[j] = '' or tokens[j] = '\r' or tokens[j] = '\n' or tokens[j] = '\r\n' then next fi:
+        tmpfreqs := append(tmpfreqs, op(sscanf(tokens[j], '%g'))):
+    od:
+        
+    if length(tmpfreqs) <> length(tmpmat) then error(length(tmpfreqs), length(tmpmat), 'matrix size doesn''t match frequency vector') fi:
+    
+    tmpfreqs := tmpfreqs/sum(tmpfreqs):
+    for i from 1 to length(tmpfreqs) do
+        ai := convfunc(SA[i]):
+        freqs[ai] := tmpfreqs[i]:
+        for j from 1 to i-1 do
+            aj := convfunc(SA[j]):
+            matrix[ai,aj] := tmpmat[i,j]*tmpfreqs[i]:
+            matrix[aj,ai] := tmpmat[i,j]*tmpfreqs[j]:
+        od:
+    od:
+        
+    qsum := sum(matrix):
+    for i to msize do matrix[i,i] := -qsum[i] od:
+    
+#    matrix := transpose(matrix):
+    
+#    if mtype = 'Codon' then
+#        CreateCodonMatrices(matrix, freqs):
+#    else
+#        AF := freqs:
+#        M := exp(matrix);
+#        logPAM1 := matrix;
+#        n := length(AF):
+#        do  d := sum( AF[i]*(1-M[i,i]), i=1..n );
+#            if |d-0.01| < DBL_EPSILON then break fi;
+#            logPAM1 := logPAM1 * 0.01/d;
+#            M := exp(logPAM1)
+#        od;
+#        NewLogPAM1 := logPAM1:
+#    fi:
+    [matrix, freqs]:
+end:

@@ -1,0 +1,160 @@
+#
+#	ComputeTSP - interface to Lin-Kernighan, if it exists
+#
+#	Wrapper written by Gaston Gonnet (March 28th, 2010)
+#
+#	Efficiency comments
+#
+#	ComputeCubicTSP is more efficient than linkern in both
+#	time and quality of the solution.  The quality part is true
+#	for the problems arising from biology, it is not true for
+#	distance matrices with random numbers (for those, linkern
+#	gives better solutions).  Linkern suffers from having to call
+#	an external program and that may account for its lower time
+#	efficiency.  See programs at the end.
+#
+#	The current version is implemented with a remember option which
+#	is order invariant
+#
+#	Gaston Gonnet (April 3rd, 2010)
+#
+ComputeTSP_LK := proc( Dist:matrix(nonnegative) )
+global Lin_Kernighan_exists;
+
+n := length(Dist);
+if Lin_Kernighan_exists = false or n <= 11 then
+    return( ComputeCubicTSP(Dist,round(sqrt(n))) ) fi;
+
+tmp := 'Lin_Kernighan_' . Rand(1e7..1e8-1) . '.tsp';
+OpenWriting( tmp );
+  printf( 'NAME: FromDarwin\nDIMENSION: %d\n', n );
+  lprint( 'EDGE_WEIGHT_TYPE: EXPLICIT' );
+  lprint( 'EDGE_WEIGHT_FORMAT: UPPER_ROW ' );
+  lprint( 'EDGE_WEIGHT_SECTION' );
+  f := (2^31-1) / max(Dist) / n:
+  for i to n-1 do
+      for j from i+1 to n do printf( ' %d', round(Dist[i,j]*f) ) od;
+      printf( '\n' );
+  od;
+  lprint( 'EOF' );
+OpenWriting( previous );
+
+r := CallSystem( 'linkern -o ' . tmp . '.out ' .  tmp . ' >/dev/null' );
+if r <> 0 then
+     Lin_Kernighan_exists := false;
+     tour := ComputeCubicTSP(Dist,round(sqrt(n)))
+else r := SearchDelim( '\n', ReadRawFile( tmp . '.out' ));
+     if length(r) <> n+1 or r[1] <> '' . n . ' ' . n then
+	error(r,'unexpected result from Lin-Kernighan') fi;
+     CallSystem( 'rm -f ' . tmp . '.out ' . tmp );
+     tour := [];
+     for i from 2 to n+1 do tour := append(tour,sscanf(r[i],'%d')[1]+1) od;
+     if sort(tour) <> [seq(i,i=1..n)] then
+	error(tour,'Lin-Kernighan produced an invalid tour') fi;
+     tour
+fi;
+tour
+end:
+
+
+
+ComputeTSP := proc( Dist:matrix(nonnegative) )
+global ComputeTSP_table;
+
+n := length(Dist);
+if n <= 8 then return( ComputeCubicTSP(Dist,round(sqrt(n))) ) fi;
+
+# remember the result (in a permutation invariant form)
+if not assigned(ComputeTSP_table) then ComputeTSP_table := table() fi;
+sums := sort( [seq([sum(Dist[i]),i],i=1..n)] );
+map2 := [seq(w[2],w=sums)];
+D2 := CreateArray(1..n,1..n);
+for i to n do for j from i+1 to n do
+	D2[i,j] := D2[j,i] := Dist[map2[i],map2[j]] od od;
+r := ComputeTSP_table[D2];
+if r <> unassigned then
+     map1 := r[2];
+     map3 := CreateArray(1..n);
+     for i to n do map3[map1[i]] := map2[i] od;
+     tour := [seq(map3[i],i=r[1])];
+     score := sum( Dist[tour[i],tour[i+1]], i=1..n-1 ) + Dist[tour[1],tour[n]];
+     assert( |score-r[3]| <= n*DBL_EPSILON*|r[3]| );
+     return( tour );
+fi;
+
+tour := ComputeCubicTSP(Dist,round(sqrt(n)));
+score := sum( Dist[tour[i],tour[i+1]], i=1..n-1 ) + Dist[tour[1],tour[n]];
+ComputeTSP_table[D2] := [copy(tour),map2,score];
+tour
+end:
+
+# code for comparing the efficiency of darwin vs linkern
+# (the times cannot be compared automatically, linkern is external)
+# D := [[...]]:
+# n := length(D);
+# D2 := CreateArray(1..n,1..n):
+# sta1 := Stat('Time LinKer - Darwin'):
+# sta2 := Stat('Score LinKer - Darwin'):
+# to 100 do
+#     map := Shuffle( [seq(i,i=1..n)] );
+#     for i to n do for j from i+1 to n do D2[i,j] := D2[j,i] := D[map[i],map[j]] od od;
+#     st0 := time();  t1 := ComputeTSP_LK(D2);
+#     st1 := time();  t2 := ComputeCubicTSP(D2,round(sqrt(n)));
+#     UpdateStat( sta1, 2*st1-time()-st0 );
+#     score1 := sum( D2[t1[i],t1[i+1]], i=1..n-1) + D2[t1[1],t1[n]];
+#     score2 := sum( D2[t2[i],t2[i+1]], i=1..n-1) + D2[t2[1],t2[n]];
+#     UpdateStat( sta2, score1-score2 );
+# od:
+#     
+# print(sta1,sta2); 
+# 
+
+# #
+# #       Code to find sets of size m whose polynomial signatures of degree m-1
+# #       are identical (regardless of the coefficients)
+# #       April 4th, 2010
+# #
+# Set(gc=1e8):  SetRandSeed():
+# 
+# n := 50;
+# m := 5;
+# t := table();
+# sums := proc(s) [ seq( sum(w^i,w=s), i=1..m-1 )] end:
+# 
+# Locate := proc( s, i, t )
+#     ss := sum(w^i,w=s);
+#     nt := t[ss];
+#     if i = m-1 then
+#         if nt=unassigned then t[ss] := s
+#         elif nt <> s then error( s, nt, 'collision found' ) fi;
+#         return()
+#     fi;
+#     if nt = unassigned then nt := t[ss] := table() fi;
+#     procname(s,i+1,nt)
+# end:
+# 
+# for iter do
+#     s := {};
+#     while length(s) < m do s := s union {Rand(1..n)} od;
+#     Locate( s, 1, t );
+# od: 
+# sums(lasterror[1]), sums(lasterror[2]);
+# lprint( lasterror, iter );
+# 
+# 
+# # find collisions for an arbitrary signature
+# N := 260000;
+# sig := i -> floor(floor(1020922211+floor(282392460+840190548/(i))/(i))/(i)):
+# t := CreateArray(1..N,[]):
+# for i to N do
+#     s := {};
+#     while length(s) < m do s := s union {Rand(1..n)} od;
+#     ss := sum( sig(w), w=s );
+#     t[i] := [ss,s]
+# od: 
+# t := sort(t):
+# for i from 2 to N do
+#     if t[i-1,1] = t[i,1] and t[i-1] <> t[i] then
+#         lprint( 'collision:', t[i-1], t[i] ) fi
+# od:     
+# 

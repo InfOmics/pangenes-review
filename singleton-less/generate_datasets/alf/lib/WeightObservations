@@ -1,0 +1,47 @@
+#
+#  WeightObservations
+#
+#	Prepare matrices and vectors used for least squares approximations
+#	with given weights.
+#
+#	Given the matrix A (dim n x m) and the vector b (dim n)
+#	a least squares solution searches a vector x, such that
+#	Ax ~ b, or |Ax-b| is minimal in some sense.
+#
+#	A weighted least squares problem is equivalent to the above,
+#	except that every error is weighted by a (non-negative)
+#	factor w[i].  This is equivalent to minimizing | W*(Ax-b) |
+#	(where W is a diagonal matrix of weights).
+#
+#	In simpler terms, if a weight w[i] is an integer, then
+#	considering the weight is equivalent to having w[i]
+#	equal observations of the data point i.
+#
+#	Setting a weight to 0 is equivalent to deleting the
+#	observation.
+#
+#	WeightObservations prepares the matrix A^t * A, b^t * A
+#	and b^t *b with the given weights.  Usually, least squares
+#	approximating functions require these as input (SvdAnalysis,
+#	SvdBestBasis, etc.)
+#
+#					Gaston H. Gonnet (Aug 16, 2001)
+#
+WeightObservations := proc( A:matrix(numeric), b:list(numeric),
+	w:list(numeric) )
+n := length(A);
+m := length(A[1]);
+if length(b) <> n or length(w) <> n then error('invalid dimensions')
+elif min(w) < 0 then error('weights must be non-negative') fi;
+
+# do it iteratively instead of matrix products to insure that
+# the result is exactly symmetric and because it is faster
+AtA := CreateArray(1..m,1..m);
+At := transpose(A);
+Aw := transpose( [seq(A[i]*w[i],i=1..n)] );
+for i to m do
+    Awi := Aw[i];
+    for j from i to m do AtA[i,j] := AtA[j,i] := Awi*At[j] od
+    od;
+[ AtA, Aw*b, sum( b[i]^2*w[i], i=1..n ) ]
+end:

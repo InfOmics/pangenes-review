@@ -1,0 +1,889 @@
+# procedures for Synthetic evolution
+# Daniel Dalquen, Daniel Margadant, Sereina Riniker, CBRG, 2006
+#
+GenerateAssignments := proc(modelProbs, malen)
+    for i from 2 to length(modelProbs) do
+        modelProbs[i] := modelProbs[i-1] + modelProbs[i]:
+    od:
+    modelAssignments := CreateArray(1..malen):
+    for i to malen do
+        modelAssignments[i] := SearchOrderedArray(Rand()*modelProbs[-1], 
+                                                  modelProbs) + 1:
+    od:
+    modelAssignments
+end:
+
+
+########################################################################
+# procedures for analyses and reports on ALF data
+
+
+# counts L, Lo and D for a certain array of description strings
+# needed for testM()
+# countEvents := proc(des:array)
+#     r := [];
+#     for i to length(des) do
+#         lo := length(SearchAllString('Lo', des[i]));
+#         l := length(SearchAllString('L', des[i])) - lo;
+#         d := length(SearchAllString('D', des[i]));
+#         r := append(r, [lo, l, d]);
+#     od;
+#     Result := r;
+# end:
+# 
+# 
+# # checks oma group for ortholog consitency, check for LGT and Paralogs
+# testM := proc(oma:posint)
+#     IDs := CreateArray(1..N);
+#     des := CreateArray(1..N);
+#     for i to N do
+#         if M[oma, i] = 0 then next; fi;
+#         DB := ReadDb(GenomeFileName[genomes[i]]);
+#         IDs[i] := parse(SearchTag('ID', Entry(M[oma, i])));
+#         des[i] := SearchTag('DE', Entry(M[oma, i]));
+#     od;
+#     s := {op(IDs)} minus {0}; s:=s[1];
+#     orthoFalse := [];
+#     printf('\n\noma[%i]\n\n', oma);
+#     for i to N do
+#         if M[oma, i] = 0 then next; fi;
+#         if IDs[i] = s then
+#             h := countEvents([des[i]]);
+#             printf('org: %i\tLo: %i  L: %i  D: %i\n', i, op(op(h)));
+#             orthoTrue := op(h);
+#         # a second id is present in oma
+#         else
+#             # check if id is present in another group (=paralog)
+#             paralog := false;
+#             for j to N do
+#                 DB := ReadDb(GenomeFileName[genomes[j]]);
+#                 for k to DB[TotEntries] do
+#                     if parse(SearchTag('ID', Entry(k))) = IDs[i] then
+#                         if SearchArray(k, transpose(M)[j]) > 0 and 
+#                             SearchArray(k, transpose(M)[j]) <> oma then
+#                             paralog := true;
+#                             oma2 := SearchArray(k, transpose(M)[j]); 
+#                         fi;
+#                      fi;
+#                  od;
+#             od;
+#             h := countEvents([des[i]]);
+#             if paralog = true then
+#                 orthoFalse := append(orthoFalse, [i ,op(op(h))]);
+#                 printf('org: %i\tLo: %i  L: %i  D: %i'.
+#                     '  orthologs also in M[%i]\n', i, op(op(h)), oma2);
+#             else
+#                 printf('org: %i\tLo: %i  L: %i  D: %i\n', i, op(op(h)));
+#             fi;
+#         fi;
+#     od;
+#     for i to length(orthoFalse) do
+#         orthoFalse[i] := [orthoFalse[i, 1],
+#             op(orthoFalse[i][2..4] - orthoTrue)];
+#     od;
+#     Result := orthoFalse;
+# end:
+# 
+# 
+# # gives a summary of all organism and their numbers of proteins,
+# # LGTs and duplications, argument must be 'a' for array or 'r' for report
+# # !!! obsolete! (does not work on new data structure)
+# lgtReport := proc(a: string)
+#     summary := CreateArray(1..N,1..6);
+#     prot := Stat('Proteins'); lgt := Stat('LGT');
+#     lgtnum := Stat('LGTNum');
+#     dup := Stat('Dupl'); dupnum := Stat('DuplNum');
+#     for i to N do
+#         summary[i,1] := genomes[i];	
+#         summary[i,2] := GS[genomes[i]][TotEntries];	
+#         prot + summary[i][2];	
+#         summary[i,3] := GS[genomes[i]][TotLGT]; 
+#         lgt + summary[i,3];
+#         summary[i,4] := GS[genomes[i]][TotLGTNum]; 
+#         lgtnum + summary[i,4];
+#         summary[i,5] := GS[genomes[i]][TotDupl]; 
+#         dup + summary[i,5];	
+#         summary[i,6] := GS[genomes[i]][TotDupNum]; 
+#         dupnum + summary[i,6];	
+#     od;
+#     if a = 'a' then		
+#         result := summary;
+#     elif a = 'r' then
+# 	printf('genomes\tproteins\tlgt\t\tlgt total\tdupl\t\tdupl total\n\n');
+# 	for i to N do
+# 	    printf('%s\t\t%i\t\t%i (%.2f%%)\t%i (%.2f%%)\t%i (%.2f%%)\t'.
+#             '%i (%.2f%%)\n', summary[i][1],summary[i][2],summary[i][3],
+#             (summary[i][3]/summary[i][2]*100),summary[i][4],
+#             (summary[i][4]/summary[i][2]*100),summary[i][5],
+#             (summary[i][5]/summary[i][2]*100),summary[i][6],
+#             (summary[i][6]/summary[i][2]*100));
+# 	od;
+# 	printf('\naverages\t%.0f\t\t%.0f (%.2f%%)\t%.0f (%.2f%%)\t'.
+#         '%.0f (%.2f%%)\t%.0f (%.2f%%)\n', prot[Average], lgt[Average], 
+#         (lgt[Average] / prot[Average] * 100), lgtnum[Average], 
+#         (lgtnum[Average] / prot[Average]*100), dup[Average], 
+#         (dup[Average] / prot[Average] * 100), dupnum[Average], 
+#         (dupnum[Average] / prot[Average] * 100));
+# 	printf('mean var\t%s\t%s\t\t\t %s\n', 
+#         prot[MeanVar],lgt[MeanVar],dup[MeanVar]);
+#     else 
+#         printf('wrong argument, must be a or r');
+#     fi;
+# end: 
+# 
+# 
+# # gives a report of the ID numbers for an OMA group
+# lgtM := proc(omanum: posint)	# omanum = OMA number for the report
+#     filepattern := 'DB/SE';
+#     ids := CreateArray(1..N);
+#     for b to N do
+# 	ids[b] := '';
+#     od;
+#     for i to N do
+# 	DB := ReadDb(wdir.filepattern.sprintf('%03i',i).'.db');
+# 	if M[omanum, i] = 0 then 
+# 	    ids[i] := '0';
+# 	    next;
+# 	else
+# 	    e := Entry(M[omanum,i]);
+# 	    de := SearchTag('DE', e);
+# 	    posL := SearchString('L', de);
+# 	    posD := SearchString('D', de);
+# 	    # first event was a dupl
+# 	    if posD > -1 and (posL > posD or posL = -1) then
+# 	    	n := posD;
+#            	while de[n] <> '(' do	# searches for ID number
+# 		    n := n-1;
+#             	od;
+#                 for k from (n+1) to posD do   # writes ID number
+#                     ids[i] := string(ids[i]).string(de[k]);
+#                 od;
+# 	        for j to length(de) do	# how many dupl and LGT occurred
+#                     if de[j] = 'L' then
+# 			if de[j+1] = 'o' then
+# 			    ids[i] := string(ids[i]).'Lo';
+# 			else 
+# 			    ids[i] := string(ids[i]).'L';
+# 			fi;
+#                     elif de[j] = 'D' then ids[i] := string(ids[i]).'D';
+#                     fi;
+#                 od;
+# 	    # first event was a LGT
+# 	    elif posL > -1 and (posD > posL or posD = -1) then
+# 	        n := posL;
+#                 while de[n] <> '(' do	# searches for ID number
+#                     n := n-1;
+#                 od;
+#                 for k from (n+1) to posL do  # writes ID number
+#                     ids[i] := string(ids[i]).string(de[k]);
+#                 od;
+# 	        for j to length(de) do	#  how many dupl and LGT  occured
+#                     if de[j] = 'L' then 
+# 			if de[j+1] = 'o' then
+#                             ids[i] := string(ids[i]).'Lo';
+#                         else
+#                             ids[i] := string(ids[i]).'L';
+#                         fi;
+#                     elif de[j] = 'D' then ids[i] := ids[i].'D';
+#                     fi;
+#                 od;
+# 	    # if no LGT or duplication has occured
+# 	    else ids[i] := SearchTag('ID', e); 
+# 	    fi;
+# 	fi;
+#     od;
+#     for j to N do
+# 	printf('%s\t', genomes[j]);
+#     od;
+#     printf('\n');
+#     for k to N do
+# 	printf('%s\t', string(ids[k]));
+#     od;
+#     printf('\n');
+# end:
+# 
+# 
+# # checks set of OMA number if LGT was present and gives nice summary
+# # useful for lgt algorithm test, 15.12.06/dm
+# lgtMcheck := proc(liste: set)
+#     realLGT := lgtGroups();	
+#     lgtTrue := liste intersect realLGT;
+#     lgtWrong := liste minus realLGT;
+#     lgtUnfound := realLGT minus liste;
+#     printf('\n\ncorrect groups:\t%i\t%.2f%%\n', length(lgtTrue),
+#         (length(lgtTrue) / length(realLGT) * 100));
+#     printf('false groups:\t%i\t%.2f%%\n', length(lgtWrong),
+#         (length(lgtWrong) / length(realLGT) * 100));
+#     printf('missed groups:\t%i\t%.2f%%\n\n', length(lgtUnfound),
+#         (length(lgtUnfound) / length(realLGT) * 100));
+#     printf('sensitivity:\t\t%.2f%%\n', length(lgtTrue) / length(realLGT) * 100);
+#     printf('specifity:\t\t%.2f%%\n\n', length(lgtTrue) / length(liste) * 100);
+#     printf('correct ones:\n%a\n', lgtTrue);
+#     printf('wrong ones:\n%a\n', lgtWrong);
+#     printf('missed ones:\n%a\n', lgtUnfound);
+# end:
+# 
+# 
+# # gives set of OMA groups in which lgt event had taken place, 15.12.06
+# lgtGroups := proc()
+#     r := {};
+#     for i to lM do
+#         for j to N do
+#             if M[i, j] = 0 then next; fi;
+#             DB := ReadDb(GenomeFileName[genomes[j]]);
+#             if SearchString('L', SearchTag('DE', Entry(M[i, j]))) > -1 then
+#                 r := append(r, i); 
+# 	        fi;
+# 	    od;	
+#     od;
+#     result := r;
+# end:
+# 
+# 
+# # gives set of OMA groups in which lgt event (orthologous replacement) had 
+# # taken place, 15.12.06
+# lgtGroupsLo := proc()
+#     r := {};
+#     for i to lM do
+#         for j to N do
+#             if M[i, j] = 0 then next; fi;
+#             DB := ReadDb(GenomeFileName[genomes[j]]);
+#             if SearchString('Lo', SearchTag('DE', Entry(M[i, j]))) > -1 then
+#                 r := append(r, i);
+#             fi;
+#         od;
+#     od;
+#     result := r;
+# end:
+# 
+# # gives array with entry and ID number of an organism in the real order
+# # the organism is the argument (e.g. SE001)
+# getGenomeOrder := proc(org:string)
+#     DB := ReadDb(GenomeFileName[org]);
+#     geneR := CreateArray(1..DB[TotEntries]);
+#     for i to DB[TotEntries] do
+#         e := Entry(i);
+#         loc := SearchTag('LOC', e);
+#         geneR[parse(loc)] := [i, SearchTag('ID', e)];   # Entry and ID number
+#     od;
+#     result := geneR;
+# end:
+# 
+# # gives array with all orthologues between two organisms as entry numbers
+# # arguments are the organisms (e.g. SE001)
+# getOrthoSet := proc(org1:string, org2:string)
+#     orthoSet := [];
+#     DB := ReadDb(GenomeFileName[org1]);
+#     ortho1 := CreateArray(1..DB[TotEntries]);
+#     for i to DB[TotEntries] do
+#         ortho1[i] := SearchTag('ID', Entry(i));
+#     od;
+#     DB := ReadDb(GenomeFileName[org2]);
+#     ortho2 := CreateArray(1..DB[TotEntries]);
+#     for i to DB[TotEntries] do
+#         ortho2[i] := SearchTag('ID', Entry(i));
+#     od;    
+#     all1 := copy(ortho1);
+#     all2 := copy(ortho2);
+#     ortho1 := {op(ortho1)};
+#     ortho2 := {op(ortho2)};
+#     a := ortho1 intersect ortho2;
+#     for i in a do
+#         orthoSet := append(orthoSet,[SearchArray(i,all1),SearchArray(i,all2)]);
+#     od;
+#     result := orthoSet;
+# end:
+# 
+# # gives an array with the names of the pairs for LGT
+# LGTpairs := proc(omanum: integer, spec:array)
+#     a := 1;
+#     b := lM;
+#     if omanum > 0 then
+# 	a := omanum;
+# 	b := omanum;
+#     fi;
+#     LGTrec := [];
+#     filepattern := 'DB/SE';    
+#     for i from 1 to N do        
+# 	DB := ReadDb(wdir.filepattern.sprintf('%03i',i).'.db');
+# 	for j from a to b do
+# 	    if M[j,i] <> 0 then
+# 		e := Entry(M[j,i]);
+# 		de := SearchTag('DE', e);
+# 		for k from 1 to length(de) do
+# 		    donor := '': rec := '': time:=''; gene:='';
+# 		    if de[k] = 'L' then
+# 			n := k;
+# 			while de[n] <> '-' do
+# 			    n := n-1;
+# 			od;
+# 			n := n+1;
+# 			while de[n] <> '(' do
+# 			    donor := string(donor).string(de[n]);
+# 			    n := n+1;
+# 			od;
+# 			n := n+1;
+# 			while n <k do
+# 			    gene := string(gene).string(de[n]);
+# 			    n := n+1;
+# 			od;
+# 			if de[k+1] = 'o' then
+# 			    n:= k+2;
+# 			else
+# 			    n := k+1;
+# 			fi;
+# 			while de[n] <> ')' do
+# 			    time := string(time).string(de[n]);
+# 			    n := n+1;
+#                         od;
+# 			n := n+1;
+#                         while de[n] <> '-' and n < length(de) do
+#                             rec := string(rec).string(de[n]);
+# 			    n := n+1;
+#                         od;
+# 			if n = length(de) then
+# 			    rec := string(rec).string(de[n]);
+# 			fi;
+# 			LGTrec := append(LGTrec, [genomes[parse(donor)],
+# 			    genomes[parse(rec)],time, gene]);
+# 		    fi;
+# 		od;
+# 	    fi;
+# 	od;
+#     od;
+#     LGTrec := {op(LGTrec)};
+#     LGTpairs := CreateArray(1..length(LGTrec), 1..3);
+#     for i to length(LGTrec) do
+# 	j := 1;
+# 	while parse(LGTrec[i,3]) > parse(spec[j,3]) and (j+1) <= length(spec) do
+# 	    j := j + 1;
+# 	od;
+# 	LGTpairs[i,1] := LGTrec[i,1];
+# 	LGTpairs[i,2] := LGTrec[i,2];
+# 	LGTpairs[i,3] := LGTrec[i,4].'-'.LGTrec[i,3];
+# 	if i <> length(spec) then
+# 	    searchSpec(i, j, LGTrec[i,1], 1, spec, LGTpairs);
+# 	    searchSpec(i, j, LGTrec[i,2], 2, spec, LGTpairs);
+# 	fi;
+#     od;
+#     result := LGTpairs;
+# end:
+# 
+# 
+# # searches the tree for children of the LGT parents
+# searchSpec := proc(i: posint, j: posint, org: string, pos: posint, spec:array, 
+#                    LGTpairs:array)
+#     for k from j to length(spec) do
+# 	if org = spec[k,1] then
+# 		LGTpairs[i,pos] := [op(LGTpairs[i,pos]),spec[k,2]];
+# 	    for a from k to length(spec) do
+# 		if spec[k,2] = spec[a,1] then
+# 		    searchSpec(i, a, spec[k,2], pos, spec, LGTpairs);
+# 		fi;
+# 	    od;
+# 	fi;                
+#     od;
+# end:
+
+########################################################################
+# internal procedures for data creation
+
+NBNormalizationFactor := proc(maxLen, r, q)
+    res := 0:
+    for L to maxLen do
+        res := res + ((r+L-2)!/((L-1)!*(r-1)!)*(1-q)^r*q^(L-1)):
+    od:
+    res
+end:
+
+QGNormalizationFactor := proc(maxLen, c, t)
+    res := 0:
+    for i to maxLen do
+        res := res + 1.027e-2*exp(-i*c/(0.96*t)) + 3.031e-3*exp(-i*c/(3.13*t))
+                   + 6.141e-4*exp(-i*c/(14.3*t)) + 2.090e-5*exp(-i*c/(81.7*t)):
+    od:
+    res
+end:
+
+ZipfNormalizationFactor := proc(maxLen, c)
+    res := 0:
+    for i to maxLen do
+        res := res + i^(-c):
+    od:
+    res
+end:
+
+ExpNormalizationFactor := proc(maxLen, p)
+    res := 1 - (1 - p)^maxLen
+end:
+
+GQG := proc(n, c, t)
+    fac := QGNormalizationFactor(100, c, t):
+    res :=  (1.027e-2*exp(-n*c/(0.96*t)) + 3.031e-3*exp(-n*c/(3.13*t))
+             + 6.141e-4*exp(-n*c/(14.3*t)) + 2.090e-5*exp(-n*c/(81.7*t))) / fac:
+end:
+
+# random number generator for zipfian distribution from Dawg
+rand_zipf := proc(a)
+    b := 2.0^(a-1.0);
+    do 
+        tmp := Rand():
+        x := floor(tmp^(-1.0/(a-1.0)));
+        t := (1.0+1.0/x)^(a-1.0);
+        if Rand()*x*(t-1.0)*b <= t*(b-1.0) then break fi:
+    od:
+    x
+end:
+
+randGapLength := proc(maxLen:nonnegative, 
+                      indelType:{'ZIPF', 'QG', 'NEGBIN', 'GEOM', 'CUSTOM'} ; 
+                      params:list)
+    L := 0; s := 0;
+    rp := Rand();
+    if indelType = 'ZIPF' then
+        normFactor := remember(ZipfNormalizationFactor(maxLen, params[1])):
+        do
+            while s < rp do
+                L := L + 1;
+                s := s + L^(-params[1]) / normFactor;
+            od;
+            if L <= maxLen then break fi:
+        od:
+    
+#    do
+#        L := rand_zipf(params[1]):
+#        if L <= maxLen then break fi:
+#    od:
+
+
+    elif indelType = 'QG' then
+        # params should have the form [QG_c, QG_t]
+        normFactor := QGNormalizationFactor(maxLen, params[1], params[2]):
+        c := params[1]: t := params[2]:
+        while s < rp and L < maxLen do
+            L := L + 1:
+            s := s + (1.027e-2*exp(-L*c/(0.96*t)) + 3.031e-3*exp(-L*c/(3.13*t))
+                   + 6.141e-4*exp(-L*c/(14.3*t)) + 2.090e-5*exp(-L*c/(81.7*t)))
+                   / normFactor:
+        od:
+    elif indelType = 'NEGBIN' then
+        # params should have the form [NB_r, NB_q]
+        if not type(params[1], posint) or 
+           not (type(params[2], nonnegative) and params[2] <= 1) then
+            print('parameters for negative binomial distribution do '.
+                   'not match!'):
+        fi:
+        r := params[1]: q := params[2]:
+        while r > 0 do
+            L := L + floor(log(1-Rand())/log(q)):
+            r := r - 1:
+        od:
+        L := L + 1:
+    elif indelType = 'GEOM' then
+        L := 1 + Rand(Geometric(params[1])):
+    else
+        # param[i] should contain the probability of a gap of length i from 
+        # the custom distribution
+        if length(params[1]) <> maxLen then
+            error('length of array of gap length probabilities must match the '.
+                  'maximum gap length!'):
+        fi:
+        while s < rp and L < maxLen do
+            L := L + 1:
+            s := s + params[1,L]:
+        od:
+    fi:
+    L
+end:
+
+
+# tranlates DNA to Protein (by Alexander Roth, CBRG)
+ProteinSeq := proc(dna:string)
+    lenAA := length(dna)/3:
+    prot := CreateString(lenAA, 'X'):
+    for i to lenAA do
+        prot[i] := CodonToA(dna[(i-1)*3+1..(i-1)*3+3]);
+    od;
+    if length(prot) > 0 and prot[-1] = '$' then
+        prot := prot[1..-2]:
+    fi:
+    prot
+end:
+
+
+
+makeAreasOmega := proc(substModel:string, aaStart:posint; 
+                       classFreq:{nonnegative, list(nonnegative)})
+        domains := copy([[1, aaStart, 0]]):
+        domains[1,3] := CreateArray(1..aaStart, 1):
+    if substModel = 'M0' then
+        return(domains):
+    elif substModel = 'M2' or substModel = 'M3' then
+        cdf := CreateArray(1..length(classFreq)+1, 0):
+        cdf[1] := classFreq[1]:
+        for i from 2 to length(classFreq) do
+            cdf[i] := cdf[i-1] + classFreq[i]:
+        od:
+        cdf[length(classFreq)+1] := 1:
+    elif substModel = 'M8' then
+        cdf := [seq(i*(classFreq)/10, i=1..10)]:
+        cdf := append(cdf, 1):
+    fi:
+    for i to aaStart do
+        r := Rand():
+        for j to length(cdf) do
+            if r <= cdf[j] then
+                domains[1,3,i] := j:
+                break:
+            fi:
+        od:
+    od:
+    return(domains):
+end:
+        
+        
+
+
+updateBorderOmega := proc(substModel:string, domain:array, value, len, event, 
+                          classFreq:{nonnegative, list(nonnegative)})
+    oldmax := max(domain[3]):
+    dom := domain:
+    if event = 'insert' then
+        dom[2] := dom[2] + len:
+        if substModel = 'M0' then
+            return(dom):
+        elif substModel = 'M2' or substModel = 'M3' then
+            cdf := CreateArray(1..length(classFreq)+1, 0):
+            cdf[1] := classFreq[1]:
+            for i from 2 to length(classFreq) do
+                cdf[i] := cdf[i-1] + classFreq[i]:
+            od:
+            cdf[length(classFreq)+1] := 1:
+        elif substModel = 'M8' then
+            cdf := [seq(i*(1-classFreq)/10, i=1..10)]:
+            cdf := append(cdf, 1):
+        fi:
+        ins := []:
+        for i to len do
+            r := Rand():
+            for j to length(cdf) do
+                if r < cdf[j] then ins := append(ins, j): break: fi:
+            od:
+        od:
+        dom[3] := [op(dom[3,1..value]), op(ins), op(dom[3, value+1..-1])]:
+    else
+        if substModel <> 'M0' then
+            dom[3] := [op(dom[3,1..value-1]), op(dom[3,value+len..-1])]:
+        fi:
+        dom[2] := dom[2] - len:
+    fi:
+    dom
+end:
+
+
+# updates the area borders after a AA gain or loss
+updateBorder := proc(domains: array, dom, value, len, event: string; 
+                     (gamma=false):boolean, areas:posint, motifFreq:nonnegative)
+    doms := domains:
+    d := {};
+    if event = 'insert' then    
+        if gamma then
+            relVal := value - doms[dom,1] + 1:
+            newClasses := CreateArray(1..len,0):
+            for i to len do
+                if Rand() <= motifFreq then
+                    newClasses[i] := areas+1:
+                else
+                    newClasses[i] := Rand(1..areas):
+                fi:
+            od:
+            doms[dom,3] := [op(doms[dom,3,1..relVal]), op(newClasses), 
+                            op(doms[dom,3,relVal+1..-1])]:
+        fi:
+        if doms[dom,1] = 0 then doms[dom,1] := 1: fi:
+        for i from dom to length(doms) do
+            if i > dom then
+                doms[i,1] := (doms[i,1] + len);
+            fi;
+            doms[i,2] := (doms[i,2] + len);
+        od;
+    fi:
+    if event = 'delet' then
+        leng := len:
+        val := value:
+        i := dom:
+        do
+            curDomainLen := doms[i,2] - val + 1:
+            if curDomainLen >= leng then
+                if gamma then
+                    relVal := val - doms[dom,1] + 1:
+                    doms[i,3] := [op(doms[i,3,1..relVal-1]), 
+                                  op(doms[i,3,relVal+leng..-1])];
+                fi:
+                doms[i,2] := doms[i,2] - leng:
+                curGapLen := leng:
+            else
+                if gamma then
+                    relVal := val - doms[dom,1] + 1:
+                    doms[i,3] := doms[i,3,1..relVal-1]:
+                fi:
+                doms[i,2] := val - 1:
+                curGapLen := curDomainLen:
+            fi:
+            for j from i+1 to length(doms) do
+                doms[j,1] := doms[j,1] - curGapLen:
+                doms[j,2] := doms[j,2] - curGapLen:
+            od:
+            if doms[i,1] > doms[i,2] then
+                d := append(d, i):
+            fi:
+            leng := leng - curDomainLen:
+            if leng <= 0 then break fi:
+            i := i + 1:
+            val := doms[i,1]:
+        od:
+    fi;
+    # deletes empty domain 
+    for i from length(d) to 1 by -1 do
+        if d[i] = 1 then doms[1,1] := doms[1,2] := 0: next fi:
+        doms := [op(doms[1..d[i] - 1]), op(doms[d[i] + 1..-1])];
+    od:
+    return(doms);
+end:
+
+
+ComputeIndelPos := proc(e, sms, gr)
+    print('deprecated function ComputeIndelPos: please notify the authors!'):
+    # calculates sum of all domain/gene probabilities
+    indelSum := indelPos := 0;
+    for k to length(e) do
+        substModel := sms[e[k,9]]:
+        if substModel[Name][1] = 'M' then
+            #handle M-series models
+            # rate is hidden in the Q-matrices
+            indelSum := indelSum + 1:
+        elif amongSiteDistr = 'Gamma' then
+            # handle gamma model
+            for m to length(e[k, 1]) do
+                if type(e[k, 1, m, 3], list) then
+                    for mm to length(e[k, 1, m, 3]) do
+                        indelSum := indelSum + gr[e[k, 1, m, 3, mm]]:
+                    od:
+                else
+                    indelSum := indelSum + e[k, 1, m, 3]:
+                fi:
+            od:
+        else
+            for m to length(e[k, 1]) do
+                indelSum := indelSum + e[k, 1, m, 3]
+                                * (1 + e[k, 1, m, 2] - e[k, 1, m, 1]);
+            od;
+        fi:
+    od;
+    # assignes a random value between 0..indelSum
+    indelPos := Rand() * indelSum
+end:
+
+
+
+###########################
+# tree-related procedures #
+###########################
+ListTimePoints := proc(tree:Tree, rates:table; (prefix='1'):string, (index=[]):list)
+    if type(tree, Leaf) then
+        res := copy([[],[]]):
+    else
+        lindex := append(copy(index), 'Left'):
+        rindex := append(copy(index), 'Right'):
+    	lt := ListTimePoints(tree[Left], rates, prefix.'.1', lindex):
+    	rt := ListTimePoints(tree[Right], rates, prefix.'.2', rindex):
+    	if length(tree) > 3 then
+    		if tree[xtra][1] = 'S' then
+	    		res := [[[prefix, tree[Height], rates[lindex], rates[rindex], tree[xtra][2]], op(lt[1]), 
+	    		         op(rt[1])], [op(lt[2]), op(rt[2])]]:
+	    	elif tree[xtra][1] = 'D' then
+	    		res := [[op(lt[1]), op(rt[1])], [[prefix, tree[Height], rates[lindex], rates[rindex],
+	    		                                  tree[xtra][2]], op(lt[2]), 
+	    		                                 op(rt[2])]]:
+	        else
+                res := [[[prefix, tree[Height], rates[lindex], rates[rindex]], op(lt[1]), op(rt[1])],[]]:
+	    	fi:
+   		else
+	        res := [[[prefix, tree[Height], rates[lindex], rates[rindex]], op(lt[1]), op(rt[1])],[]]:
+	    fi:
+    fi:
+    res
+end:
+    
+EnumerateBranches := proc(tree:Tree, specPts, gc:boolean, rates:table)
+
+#    m := n := 0:
+#    for i in Indices(rates) do m := m+1 od:
+#    for i in Leaves(tree) do n := n+1 od:
+#    printf('rates:%d\tleaves:%d\n',m,n):
+
+	branches := append(EnumerateBranches_R(tree[Left], tree[Height], gc, rates, ['Left']), 
+	                   op(EnumerateBranches_R(tree[Right], tree[Height], gc, rates, ['Right']))):
+	branches := sort(branches, x->x[1]):
+	if gc then
+        res := copy([[1, 0, specPts[1, 2], 1, tree[-1]]]):
+    else
+        res := copy([[1, 0, specPts[1, 2], 1]]):
+    fi:
+	n := 2:
+	for i to length(specPts) do
+		res := append(res, 
+		              [specPts[i,1],op(branches[2*i-1])],[n,op(branches[2*i])]):
+		n := n + 1:
+	od:
+	res
+end:
+
+EnumerateBranches_R := proc(tree:Tree, start:nonnegative, gc:boolean, rates:table, index:list)
+
+    if gc then
+        res := [[start, tree[Height], rates[index], tree[-1]]]:
+    else
+        res := [[start, tree[Height], rates[index]]]:
+    fi:
+	
+    if type(tree, Leaf) then 
+	    return(res):
+	fi:
+
+	lres := EnumerateBranches_R(tree[Left], tree[Height], gc, rates, append(copy(index), 'Left')):
+    rres := EnumerateBranches_R(tree[Right], tree[Height], gc, rates, append(copy(index), 'Right')):
+
+    res := append(res, op(lres), op(rres)):
+    res
+end:
+
+# prevent branches of length 0 by adding a small value
+CheckBranchLengths := proc(tree:Tree)
+    CheckBranchLengths_R(tree, 0):
+end:
+
+CheckBranchLengths_R := proc(tree:Tree, inc:nonnegative) option internal;
+    if type(tree, Leaf) then return() fi:
+
+    linc := inc + If(tree[Height] = tree[Left][Height], 1e-10, 0):
+    CheckBranchLengths_R(tree[Left], linc):
+    tree[Left][Height] := tree[Left][Height] + linc:
+
+    rinc := inc + If(tree[Height] = tree[Right][Height], 1e-10, 0):
+    CheckBranchLengths_R(tree[Right], rinc):
+    tree[Right][Height] := tree[Right][Height] + rinc:
+end:
+
+UpdateTreeLGT := proc(t:Tree, orig:Tree)
+#    for i to length(t[-1]) do
+#        t[-1,i,3] := t[Height] - t[-1,i,3]:
+#    od:
+#    if not type(t,Leaf) then
+#        UpdateTreeLGT(t[Left]):
+#        UpdateTreeLGT(t[Right]):
+#    fi:
+    UpdateTreeLGT_R(t, orig, 0, 0):
+    NULL
+end:
+
+UpdateTreeLGT_R := proc(newT:Tree, origT:Tree, snew, sorig)
+    nblen := newT['Height'] - snew:
+    oblen := origT['Height'] - sorig:
+    if nblen = oblen then
+        fac := 1:
+    else
+        fac := oblen / nblen:
+    fi:
+    
+    for i to length(newT[-1]) do
+        newT[-1,i,3] := (newT['Height'] - newT[-1,i,3]) * fac:
+    od:
+    if not type(newT, Leaf) then
+        UpdateTreeLGT_R(newT['Left'], origT['Left'], newT['Height'], origT['Height']):
+        UpdateTreeLGT_R(newT['Right'], origT['Right'], newT['Height'], origT['Height']):
+    fi:
+    newT['Height'] := origT['Height']:
+    NULL
+end:
+
+ConvertToPam := proc(t:Tree) option internal;
+    t[Height] := 100*t[Height]:
+    if not type(t,Leaf) then
+        ConvertToPam(t[Right]):
+        ConvertToPam(t[Left]):
+    fi:
+    NULL
+end:
+
+NucToCodonFreqs := proc(bf:list(nonnegative))
+    if |sum(bf)-1| > 1e-6 or min(bf) < 0 then
+        error(bf, 'base frequencies must be non-negative and sum up to 1'):
+    fi:
+    tf := CreateArray(1..64,0):
+    b := ['A','C','G','T']:
+    for i to 4 do
+        for j to 4 do
+            for k to 4 do
+                tf[CodonToCInt(b[i].b[j].b[k])] := bf[i]*bf[j]*bf[k]
+            od:
+        od:
+    od:
+    tf[CodonToCInt('TAG')] := tf[CodonToCInt('TAA')] := 
+        tf[CodonToCInt('TGA')] := 0:
+    tf := tf/sum(tf):
+    tf
+end:
+lprint('Procedures for Synthetic Evolution sucessfully loaded');
+
+
+AddAmbiguities := proc()
+    global evolution, substModels, seqTypes, livingOrgs:
+    if length(substModels) > 0 then
+        for i to livingOrgs do
+            for j to length(evolution[i]) do
+                substModel := substModels[seqTypes[evolution[i,j,9],1]]:
+                if substModel[Type] = 'aa' then
+                    seqIndex := 2:
+                else
+                    seqIndex := 6:
+                fi:
+                s := evolution[i,j,seqIndex]:
+
+#                printf('old sequence length: %d\n', length(s)):
+
+                do
+                    nx := round(Rand(Normal(ambiguousCharMean, ambiguousCharVar)) * length(s)):
+                    if nx >= 0 then break fi: 
+                od:
+                posx := Rand(1..length(s)-nx+1):
+#                print(posx):
+                sx := CreateString(nx, 'X'):
+                evolution[i,j,seqIndex] := s[1..posx-1].sx.s[posx+nx..-1]:
+#                printf('new sequence length: %d\n', length(evolution[i,j,seqIndex])):
+                if substModel[Blocksize] = 3 then
+                    evolution[i,j,2] := ProteinSeq(evolution[i,j,6]):
+                fi:
+            od:
+        od:
+    else
+        for i to livingOrgs do
+            for j to length(evolution[i]) do
+                s := evolution[i,j,6]:
+
+#                printf('old sequence length: %d\n', length(s)):
+
+                do
+                    n := round(Rand(Normal(ambiguousCharMean, ambiguousCharVar)) * length(s)):
+                    if nx >= 0 then break fi:
+                od:
+                posx := Rand(1..length(s)-nx+1):
+                sx := CreateString(nx, 'X'):
+                evolution[i,j,6] := s[1..posx-1].sx.s[posx+nx..-1]:
+#                printf('new sequence length: %d\n', length(evolution[i,j,6])):
+            od:
+        od:
+    fi:
+    NULL
+end:
+

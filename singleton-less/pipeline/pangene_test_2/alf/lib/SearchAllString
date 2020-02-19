@@ -1,0 +1,44 @@
+#
+#  SearchAllString 
+#
+#  Wrapper for SearchString that returns the position of all occurances
+#  of a patterns in a string. Also a variant when we allow for one or
+#  several mismatches.
+#
+#                                       Alexander Roth (Nov 3, 2005)
+#
+
+SearchAllString := proc(pat:string, txt:string) -> list;
+  ret := [];
+  do
+    if length(ret)=0 then 
+      a := SearchString(pat, txt);
+      if a=-1 then break fi;
+      where := a;
+    else
+      a := SearchString(pat, txt[where+2..-1]);
+      if a=-1 then break fi;
+      where := where+a+1;
+    fi;
+    # the "+1" to indicate the first char in pattern
+    ret := append(ret, where+1);
+  od;
+  return(ret);
+end:
+
+HammingSearchAllString := proc(pat:string, txt:string; d=1:posint) -> list;
+  ret := [];
+  do
+    if length(ret)=0 then
+      a := HammingSearchString(pat, txt, d);
+      if a=-1 then break fi;
+      where := a;
+    else
+      a := HammingSearchString(pat, txt[where+2..-1], d);
+      if a=-1 then break fi;
+      where := where+a+1;
+    fi;
+    ret := append(ret, where+1);
+  od;
+  return(ret);
+end:

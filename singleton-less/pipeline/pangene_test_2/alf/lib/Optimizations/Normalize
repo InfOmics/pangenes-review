@@ -1,0 +1,92 @@
+module external doNormalize;
+
+doNormalize := proc(pd : structure) -> structure;
+   # ensure that every block is enclosed in a StatSeq TODO recursively
+   if not type(pd[6],structure(anything,StatSeq)) then
+      pd[6] := StatSeq(pd[6]);
+   fi:
+   pd[6] := fixBlocks(pd[6]);
+
+   # eliminate return() at leaves TODO
+   pd[6] := fixLeaves(pd[6]);
+
+   pd;
+end;
+
+fixLeaves := proc(s:{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) -> structure;
+   # identify leaves (recursively):
+   #    case StatSeq: s[length(s)]
+   #    case Assign: s[length[s]]
+   #    case IfStat: s[2n]
+   #    case ForLoop: s[length(s)]
+   # replace return statements in leaves
+   t := top(s);
+   if t = StatSeq then
+      l := length(s);
+      ss := s[l];
+      if type(ss,{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+         s[l] := procname(ss);
+      else
+	 if(top(ss) = structure and ss[1] = return) then
+            s[l] := ss[2..length(ss)];
+	 fi:
+      fi:
+   fi:
+
+   if t = ForLoop or t = IfStat then
+      l := length(s);
+      ss := s[l];
+      if type(ss,{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+         s[l] := procname(ss);
+      else
+         error('insertig StatSeqs seems to have failed');
+      fi:
+   fi:
+
+   if t = IfStat then
+      # if and elif cases
+      for i from 2 to length(s) by 2 do
+	 ss := s[i];
+         if type(ss,{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+            s[i] := procname(ss);
+         else
+            error('insertig StatSeqs seems to have failed');
+         fi:
+      od:
+   fi:
+
+   s;
+end:
+
+fixBlocks := proc(s);
+   t := top(s);
+   if t = ForLoop then
+      ss := s[length(s)];
+      if not type(ss,structure(anything,StatSeq)) then
+         s[length(s)] := StatSeq(ss);
+      fi:
+   elif t = IfStat then
+      # if and elif cases
+      for i from 2 to length(s) by 2 do
+         ss := s[i];
+         if not type(ss,structure(anything,StatSeq)) then
+            s[i] := StatSeq(ss);
+         fi:
+      od:
+      
+      # else case
+      ss := s[length(s)];
+      if not type(ss,structure(anything,StatSeq)) then
+         s[length(s)] := StatSeq(ss);
+      fi:
+   elif type(s,structure) then
+      for i from 1 to length(s) do
+         s[i] := procname(s[i]);
+      od:
+   fi:
+
+   s;
+end:
+
+
+end: #module

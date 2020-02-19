@@ -1,0 +1,522 @@
+DynProgBoth_PartOrd_D := proc(msa:PartialOrderMSA, s:string, mode:{string,set(string)}; (label2='no label'):string, AllAllRow:list({0,Alignment}))
+    #global AllAllD; #, DynProgTable;
+    #printf('procedure started\n'):
+    if nargs < 2 then
+        error('invalid number of arguments')
+    elif nargs = 2 then
+        return(remember(procname(msa, s, {'Global'})))
+    elif type(mode, string) then
+        return(remember(procname(msa, s, {mode})))
+    elif mode intersect {'Local', 'CFE', 'CFEright', 'Shake', 'Affine', 'LogDel'} <> {} then
+        error(mode intersect {'Local', 'CFE', 'CFEright', 'Shake', 'Affine', 'LogDel'}, 'incompatible arguments / not implemented')
+    fi:
+        
+        
+    #if mode = 'Local' then error('Local alignment not implemented yet!'): fi:
+    m := length(s):
+    PO := msa['PO']:
+    ST := msa['SeqThreads'];
+    STlen := length(ST):
+    if assigned(AllAllRow) and length(AllAllRow) < STlen then
+        error(AllAllRow, 'AllAllRow not long enough'):
+    fi:
+    sequences := [seq(ST[i,'Sequence'], i=1..STlen)]:
+    AllAll := copy(msa['AllAll']):
+    # add new sequence to all all
+    AllAll := append(AllAll, CreateArray(1..length(AllAll)+1, 0)):
+    for i to STlen do
+#        if assigned(AllAllRow) then
+#            al := AllAllRow[i]:
+#            assert(type(al, Alignment)):
+#        else
+#            al := Align(sequences[i], s, DMS, op(mode)):
+#        fi:
+        al := If(assigned(AllAllRow), AllAllRow[i], Align(sequences[i], s, DMS, op(mode))):
+        AllAll[i] := append(AllAll[i], al):
+        AllAll[-1, i] := al:
+    od:
+    #AllAllD := copy(AllAll):
+    #tst := CreateArray(1..STlen+1, 1..STlen+1):
+    #for i to STlen+1 do for j from i+1 to STlen+1 do tst[i,j] := tst[j,i] := AllAll[i,j,PamDistance] od od:
+    #print(tst):
+    
+    # use gap penalties from Dayhoff matrix for PAM 10
+    dm10 := SearchDayMatrix(10,DMS):
+    C0 := dm10['FixedDel']:
+    C1 := dm10['IncDel']:
+    
+    # DynProgTable[key] contains matrices corresponding to all edges in PO starting from the
+    # node with the name key. Each such matrix contains the following information:
+    # DynProgTable[key, 1]: list of predecessor nodes and edges
+    # DynProgTable[key, 2, i, 1]: last column of preceeding matrix (or maximum scores of all
+    #                             preceeding matrices.
+    # DynProgTable[key, 2, i, 2]: the dynamic programming matrix
+    # DynProgTable[key, 2, i, 3]: the successor or the matrix
+    DynProgTable := table(unknown):
+    NodeSet := []:
+    for e  in PO do
+        DynProgTable[e[1]] := copy([[], []]):
+        NodeSet := append(NodeSet, e[1]):
+    od:
+    # dummy element for last node.
+    DynProgTable['T'] := copy([[], []]):
+    
+    NodeSet := {op(NodeSet)} minus {'S'};
+    
+    for i to length(PO) do
+        e := PO[i]:
+        
+        # find all sequences aligned along this edge
+        # AlignedSeqs[i, 1]: index of sequence in ST
+        # AlignedSeqs[i, 2]: offset from beginning of sequence
+        AlignedSeqs := []:
+        for j to STlen do
+            found := false:
+            k := SearchArray(i, ST[j,'NodeList']):
+            if k > 0 then
+                ind := sum(PO[ST[j,'NodeList',k], 2], k=1..k-1):
+                AlignedSeqs := append(AlignedSeqs, [j, ind]):
+            fi:
+        od:
+        
+        # append matrix to originating node of the edge
+        DynProgTable[e[1], 2] := append(DynProgTable[e[1], 2], [[seq(CreateArray(1..e[2]+1,1..2,0),m+1)], AlignedSeqs, i]):
+        # append a reference to the matrix to the ending node of the edge
+        DynProgTable[e[3], 1] := append(DynProgTable[e[3], 1], [e[1], length(DynProgTable[e[1], 2])]):
+    od:
+    
+    # determine order of evaluation of the nodes. Since PartialOrder doesn't allow for circles in
+    # the graph, the loop will terminate.
+    NodeList := copy(['S']):
+    i := 0:
+    while NodeSet <> {} do
+        i := mod(i, length(NodeSet))+1:
+        curn := NodeSet[i]:
+        if ((NodeSet minus {curn}) intersect {seq(DynProgTable[curn,1,i,1], i=1..length(DynProgTable[curn,1]))}) = {} then
+            NodeList := append(NodeList, curn):
+            NodeSet := NodeSet minus {curn}:
+        fi:
+    od:
+    
+    # alignment forward phase
+    for n in NodeList do
+        DoAlign(sequences, AllAll, s, DynProgTable, n, op(mode)):
+    od:
+    
+    # alignment backward phase
+    # global alignment start from best lower-right cell of edges ending in node 'T'
+    curE := GetMaxPredecessors(DynProgTable, 'T', m+1):
+    newST := []:
+    curM := length(DynProgTable['S', 2, 1, 1]):
+    gaplenM := 0:
+    gaplenN := 0:
+    newEdges := []:
+    newSeqInd := length(AllAll):
+    lastMoveAcross := false:
+    extendingGap := false:
+    prevE := []:
+#    printf('Alignment score: %.4f\n', DynProgTable[curE[1,1],2,curE[1,2],1,-1,-1,1]):
+    do
+        if lastMoveAcross then
+            curE := curE[2]:
+            t := DynProgTable[curE[1], 2, curE[2]]:
+            if not prevE = [] and DynProgTable[curE[1],2,curE[2], 1,curM,-1,2] <> DynProgTable[prevE[1],2,prevE[2], 1,curM,1,2] then
+                error(sprintf('should not happen: problem going from %A to %A at %d (coming across)\n', prevE, curE, curM)):
+            fi:
+        else
+            curE := curE[1]:
+            t := DynProgTable[curE[1], 2, curE[2]]:
+            if not prevE = [] and DynProgTable[curE[1],2,curE[2], 1,curM,-1,1] <> DynProgTable[prevE[1],2,prevE[2], 1,curM,1,1]  then
+                error(sprintf('should not happen: problem going from %A to %A at %d\n', prevE, curE, curM)):
+            fi:
+        fi:
+        curN := length(t[1, 1]):
+        newST := [t[3], op(newST)]:
+        tab := t[1]:
+        
+        #printf('node: %a\ttable: %d\trow: %d\tscore: %a\n', curE[1], curE[2], curM, tab[curM,curN]):
+        #printf('cur score: %a\n', t[1, curM, curN]):
+        
+        while curN > 1 do
+            #printf('row: %d\tcolumn: %d\tscore: %a\n', curM, curN, tab[curM,curN]):
+            #print(evalb(curM > 1 and not extendingGap and tab[curM,curN,1] > tab[curM,curN,2])):
+            #print(evalb(curM > 1 and tab[curM, curN, 1] - C1 = tab[curM-1, curN, 2] or (extendingGap and tab[curM, curN, 2] - C1 = tab[curM-1, curN, 2]))):
+            #print(evalb(curM > 1 and tab[curM, curN, 1] - C0 = tab[curM-1, curN, 1] or (extendingGap and tab[curM, curN, 2] - C0 = tab[curM-1, curN, 1]))):
+            #print(evalb(tab[curM, curN, 1] - C1 = tab[curM, curN-1, 2] or (extendingGap and tab[curM, curN, 2] - C1 = tab[curM, curN-1, 2]))):
+            #print(evalb(tab[curM, curN, 1] - C0 = tab[curM, curN-1, 1] or (extendingGap and tab[curM, curN, 2] - C0 = tab[curM, curN-1, 1]))):
+            if curM > 1 and not extendingGap and tab[curM,curN,1] > tab[curM,curN,2] then #E = t[1,curM-1,curN-1, 1] then
+                # we came diagonally
+                curM := curM-1:
+                curN := curN-1:
+                lastMoveAcross := false:
+            elif curM > 1 and (tab[curM, curN, 1] - C1 = tab[curM-1, curN, 2] or (extendingGap and tab[curM, curN, 2] - C1 = tab[curM-1, curN, 2])) then
+                #extended a gap from above
+                gaplenM := gaplenM + 1:
+                curM := curM-1:
+                lastMoveAcross := false:
+                extendingGap := true:
+            elif curM > 1 and (tab[curM, curN, 1] - C0 = tab[curM-1, curN, 1] or (extendingGap and tab[curM, curN, 2] - C0 = tab[curM-1, curN, 1])) then
+                # opened gap from above -> store edge to be updated
+                newEdges := append(newEdges, [curE, curN-1, gaplenM+1, gaplenN]):
+                gaplenM := gaplenN := 0:
+                curM := curM-1:
+                lastMoveAcross := false:
+                extendingGap := false:
+            elif tab[curM, curN, 1] - C1 = tab[curM, curN-1, 2] or (extendingGap and tab[curM, curN, 2] - C1 = tab[curM, curN-1, 2]) then
+                #extended a gap from across
+                gaplenN := gaplenN + 1:
+                curN := curN-1:
+                lastMoveAcross := true:
+                extendingGap := true:
+            elif tab[curM, curN, 1] - C0 = tab[curM, curN-1, 1] or (extendingGap and tab[curM, curN, 2] - C0 = tab[curM, curN-1, 1]) then
+                # opened a gap from across -> store edge to be updated
+                newEdges := append(newEdges, [curE, curN-2, gaplenM, gaplenN+1]):
+                gaplenM := gaplenN := 0:
+                curN := curN-1:
+                lastMoveAcross := false:
+                extendingGap := false:
+            else
+                error(curE, curM, curN, 'should not happen - dont know where I came from!'):
+            fi:
+        od:
+        #printf('curE: %A\t\tcurM: %d\n', curE, curM):
+        if curE[1] = 'S' then break fi:
+        prevE := curE:
+        curE := GetMaxPredecessors(DynProgTable, curE[1], curM):
+    od:
+    #printf('m: %d, n: %d, gaplenM: %d, gaplenN: %d\n', curM, curN, gaplenM, gaplenN):
+    if curM > 1 then
+        newEdges := append(newEdges, [curE, 0, curM-1, gaplenN])
+    fi:
+    #printf('old PO: %A\n', PO):
+    #printf('newEdges: %A\n', newEdges):
+    # now add the new edges to the PartialOrder and update the SequenceThreads
+    r := UpdatePartialOrder(PO, ST, newEdges, DynProgTable, newST):
+    ST := r[1]:
+    newST := r[2]:
+    PO := r[3]:
+    # update the PartialOrderMSA (tree is ignored for now)
+    ST := append(ST, SeqThread(s, label2, newST)):
+    #printf('ST: %A\nPO: %A\n', ST, PO):
+    #DynProgTable := []:
+    gc():
+    PartialOrderMSA_simplify(PartialOrderMSA(ST, PO, 0, AllAll))
+end:
+
+
+
+DoAlign := proc(sequences:list(string), AllAll:matrix, s:string, DPT:table, key:anything, modif:{'Local','Global'})
+    newsind := length(AllAll):
+    # use gap penalties from Dayhoff matrix for PAM 10
+    dm10 := SearchDayMatrix(10,DMS):
+    C0 := dm10['FixedDel']:
+    C1 := dm10['IncDel']:
+    for t in DPT[key,2] do
+        # do alignment for edge t from node k
+        tab := t[1]:
+        tabLen := length(tab):
+        # compute circular tour
+        #EnterProfile(CircularTour):
+        seqInds := t[2]:
+#        r := If(length(seqInds)>1, ComputeCircularTour(seqInds, AllAll), [[1,1],[],[]]):
+#        prevTour := r[1]: prevTourOffset := r[2]: prevTourDMS := r[3]:
+#        prevTourLen := length(prevTour)-1:
+#        r := ComputeCircularTour([op(seqInds), [length(AllAll),0]], AllAll):
+#        tour := r[1]: tourOffset := r[2]: tourDMS := r[3]:
+#        tourLen := prevTourLen+1:
+        #ExitProfile(CircularTour):
+        if DPT[key,1] <> [] then
+            # get previous values from predecessors
+            #EnterProfile(CopyPredValues):
+            for m to length(s)+1 do
+                tab[m,1,1] := DPT[DPT[key,1,1,1],2,DPT[key,1,1,2],1,m,-1,1]:
+                tab[m,1,2] := DPT[DPT[key,1,1,1],2,DPT[key,1,1,2],1,m,-1,2]:
+                for i from 2 to length(DPT[key,1]) do
+                    if tab[m,1,1] < DPT[DPT[key,1,i,1],2,DPT[key,1,i,2],1,m,-1,1] then
+                        tab[m,1,1] := DPT[DPT[key,1,i,1],2,DPT[key,1,i,2],1,m,-1,1]:
+                    fi:
+                    if tab[m,1,2] < DPT[DPT[key,1,i,1],2,DPT[key,1,i,2],1,m,-1,2] then
+                        tab[m,1,2] := DPT[DPT[key,1,i,1],2,DPT[key,1,i,2],1,m,-1,2]:
+                    fi:
+                od:
+            od:
+            if modif = 'Global' then
+                startval := If(tab[1,1,2]=tab[1,1,1], tab[1,1,1], C0-C1):
+                for m from 2 to length(tab[1]) do
+                    tab[1,m,1] := tab[1,m,2] := startval + (m-1)*C1:
+                od:
+            fi:                
+            #ExitProfile(CopyPredValues):
+        elif modif = 'Global' then
+            # initialize first row/colum
+            tab[1,1,2] := -DBL_MAX:
+            for m from 2 to tabLen do
+                tab[m,1,1] := tab[m,1,2] := C0 + (m-2)*C1:
+            od:
+            for m from 2 to length(tab[1]) do
+                tab[1,m,1] := tab[1,m,2] := C0 + (m-2)*C1:
+            od:
+        fi:
+
+        # fill the table
+        #EnterProfile(BigLoop):
+        for i from 2 to tabLen do
+            for j from 2 to length(tab[i]) do
+                # moved computation of circular tour to here
+                curSeqInds := []:
+                curSeqInds := [seq(If(sequences[seqInds[k,1], seqInds[k,2]+j-1] <> 'X', seqInds[k], NULL), k=1..length(seqInds))]:
+                r := remember(GetCircularTour(curSeqInds, AllAll)):
+                prevTour := r[1]: prevTourOffset := r[2]: prevTourDMS := r[3]:
+                prevTourLen := length(prevTour)-1:
+                
+                curSeqInds := [op(curSeqInds), If(s[i-1] <> 'X', [length(AllAll),0], NULL)]:
+                r := remember(GetCircularTour(curSeqInds, AllAll)):
+                tour := r[1]: tourOffset := r[2]: tourDMS := r[3]:
+                tourLen := length(tour)-1:
+                
+                E := pE := 0:
+                F1 := tab[i,j-1,1] + C0:
+                F2 := tab[i,j-1,2] + C1:
+                G1 := tab[i-1,j,1] + C0:
+                G2 := tab[i-1,j,2] + C1:
+                #EnterProfile(PrevTourLoop):
+                if prevTourLen >= 2 then
+                    # compute score of alignment without new sequence
+                    pE := sum(prevTourDMS[k,Sim,sequences[prevTour[k], prevTourOffset[k]+j-1],sequences[prevTour[k+1], prevTourOffset[k+1]+j-1]], k=1..prevTourLen):
+                fi:
+                #ExitProfile(PrevTourLoop):
+                #EnterProfile(TourLoop):
+                # compute alignment score with new sequence
+                if tourLen > prevTourLen then
+                    E := sum(tourDMS[k,Sim,sequences[tour[k], tourOffset[k]+j-1],sequences[tour[k+1], tourOffset[k+1]+j-1]],k=2..prevTourLen):
+                    E := E + tourDMS[1,Sim,s[i-1],sequences[tour[2], tourOffset[2]+j-1]] + tourDMS[tourLen,Sim,sequences[tour[tourLen], tourOffset[tourLen]+j-1],s[i-1]]:
+                else
+                    E := pE:
+                fi:
+                #ExitProfile(TourLoop):
+                
+                E := (E - pE)/2:
+                E := E + tab[i-1,j-1,1]:
+                F := If(F1>F2, F1, F2):
+                G := If(G1>G2, G1, G2):
+#                if modif = 'Local' then
+#                    F := max(F, G, 0):
+#                    V := max(E, F, 0):
+#                else
+                    F := If(F>G, F, G):
+                    V := If(E>F, E, F):                
+#                fi:
+                tab[i,j,1] := V:
+                tab[i,j,2] := F:
+            od:
+        od:
+        #ExitProfile(BigLoop):
+    od:
+end:
+
+GetMaxPredecessors := proc(DPT:table, key:anything, r:posint)
+    local curE, curT, curV, maxE, maxV:
+    maxE := [seq(0,2)]:
+    maxV := [seq(-DBL_MAX,2)]:
+    curV := [seq(0,2)]:
+    for curE in DPT[key, 1] do
+        curT := DPT[curE[1], 2, curE[2], 1]:
+        curV[1] := curT[r, -1, 1]:
+        curV[2] := curT[r, -1, 2]:
+        if curV[1] > maxV[1] then
+            maxV[1] := curV[1]:
+            maxE[1] := curE:
+        fi:
+        if curV[2] > maxV[2] then
+            maxV[2] := curV[2]:
+            maxE[2] := curE:
+        fi:
+    od:
+    maxE:
+end:
+
+GetCircularTour := proc(curSeqInds:list, AllAll:matrix)
+    curSeqIndsLen := length(curSeqInds):
+    if curSeqIndsLen = 0 then
+        r := [[],[],[]]
+    elif curSeqIndsLen = 1 then
+        r := [[1,1],[],[]]
+#                elif curSeqIndsLen = 2 then
+#                    r := [[curSeqInds[2,1], curSeqInds[1,1], curSeqInds[2,1]], [curSeqInds[2,2], curSeqInds[1,2], curSeqInds[2,2]], [AllAll[curSeqInds[2,1], curSeqInds[1,1], DayMatrix], AllAll[curSeqInds[2,1], curSeqInds[1,1], DayMatrix]]]:
+    elif curSeqIndsLen < 4 then
+        r := [[curSeqInds[-1,1], seq(curSeqInds[i,1], i=1..curSeqIndsLen)], [curSeqInds[-1,2], seq(curSeqInds[i,2], i=1..curSeqIndsLen)], [AllAll[curSeqInds[-1,1], curSeqInds[1,1], DayMatrix], seq(AllAll[curSeqInds[i,1], curSeqInds[i+1,1], DayMatrix], i=1..curSeqIndsLen-1)]]:
+    else
+        r := remember(ComputeCircularTour(curSeqInds, AllAll))
+    fi:
+end:
+
+ComputeCircularTour := proc(seqs:list, AllAll:matrix)
+    global CTD;
+    slen := length(seqs):
+#    distMat := CreateArray(1..slen, 1..slen, 0):
+#    for k to slen do
+#        for l from k+1 to slen do
+#            distMat[k,l] := distMat[l,k] := AllAll[seqs[k,1],seqs[l,1],PamDistance]:
+#        od:
+#    od:
+#    tour := ComputeTSP(distMat):
+    distMat := [seq(seqs[i,1], i=1..slen)]:
+    #printf('map: %A\n', distMat):
+    res := remember(CTfromAllAll(distMat, AllAll)):
+#    if assigned(CTD) and type(CTD,set) then CTD := append(CTD, res) fi:
+#    printf('CT: %a\n', res):
+#    tour := [seq(seqs[res[i]], i=1..slen)]:
+    tour := [seq([res[i], 0], i=1..slen)]:
+    for i to slen do
+        ind := SearchArray(seqs[i,1], res):
+        tour[ind,2] := seqs[i,2]:
+    od:
+    # cycle through tour until the last element of seqs is in front (this will make computation of the alignment score more efficient)
+    while tour[1] <> seqs[-1] do tour := [op(tour[2..-1]), tour[1]] od:
+    tour := [op(tour), tour[1]]:
+    [[seq(tour[i,1], i=1..slen+1)], [seq(tour[i,2],i=1..slen+1)], [seq(AllAll[tour[i,1], tour[i+1,1], DayMatrix], i=1..slen)]]:
+end:
+
+UpdatePartialOrder := proc(PO_:PartialOrder, ST:list(SeqThread), newEdges:list, DPT:table, newst_:list)
+    newst := copy(newst_):
+    newST := copy(ST):
+    PO := copy(PO_):
+    NodeList := CreateArray(1..length(PO),0):
+    for i to length(PO) do
+        NodeList[i] := PO[i,1]:
+    od:
+    NodeList := {op(NodeList)} minus {'S'}:
+    newNode := If(NodeList = {}, 1, NodeList[-1]+1):
+    
+    for e in newEdges do
+    
+        curE := e[1]:
+        curEInd := DPT[curE[1], 2, curE[2], 3]:
+        offset := e[2]:
+        lenM := e[3]:
+        lenN := e[4]:
+        
+        # position of edge in new SequenceThread
+        i := SearchArray(curEInd, newst):
+        
+        if offset = 0 then
+            # we don't need to insert a new starting node
+            startNode := PO[curEInd,1]:
+        else
+            startNode := newNode:
+            newNode := newNode + 1:
+        fi:
+        if offset + lenN = PO[curEInd, 2] then
+            # we don't need to insert a new end node
+            endNode := PO[curEInd,3]:
+            
+            if offset = 0 then
+                # we just add the new edge
+                PO := append(PO, [startNode, lenM, endNode]):
+                newst := [op(newst[1..i-1]), length(PO), op(newst[i+1..-1])]:
+                next:
+            else
+                # insert new node and update existing sequences
+                PO := append(PO, [startNode, PO[curEInd, 2]-offset, endNode]):
+                PO[curEInd, 2] := offset:
+                PO[curEInd, 3] := startNode:
+                for st in newST do
+                    for j to length(st['NodeList']) do
+                        if st['NodeList',j] = curEInd then
+                            st['NodeList'] := [op(st['NodeList',1..j]), length(PO), op(st['NodeList',j+1..-1])]:
+                            break:
+                        fi:
+                    od:
+                od:
+                # update sequence thread of new sequence
+                PO := append(PO, [startNode, lenM, endNode]):
+                newst := [op(newst[1..i]), length(PO), op(newst[i+1..-1])]:
+            fi:
+        elif offset + lenN < PO[curEInd, 2] then
+            # we need to insert two new nodes into the current edge and update existing sequences
+            endNode := newNode:
+            newNode := newNode + 1:
+            if offset = 0 then
+                # we only need to insert a new end node
+                rem := 1:
+                PO := append(PO, [endNode, PO[curEInd, 2]-lenN, PO[curEInd, 3]]):
+                PO[curEInd, 2] := lenN:
+                PO[curEInd, 3] := endNode:
+                for st in newST do
+                    for j to length(st['NodeList']) do
+                        if st['NodeList',j] = curEInd then
+                            st['NodeList'] := [op(st['NodeList',1..j]), length(PO), op(st['NodeList',j+1..-1])]:
+                            break
+                        fi
+                    od
+                od:
+            else
+                rem := 0:
+                PO := append(PO, [startNode, lenN, endNode]):
+                PO := append(PO, [endNode, PO[curEInd, 2]-offset-lenN, PO[curEInd, 3]]):
+                PO[curEInd, 2] := offset:
+                PO[curEInd, 3] := startNode:
+                for st in newST do
+                    for j to length(st['NodeList']) do
+                        if st['NodeList',j] = curEInd then
+                            st['NodeList'] := [op(st['NodeList',1..j]), length(PO)-1, length(PO), op(st['NodeList',j+1..-1])]:
+                            break:
+                        fi:
+                    od:
+                od:
+            fi:
+            PO := append(PO, [startNode, lenM, endNode]):
+            # update sequence thread of new sequence
+            newst := [op(newst[1..i-rem]), length(PO), length(PO)-1, op(newst[i+1..-1])]:
+        else
+            endNode := newNode:
+            newNode := newNode + 1:
+            if offset= 0 then
+                # we only need to insert a new end node
+                rem := 1:
+                lenN := lenN - PO[curEInd,2]:
+            else
+                # add start node and update existing sequences
+                rem := 0:
+                PO := append(PO, [startNode, PO[curEInd,2]-offset, PO[curEInd,3]]):
+                PO[curEInd, 2] := offset:
+                PO[curEInd, 3] := startNode:
+                lenN := lenN - PO[-1,2]:
+                for st in newST do
+                    for j to length(st['NodeList']) do
+                        if st['NodeList',j] = curEInd then
+                            st['NodeList'] := [op(st['NodeList',1..j]), length(PO), op(st['NodeList',j+1..-1])]:
+                            break:
+                        fi:
+                    od:
+                od:
+            fi:
+            # update sequence thread of new sequence
+            while lenN > PO[newst[i+1], 2] do
+                # TODO: find place to insert end node, remove edges inbetween from newst
+                lenN := lenN - PO[newst[i+1], 2]:
+                newst := [op(newst[1..i]), op(newst[i+2..-1])]:
+            od:
+            PO := append(PO, [endNode, PO[newst[i+1],2]-lenN, PO[newst[i+1],3]]):
+            PO[newst[i+1],2] := lenN:
+            PO[newst[i+1],3] := endNode:
+            for st in newST do
+                for j to length(st['NodeList']) do
+                    if st['NodeList',j] = newst[i+1] then
+                        st['NodeList'] := [op(st['NodeList',1..j]), length(PO), op(st['NodeList',j+1..-1])]:
+                        break:
+                    fi:
+                od:
+            od:
+            # update sequence thread of new sequence
+            PO := append(PO, [startNode, lenM, endNode]):
+            newst := [op(newst[1..i-rem]), length(PO), length(PO)-1, op(newst[i+2..-1])]:
+        fi:
+    od:
+    
+    # update PartialOrder of existing sequences
+    #for st in newST do st['PO'] := PO od:
+    
+    [newST, newst, PO]
+end:
+

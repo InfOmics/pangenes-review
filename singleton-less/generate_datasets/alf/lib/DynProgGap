@@ -1,0 +1,535 @@
+
+
+GapMatch := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a datastructure to keep a GapMatch
+
+Selectors:
+       align1: alignment string of first sequence
+       align2:   "           "       2nd    "
+       seq1:    sequence 1
+       seq2:    sequence 2
+       Pam:     Pam distance
+       len:     length of alignmen
+       score:   similarity score
+       mid:     middle string (match string with |, ! and : etc)
+       iden:    identity
+Constructors:
+       GapMatch(seq1, seq2);
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(GapMatch(copy([]))))); 
+  elif nargs = 2  then
+    return (copy(noeval(GapMatch(args, 0, 0, 0, 0, 0))));
+  elif nargs = 10 then
+   return (copy(noeval(GapMatch(args))));
+  else
+    print(GapMatch);
+    error ('Invalid GapMatch format');
+  fi:
+end:
+
+GapMatch_type := noeval(structure(anything, GapMatch)):
+
+
+GapMatch_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('SEQ1', sel) > -1 or sel = 'S1' then 
+    if nargs=3 then 
+      u[1] := val;
+    else u[1] fi; 
+  elif SearchString('SEQ2', sel) > -1 or sel = 'S2' then 
+    if nargs=3 then 
+      u[2] := val;
+    else u[2] fi; 
+  elif SearchString('ALIGN1', sel) > -1 or sel = 'AL1' then 
+    if nargs=3 then 
+      u[3] := val;
+    else u[3] fi; 
+  elif SearchString('ALIGN2', sel) > -1 or sel = 'AL2' then 
+    if nargs=3 then 
+      u[4] := val;
+    else u[4] fi; 
+  elif SearchString('PAM', sel) > -1 or sel = 'P' then 
+    if nargs=3 then 
+      u[5] := val;
+    else u[5] fi; 
+  elif SearchString('SCORE', sel) > -1 or SearchString('SIM', sel) > -1 or sel = 'S' then 
+    if nargs=3 then 
+      u[6] := val;
+    else u[6] fi; 
+  elif  SearchString('LEN', sel) > -1 or sel = 'L' then 
+    if nargs=3 then 
+      u[7] := val;
+    else u[7] fi; 
+  elif SearchString(sel, 'MID') > -1  then
+    if nargs=3 then
+      u[8] := val;
+    else u[8] fi;  
+  elif SearchString(sel, 'IDEN') > -1 or sel = 'I' then
+    if nargs=3 then
+      u[9] := val;
+    else u[9] fi;  
+  elif SearchString(sel, 'SIMILARITY') > -1  then
+    if nargs=3 then
+      u[10] := val;
+    else u[10] fi;  
+  else 
+    lprint('Invalid GapMatch selector ',sel);
+    print(GapMatch);
+  fi;
+end:
+  
+GapMatch_print := proc();
+  m :=  noeval(GapMatch(args));
+  iden := m['iden'];
+  sim := m['similarity'];
+  len := m['len'];
+  printf ('length=%d simil=%3.1f, PAM_dist=%g\n',
+          m['Length'], m['Score'], m['PamNumber']); 
+  printf ('identity=%3.1f%%, similarity=%3.1f%%\n',
+            iden*100/len, sim/len );
+   
+  width := Set(screenwidth=80);  Set(screenwidth=width);
+  al1 := m['al1'];
+  al2 := m['al2'];
+  mid := m['mid'];
+  for i by width to len do
+    j := min (i + width - 1, len);
+    lprint (al1[i..j]);
+    lprint (mid[i..j]);
+    lprint (al2[i..j]);
+    if i + width <= len then lprint() fi;
+  od;
+end:
+
+
+module external DynProgGap;
+
+reverse := proc(seq: string);
+  res := copy(seq);
+  for i to length(seq) do res[i] := seq[-i] od;
+  res
+end:
+
+DynProgGap := proc(seq1: string, seq2: string)
+  description 'Does dynamic programming between the two sequences, but the sequences
+  may have gaps. Gap against gap is scored 0. Implementaion of Gotohs algorithm.
+  
+  An additional optional parameter
+  
+  window: integer
+ 
+  can be passed.
+  
+  If window > 0, the pam variance along the sequence is estimated by
+  sliding a window along a match and for each stretch the best
+  pam distance is calculated. For this "normal" dynamic programming
+  without alignment of gaps is used. For both sequences a list of
+  pam distances is used.
+  
+  Then the dynamic programming is repeated, but this time using a different
+  Dayhoff matrix at each position of the match that was determined.
+  
+  If there is a deletion in seq1, pam1 is used and vice versa.
+  If there is a match, both pam distances is used and score. Then
+  the distance (and score) with the better score is used.
+  ';
+  
+   
+  tmp := CleanSeq([seq1, seq2]);    
+  m := Align(tmp[1],tmp[2],DMS,Global);  
+  pam:=m[PamNumber];
+  dm := CreateDayMatrix(logPAM1, m[PamNumber]);
+  
+  s1 := length(seq1);
+  s2 := length(seq2);
+ 
+  # slide a window along the sequences to get different
+  # pam matrices
+  dm1 := CreateArray(1..s1+1, dm);  
+  dm2 := CreateArray(1..s2+1, dm);
+  if nargs > 2 and args[3] > 0 then
+    window := args[3];
+    if printlevel > 3 then
+      lprint('Estimating pam distances for each position:');
+      showPamScoreVar(tmp[1], tmp[2], window);
+    #  ReadLine('Press ; and enter');
+    fi;
+    res := getPamVar(seq1, seq2, window);
+
+    pam1 := res[1];
+    for i to s1 do
+      p := pam1[i];
+      if p = 0 then p := pam; fi;
+      dm1[i] :=  CreateDayMatrix(logPAM1, p);
+    od;  
+    
+    pam2 := res[2];
+    for i to s2 do
+      p := pam2[i];
+      if p = 0 then p := pam; fi;
+      dm2[i] :=  CreateDayMatrix(logPAM1, p);
+    od;   
+  fi;
+  
+  S := 1; T := 2; L := 3; D := 4;
+  # score, top, left, diagonal
+  M := CreateArray(1..4, 1..s1+1, 1..s2+1):
+  Pfad := CreateArray (1..4, 1..s1+1, 1..s2+1, 1..2):  
+  fromdiag := 1:  fromleft := 2:  fromtop := 3: 
+  infinity := 10000;
+  
+  # first row and first column are all zero
+  for i to s1+1 do
+    M[1, i, 1] := 0; Pfad[1, i, 1] := [fromdiag, 1]; 
+    
+    for k from 2 to 4 do
+      M[k, i, 1] := -infinity; Pfad[k, i, 1] := 1;
+    od;
+  od;
+  for j to s2+1 do
+    M[1, 1, j] := 0; Pfad[1, 1, j] := [fromdiag, 1];
+    for k from 2 to 4 do
+      M[k, 1, j] := -infinity; Pfad[k, 1, j] :=1;
+    od;
+  od;
+ 
+   for i from 2 to s1+1 do
+     a1 := seq1[i-1];
+     for j from 2 to s2+1 do
+       a2 := seq2[j-1];
+       
+       # # *** LEFT *** Case 1: from left : deletion in seq2
+       #        a1
+       #        __
+       #a2  -> |  |   gap in sequence 2
+       #        --
+       if (a1 ='_') then # gap against gap
+	 if (i > 2 and seq1[i-2] = '_' and Pfad[S, i-1, j, 1] = fromleft) then
+	   left := M[S, i-1, j]+dm2[j, IncDel]; #EXPERIMENT
+	 else
+	   left := M[S, i-1, j]+dm2[j, FixedDel]; #EXPERIMENT
+	 fi;
+       else
+	 if Pfad[S, i-1, j, 1] <> fromleft then left  := M[S, i-1, j]  + dm2[j, FixedDel];
+	 else left  := M[S, i-1, j] + dm2[j, IncDel];  fi; 
+       fi;
+       
+       # if there was already a gap, get the starting position from Pfad, else it is i-1
+       if (Pfad[S, i-1, j, 1] = fromleft) then  posleft := Pfad[S, i-1, j,2];
+       else  posleft := i-1; fi;
+        
+       # (from Gotoh). Keep also the possibility that we had a gap and continue this
+       if (a1 <> '_' ) then  old := M[L, i-1, j]+dm2[j, IncDel];
+       else  old := M[L, i-1, j] + dm2[j, IncDel]; fi;
+       
+       if (left >= old) then
+	 # it is better to have a new deletion -> keep that
+	 # and the path of that
+	 Pfad[L,i, j] := posleft;
+	 M[L, i, j] := left;
+       else
+	 # the old gap was better -> keep old pos.
+	 Pfad[L, i, j] := Pfad[L, i-1, j];
+	 M[L, i, j] := old;
+         posleft := Pfad[L, i, j];
+         left := old;
+       fi;
+	
+       # *** TOP *** Case 2: from top: deletion in sequence 1 
+       #        a1
+       #        v
+       #        __
+       #a2     |  |   gap in sequence 2
+       #        --
+       pos := Pfad[S, i, j-1, 2];
+       if (a2 ='_') then # gap against gap
+	 if (j > 2 and seq2[j-2]='_' and Pfad[S, i, j-1, 1] = fromtop) then
+	   top := M[S, i, j-1]+dm1[i, IncDel]; #EXPERIMENT 
+	 else # new gap
+	   top := M[S, i, j-1]+dm1[i, FixedDel]; #EXPERIMENT
+	 fi;
+       else
+	 if Pfad[S, i, j-1, 1] <> fromtop and a2<> '_' then 
+	   top  := M[S, i, j-1] + dm1[i, FixedDel];
+	   else top  := M[S, i, j-1] + dm1[i, IncDel]; fi;
+	 fi;
+       
+	 # if there was already a gap, get the starting position from Pfad, else it is j-1
+	 if (Pfad[S, i, j-1, 1] = fromtop) then postop := Pfad[S, i, j-1, 2];
+	 else postop := j-1; fi;
+	 
+	 # (from Gotoh). Keep also the possibility that we had a gap and continue this
+	 if (a2 <> '_' ) then old := M[T, i, j-1]+dm1[i, IncDel];
+	 else old := M[T, i, j-1] + dm1[i, IncDel]; fi;
+	 
+	 if (top > old) then
+	   # it is better to have a new deletion -> keep that
+	   # and the path of that
+	   Pfad[T, i, j] := postop;
+	   M[T, i, j] := top;
+	 else
+	   # the old gap was better -> keep old pos.
+	   Pfad[T, i, j] := Pfad[T, i, j-1];
+	   M[T, i, j] := old;
+	   postop := Pfad[T, i, j];
+	   top := old;
+	 fi;
+	 
+       # Case 3: diagonal, no deletion
+       p := Pfad[S, i-1, j-1, 1];
+       posd := Pfad[D, i-1, j-1];
+       # there are two scores we need to keep
+       # for the two pam distances
+       if (a1 = '_') then
+	 if (a2='_') then
+	   sc1 := 0; diaglen := 1;
+	   sc2 := 0;
+	 else # a1 = gap, a2 <> gap
+	   if i = 2 then sc1 := 0; sc2 := 0;
+	   elif seq1[i-2] = '_' then # if gap is termainal, dont count
+	       if p = fromdiag and posd < 2 then sc := 0;
+	       else sc1 := dm1[i, FixedDel]; sc2 :=dm2[j, FixedDel]; fi;
+	   else	 sc1 := dm1[i, FixedDel]; sc2 := dm2[j, FixedDel];  fi;
+	 fi;
+       else # a1 <> gap
+	 if (a2 = '_') then
+	   if j = 2 then sc1 := 0; sc2 := 0;  
+	   elif ( seq2[j-2] = '_') then 
+	     if p = fromdiag and posd < 2 then sc := 0;
+	     else sc1 := dm1[i, IncDel]; sc2 := dm2[j, IncDel]; fi;
+	   else sc1 := dm1[i, FixedDel]; sc2 := dm2[j, FixedDel]; fi;
+	 else # a1 <> gap, a2 <> gap => normal case+
+	   sc1 :=  dm1[i, Sim, a1, a2]; 
+	   sc2 :=  dm2[j, Sim, a1, a2];
+	 fi;
+       fi;   
+       diag1 := M[S, i - 1, j - 1] + sc1;
+       diag2 := M[S, i - 1, j - 1] + sc2;
+       posdiag := i-1;
+       
+       # Gotoh: we keep the possibility that we took the diagonal step. This is not needed in the
+       # normal dynamic programming, but since we include gaps in our sequences,
+       # this is necessary!
+       if (a1 = '_' or a2='_') then
+	 if (a1 <> '_' or a2<>'_') then
+	   if (a1='_' and i =2 ) or (a2='_' and j= 2) then old := 0;
+	   elif (a1='_' and i > 2 and seq1[i-2] = '_') then  old := M[D, i-1, j-1]+dm1[i, IncDel];
+	   elif (a2='_' and j > 2 and seq2[j-2] = '_') then  old := M[D, i-1, j-1]+dm2[j, IncDel];
+	   elif (a1='_') then  old := M[D, i-1, j-1]+dm1[i, FixedDel]; 
+	   else  old := M[D, i-1, j-1]+dm2[j, FixedDel]; 
+	   fi;
+	 else old := M[D, i-1, j-1];
+	 fi;
+       else # in this case we take the diagonal case anyway :-)
+	 old := -infinity;       
+       fi;
+       
+       diag := max(diag1, diag2);
+       if (diag >= old) then
+	 Pfad[D, i, j] := posdiag;
+	 M[D, i, j] := diag;
+       else
+	 # the old gap was better -> keep old pos.
+	 Pfad[D, i, j] := Pfad[D, i-1, j-1];
+	 M[D, i, j] := old;
+         posdiag := Pfad[D, i, j];
+         diag := old;
+       fi;
+	 
+       if left >= top and left > diag  then
+	 M[S, i,j] := left; 
+	 Pfad[S, i,j] := [fromleft, posleft]; 
+       elif (top > left and top > diag) then
+	 M[S, i,j] := top; 	 
+	 Pfad[S, i,j] := [fromtop, postop]; 
+       else 
+	 M[S, i,j] := diag; 
+	 Pfad[S, i,j] := [fromdiag, posdiag];
+       fi;  
+     od:
+   od:  
+   # MS := M[S]; PfadS := Pfad[S];
+   
+   m := BackTrack(seq1, seq2, M[S], Pfad[S], dm);
+   
+   return(m);
+end:
+
+BackTrack := proc(seq1: string, seq2: string, MS: array, PfadS: array, dm);
+  s1 := length(seq1);
+  s2 := length(seq2);
+  S := 1; T := 2; L := 3; D := 4;
+  fromdiag := 1:  fromleft := 2:  fromtop := 3: 
+  infinity := 10000;
+   # first row: match first aa with all aa 
+  a2 := seq2[1];
+ 
+  
+   if printlevel > 2 then
+     if (s1 < 50) then
+       ss1 := 'X'.seq1;
+       ss2 := 'X'.seq2;
+       testP := CreateArray(1..s2+1, 1..s1+2, '');
+       testM := CreateArray(1..s2+1, 1..s1+2, ''); 
+       RowsM := CreateArray(1..s2+1);
+       RowsP:= CreateArray(1..s2+1);
+       for j from 1 to s2+1 do
+	 for i from 1 to s1+1 do
+	   if (i = 1) then
+	     if (j=1) then 
+	       testP[j, i]  := '';
+	       testM[j, i ]  := '';
+	     else 
+	       testP[j,i]  := ss2[j-1];
+	       testM[j,i] := ss2[j-1];  
+	     fi;
+	   else
+	     if (j=1) then  
+	       testP[j, i] :=  ss1[i-1];  
+	       testM[j, i]  := ss1[i-1];
+	     else
+	       a := PfadS[i-1, j-1, 1];
+	       b := PfadS[i-1, j-1, 2];
+	       if a = fromdiag then aa := '\\';
+	       elif a = fromtop then aa := '|';
+	       else aa := '-'; fi;
+	       testP[j, i] := aa.' '.b;
+	       testM[j, i] := round(MS[i-1, j-1]); 
+	      
+	     fi;
+	   fi;	  
+	 od;
+	 RowsP[j] := Row(op(testP[j]));
+         RowsM[j] := Row(op(testM[j]));  
+	
+       od;
+       tp := Table(op(RowsP));
+       tm :=  Table(op(RowsM)); 
+     
+       lprint('Score matrix:');print(tm);lprint();
+       lprint('Path matrix:');print(tp);lprint();
+      
+     fi;
+   fi;
+   
+ 
+   # now do the backtracing:
+   maxiscore := MS[1, s2+1];
+   maxi := 1; 
+   for i to s1+1 do
+     if MS[i, s2+1] > maxiscore then
+       maxi := i; maxiscore := MS[i, s2+1];
+     fi;
+   od;
+   
+   maxjscore := MS[s1+1, 1];
+   maxj := 1;
+   for j to s2+1 do
+     if MS[s1+1, j] > maxjscore then
+       maxj := j; maxjscore := MS[s1+1, j];
+     fi;
+   od;
+ 
+   if (maxiscore > maxjscore) then
+     score := maxiscore;
+     starti := maxi;
+     startj := s2+1;
+     al2 := CreateString(s1-maxi+1, '_');;
+     al1 := '';
+     for i from s1 to maxi by -1 do
+       al1 := al1.seq1[i];
+     od;
+   else
+     starti := s1+1;
+     startj := maxj;
+     score := maxjscore;
+     al2 := ''; 
+     for j from s2 to maxj by -1 do
+       al2 := al2.seq2[j];
+     od;
+     al1 := CreateString(s2-maxj+1, '_');
+   fi;
+ 
+   i := starti;
+   j := startj;
+   
+   while (i > 1 and j > 1) do
+     direction := PfadS[i, j, 1]; 
+     if printlevel > 3 then
+       if direction = fromdiag then aa := '\\';
+       elif direction = fromtop then aa := '|';
+       else aa := '-'; fi;
+       lprint(aa, i, j, PfadS[i, j, 2]); 
+     fi; 
+     if (direction = fromdiag) then
+       diag := PfadS[i, j, 2];
+       delta := i-diag;
+       for d from 0 to delta-1 while (j-d>1 and i-d>1) do
+         al1 := al1.seq1[i-d-1];
+         al2 := al2.seq2[j-d-1];
+       od;
+       if (d >= delta) then
+	 i := diag;
+	 j := j-delta;
+       else # obviously j-d <=0 or i-d<=0)
+         lprint('Diag case: diag done is ', d);
+         i := i - d;
+         j := j - d;
+       fi;
+     elif (direction = fromleft) then
+       gapi := PfadS[i, j, 2]; 
+       for g from i-1 to gapi by -1 do
+         al1 := al1.seq1[g];
+         al2 := al2.'_';
+       od;
+       if (i = gapi) then break; fi;
+       i := gapi;
+     else
+      gapj := PfadS[i, j, 2]; 
+       for g from j-1 to gapj by -1 do
+         al2 := al2.seq2[g];
+         al1 := al1.'_';
+       od; 
+       if (j = gapj) then break; fi;
+       j := gapj; 
+     fi;
+   od:
+    
+   
+  al1 := reverse(al1);
+  al2 := reverse(al2);
+  
+  if (i > 1) then 
+    al1 := seq1[1..i-1].al1; 
+    al2 := CreateString(i-1, '_').al2;
+  fi;
+  if (j > 1) then 
+    al2 := seq2[1..j-1].al2;  
+    al1 := CreateString(j-1, '_').al1;
+  fi; 
+  
+  sim := iden := 0;  mid := CreateString(length(al1));
+  for i to length(al1) do
+    if al1[i] = al2[i] then
+      iden := iden+1;  mid[i] := '|'
+    elif AToInt(al1[i]) > 0 and AToInt(al1[i]) < 21 and
+      AToInt(al2[i]) > 0 and AToInt(al2[i]) < 21 then
+      c := dm[Sim,al1[i],al2[i]];
+      if c >= 0 then
+	sim := sim + 1;
+	mid[i] := If( c > dm[MaxOffDiag]/2, '!', ':' )
+      elif c > dm[MinSim]/2 then
+	mid[i] := '.'
+      fi
+    fi
+  od;
+
+  m := GapMatch(seq1, seq2, al1, al2,  dm[PamNumber], score, length(al1),mid, iden, sim);
+  return(m);
+end:
+end; # end module

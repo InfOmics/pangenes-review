@@ -1,0 +1,92 @@
+#
+#	RandomSelection:  random selection of an event given
+#	by a vector or probabilities (or proportional to probabilities).
+#
+#	That is, given a vector v:list(posint), RandomSelection selects
+#	one event (an integer from 1 to length(v)) which will happen
+#	with probability v[i]/sum(v).
+#
+#	This function is useful when the vector v is frequently updated.
+#	If v is fixed or updated infrequently, then the computing the
+#	cumulative of v and using SearchOrderedArray is unbeatable.
+#	E.g.
+#
+#	# as a preamble:
+#	cum_v := copy(v);
+#	for i from 2 to length(v) do cum_v[i] := cum_v[i]+cum_v[i-1] od;
+#	cum_v := cum_v/cumv[-1]:
+#
+#	# for the generation of a random event i:
+#	i := SearchOrderedArray( Rand(), cum_v ) + 1;
+#
+#	At the bottom of this file, commented out, there is code which
+#	tests various alternatives to this function.  The selected one
+#	is the most efficient by far, even in extreme cases.
+#
+#			Gaston H. Gonnet (May 6th, 2010)
+#
+RandomSelection := proc( v:list )
+n := length(v);
+m := max(v);
+# this loop will execute an average of n*m/sum(v) times
+do  i := ceil(n*Rand());  if m*Rand() <= v[i] then return(i) fi od
+end:
+
+
+
+# #
+# #	Test algorithms to select an event with a probability
+# #	proportional to a given vector.
+# #
+# #	Gaston H. Gonnet (May 6th, 2010)
+# #
+# Set(gc=1e8):
+# 
+# 
+# # compute the cumulative
+# RandomSelection1 := proc( v:list )
+# cv := copy(v);
+# for i from 2 to length(cv) do cv[i] := cv[i]+cv[i-1] od;
+# SearchOrderedArray( Rand()*cv[-1], cv ) + 1
+# end:
+# 
+# 
+# # random jumping
+# RandomSelection2 := proc( v:list )
+# n := length(v);
+# m := max(v);
+# do  i := ceil(n*Rand());  if m*Rand() <= v[i] then return(i) fi od
+# end:
+# 
+# 
+# # compute the cumulative on the fly
+# RandomSelection3 := proc( v:list )
+# s := sum(v)*Rand();
+# t := 0;
+# for i to length(v) do t := t + v[i];  if t >= s then return(i) fi od;
+# end:
+# 
+# 
+# # random jumping but checking with max first
+# RandomSelection4 := proc( v:list )
+# n := length(v);
+# m := max(v);
+# if Rand()*sum(v) < m then return(SearchArray(m,v)) fi;
+# do  i := ceil(n*Rand());  if m*Rand() <= v[i] then return(i) fi od
+# end:
+# 
+# N := 1000;
+# M := 100000;
+# #rv := Rand;
+# #rv := () -> Rand()^4;
+# rv := () -> exp(Rand(Normal));
+# v := [ seq(rv(),N) ]:
+# 
+# for p in [RandomSelection2,RandomSelection3,RandomSelection4] do
+#     C := CreateArray(1..N):
+#     st := time():
+#     to M do i := p(v);  C[i] := C[i]+1 od:
+#     G := 2 * sum( If( C[i]>0, C[i]*ln(C[i]/v[i]), 0), i=1..N ) +
+# 	2*M*ln(sum(v)/M);
+#     printf( '%s: N=%d, M=%d, time=%.2f, G=%g\n', p, N, M, time()-st, G );
+# od:

@@ -1,0 +1,151 @@
+# 
+# Function to convert a Newick (or also New Hampshire eXtended)
+# formated tree to a darwin tree.
+#
+#  This is an extended replacement for the BinaryNewick2Darwin
+#  function by Manuel Gil, 2006
+#  
+#  The function resolves multifucation nodes into binary nodes 
+#  with branchlength 0 between them.
+#
+#                               Adrian Altenhoff, Jan 8, 2009
+#
+module external ParseNewickTree, BinaryNewick2Darwin;
+local LeafLabelHandler, InnerLabelHandler, defBranchLen;
+
+###################
+# Grammar of newick / NHX tree
+# tree  = sub ';'
+# sub   = leaf | '('sub ',' sub {',' sub} ')' [label] [:branchlength] [NHX-label]
+# leaf  = [label] [:branchlength] [NHX-label]
+# label = {standardchars} | quoted string ('/")
+# NHX-label = [&&NHX...]
+
+ParseTreeR := proc(s:string, h0:numeric ; quotedLabels:table)
+    N := length(s):
+
+    # get branchlength, label and NHX-label
+    inLabel := false: branchlen := defBranchLen; colpos := N+1;
+    nhxTagBeg := nhxTagEnd := DBL_MAX: 
+    for i from N to 1 by -1 while s[i] <> ')' do 
+        if s[i]=':' and not inLabel then 
+            branchlen := parse(s[i+1..min(N,nhxTagBeg-1)]);
+            if not type(branchlen, numeric) then 
+                error('non-numeric branchlength in '.s);
+            fi;
+            inLabel := true: colpos := i;
+        elif not inLabel and s[i]=']' then
+            inLabel := true: nhxTagEnd := i;
+        elif inLabel and s[i]='[' then 
+            inLabel := false; nhxTagBeg := i;
+        fi:
+    od:
+    
+	# get original label if it was quoted
+    label := s[i+1..colpos-1];
+    if assigned(quotedLabels) and length(label)>13 and 
+        label[1..13]='__QUOTEDLABEL' then 
+        label := quotedLabels[label]
+    fi:
+    nhxTag := If(nhxTagEnd<DBL_MAX and nhxTagBeg<nhxTagEnd,
+        s[nhxTagBeg..nhxTagEnd], NULL );
+    
+    if N=0 or i=0 or s[i]<>')' then 
+        if i>0 and s[1]='(' then error('subtree not in newick format: '.s) fi:
+        # we have observed a leaf. return it
+        return( Leaf( label, h0+branchlen, 
+                      If(nhxTag<>NULL, LeafLabelHandler(nhxTag),NULL) ) );
+    else
+
+        # get a list of all the subtree ranges.
+        # --> commas divide them where number of opening and closing 
+        #     brackets is equal
+        brackets := 0; subtrees := []: lastOpenPos := 2;
+        for j from 2 to i-1 do
+            if s[j] = ',' and brackets=0 then 
+                subtrees := append(subtrees, lastOpenPos..j-1);
+                lastOpenPos := j+1;
+            elif s[j] = '(' then brackets := brackets+1;
+            elif s[j] = ')' then brackets := brackets-1;
+            fi;
+        od:
+        if brackets<>0 then 
+            error('string not in newick format. number of opening '.
+                'and closing brackets do not match in subtree '.s);
+        fi:
+        subtrees := append(subtrees, lastOpenPos..i-1);
+    
+        optArg := If(assigned(quotedLabels),quotedLabels,NULL):
+        Nst := length(subtrees):
+        t := ParseTreeR(s[subtrees[1]], h0+branchlen, optArg):
+        handledLabel := [seq( InnerLabelHandler(z), z={label,nhxTag} )]:
+        if handledLabel=[] then handledLabel := NULL;
+        elif length(handledLabel)=1 then handledLabel := handledLabel[1]; fi:
+        
+        for i from 2 to length(subtrees) do 
+            t := Tree( t, h0+branchlen, 
+                ParseTreeR(s[subtrees[i]], h0+branchlen, optArg), handledLabel );
+        od:
+        return(t);
+    fi:
+end:
+
+
+DefaultLabelHandler := proc(lab:string)
+    if length(lab)>6 and lab[1..6]='[&&NHX' and lab[-1]=']' then
+        lab[7..-2];
+    elif lab='' then NULL;
+    else lab fi:
+end:
+
+ParseNewickTree := proc(s:string ;
+    'defaultBranchLength'=((defBranchLength=0):nonnegative),
+    'InternalLabels'=(inner_hdl:procedure),
+    'LeafLabels'=(leaf_hdl:procedure))
+
+    global LeafLabelHandler,InnerLabelHandler,defBranchLen; # global in the module
+
+    # assign label handlers
+    LeafLabelHandler := If(assigned(leaf_hdl),leaf_hdl,DefaultLabelHandler):
+    InnerLabelHandler := If(assigned(inner_hdl),inner_hdl,DefaultLabelHandler):
+    defBranchLen := defBranchLength:
+
+    # look for quoted labels (everything in between ' ' / " " 
+    # is assumed to be one label) and for blanks (incl newlines, tabs,...) 
+    quotes := {'''','"'}; blanks := {' ','\n','\t','\r'};
+    nh := CreateString(length(s)): cnt := 0: quotLabTab := table(): 
+    i := 1: k := 1;
+    do 
+        if member(s[i],quotes) then
+            for j from i+1 to length(s) while s[j]<>s[i] do od:
+            if j>length(s) then error('unfinished quoted label in string') fi:
+            cnt := cnt+1;
+            quotLab := sprintf('__QUOTEDLABEL%d__', cnt);
+            quotLabTab[quotLab] := s[i..j];
+            if k>length(nh)-length(quotLab) then 
+                nh:=nh.CreateString(length(nh)) 
+            fi:
+            for x to length(quotLab) do nh[k+x-1]:=quotLab[x] od:
+            k := k+length(quotLab); i := j+1;
+        elif member(s[i],blanks) then 
+            i:=i+1;
+        else
+            if k>length(nh) then nh := nh . CreateString(length(nh)) fi:
+            nh[k] := s[i]; i:=i+1; k:=k+1;
+			if s[i-1] = ';' then break fi:
+        fi:
+        if i>length(s) then 
+            error('string does not contain termination '';''');
+        fi:
+    od:
+    assert(nh[k-1] = ';');
+    nh := nh[1..k-2];
+
+    return( ParseTreeR(nh, 0, If(cnt>0,quotLabTab,NULL)) ):
+end:
+
+# for backward compability
+BinaryNewick2Darwin := proc(s:string) option internal; ParseNewickTree(s) end:
+	
+
+end: #module

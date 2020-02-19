@@ -1,0 +1,37 @@
+#
+#	OutsideBounds( a, b, Confidence=0.975 )
+#	Test whether two univariate statistics (Stat objects)
+#	may represent the same value with a certain confidence
+#
+#					Gaston H. Gonnet (April 14th, 2006)
+#	
+#	Math:
+#		We compute the probability that X1 >= X2
+#	where X1 and X2 are assumed to be normal and described
+#	by Stat's structures.
+#
+#	Pr{ X1 >= X2 } = int( f(X2) * int( f(X1), X1=X2..infinity ),
+#		X2=-infinity .. infinity )
+#
+#	where f(X1) and f(X2) are the respective densities.
+#
+#	assume(s1>0);  assume(s2>0);
+#	fX1 := 1/sqrt(2*Pi)/s1 * exp( -(X1-m1)^2 / (2*s1^2) );
+#	fX2 := 1/sqrt(2*Pi)/s2 * exp( -(X2-m2)^2 / (2*s2^2) );
+#	int( fX2 * int( fX1, X1=X2..infinity ), X2=-infinity .. infinity );
+#	fX1mX2 := 1/sqrt(2*Pi*(s1^2+s2^2)) *
+#			exp( -(X-(m1-m2))^2/(2*(s1^2+s2^2)) );
+#	int( fX1mX2, X=0..infinity ) =
+#		1/2*erf(1/(2*s1^2+2*s2^2)^(1/2)*(m1-m2))+1/2
+#
+OutsideBounds := proc( a:Stat, b:{Stat,numeric} ;
+	'Confidence'=((Confidence=0.975):positive) )
+if Confidence < 0.5 or Confidence >= 1 then
+    error('Confidence should be between 0.5 and 1') fi;
+
+s1 := a['Variance']/a['Number'];  m1 := a['Mean'];
+if type(b,numeric) then m2 := b;  s2 := 0;
+else s2 := b['Variance']/b['Number'];  m2 := b['Mean'] fi;
+
+1/2*erf(1/(2*s1+2*s2)^(1/2)*|m1-m2|)+1/2 > Confidence
+end:

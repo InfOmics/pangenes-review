@@ -1,0 +1,490 @@
+#                             -*- Mode: Darwin -*-
+#  Parses.drw -- parsing heuristics
+#  Author          : Marcel TURCOTTE
+#  Created On      : Wed May  8 09:31:02 1996
+#  Last Modified By: Marcel TURCOTTE
+#  Last Modified On: Mon May  5 11:40:48 1997
+
+if not assigned (regexp) then
+  ReadLibrary ('MBA_Toolkit')
+fi:
+
+# The following is what I call ``horizontal parses''; the search for 
+# a parse in one sequence does not depend on the other sequences.  Which means
+# that if the alignment is split those parses don't need to be re-calculated.
+
+HParse := proc (ma)
+
+  description 'Finds horizontal parses.';
+  
+  out := CreateArray (1..12);
+  
+  out[1]  := RegExpAli ('PP+', ma);
+  out[2]  := RegExpAli ('_', ma);
+  out[3]  := RegExpAli ('P.P', ma);
+  out[4]  := RegExpAli ('P.G', ma);
+  out[5]  := RegExpAli ('[PGDNS]*P[PGDNS]+|[PGDNS]+P[PGDNS]*', ma);
+  out[6]  := RegExpAli ('P..P', ma);
+  out[7]  := RegExpAli ('G.P', ma);
+  out[8]  := RegExpAli ('[PGDNS][PGDNS][PGDNS]+', ma);
+  out[9]  := RegExpAli ('G.G', ma);
+  out[10] := RegExpAli ('YP', ma);
+
+  out[11] := RegExpAli ('G.GG', ma);
+  out[12] := RegExpAli ('GG.G', ma);
+#  out[13] := RegExpAli ('[KREND][KREND][KREND][KREND]+', ma);
+  
+  out;
+end:
+
+# The following are ``vertical parses''; these parses are calculated 
+# from the content of one or many positions in the multiple sequence 
+# alignment and assigned to one or many positions.
+
+VParse := proc (ma, si)
+
+  description 'Finds vertical parses.';
+  
+  out := CreateArray (1..7);
+  
+  out[1] := Conserved (ma, '_', threshold = 1/20);
+  out[2] := ConfirmedGap (ma);
+  out[3] := ApcGlySurf (ma, si);
+  out[4] := ConservedP (ma, si);
+  out[5] := DistPro (ma, pos_min = 2);
+  out[6] := SurfSurfGlySurf (ma, si);
+
+  # This is a stronger requirement:
+
+  out[7] := regexp ('SSSS+', si);
+
+  # than
+  # out[8] := regexp ('[Ss][Ss][Ss][Ss]+', si);
+  
+  out
+end:
+
+PParse := proc (hp:array(array(array(integer))), vp:array(array(integer)), ma:array(string))
+  
+  description 'Finds primary parses.';
+
+# because different parses can overlap
+# it's easier to create an intermediate representation
+# to sum up the number of parse per position
+  
+  m := length (hp[1]); n := length (hp[1,1]);
+  t := CreateArray (1..m, 1..n, 0);
+  
+  for h to length (hp) do
+    for seq to m do
+      for pos to n do
+	for i to hp[h,seq,pos] do
+	  t[seq,pos+i-1] := 1
+	od
+      od
+    od
+  od;
+
+  v := CreateArray (1..n, 0);
+  
+  for pos to n do
+    a := 0;
+    b := 0;
+    for seq to m do
+      c := ma[seq,pos];
+      if AToInt(c) > 0 or c = '_' or c = '-' then
+	a := a + 1
+      fi;
+      b := b + t[seq,pos]
+    od;
+    
+    if a > 0 then
+      v[pos] := b / a
+    fi
+  od;
+  
+  for h to 3 do
+    for pos to n do
+      for j to vp[h,pos] do
+	v[pos] := v[pos] + 1 / 2
+      od
+    od
+  od;
+  
+  pp := [];
+  pos := 1;
+  
+  do
+
+    for i from pos to n while v[i] < 0.5 do od;
+    
+    if i > n then
+      break
+    fi;
+      
+    for j from i to n while v[j] >= 0.5 do od;
+    
+    pp := append (pp, P(i, j-i));
+    
+    pos := j
+  od;
+  
+  pp
+end:
+
+# Be careful!  Sparse uses a global variable, _sparse, that needs
+# to be reset before starting a prediction for a new alignment!
+
+SParse := proc (hp:array(array(array(integer))), vp:array(array(integer)), ma:array(string), ilo:posint, ihi:posint)
+  
+  global _sparse;
+  description 'Finds primary parses.';
+
+  reset := false;
+  
+  for i from 6 to nargs do
+    if type (args[i], string=anything) then
+      if SearchString ('reset', op (1, args[i])) <> -1 and type (op (2, args[i]), boolean) then
+        reset := op (2, args[i])
+      elif printlevel > 1 then
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    elif printlevel > 1 then
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  if not assigned (_sparse) or reset then
+  
+# Because different parses can overlap
+# it's easier to create an intermediate representation
+# to sum up the number of parse per position
+    
+    m := length (hp[1]); n := length (hp[1,1]);
+    t := CreateArray (1..m, 1..n, 0);
+    
+    for h to length (hp) do
+      for seq to m do
+	for pos to n do
+	  for i to hp[h,seq,pos] do
+	    t[seq,pos+i-1] := t[seq,pos+i-1] + 1
+	  od
+	od
+      od
+    od;
+
+    v := CreateArray (1..n, 0);
+    
+    for pos to n do
+      for seq to m do
+	v[pos] := v[pos] + t[seq,pos]
+      od
+    od;
+    
+    for h to length (vp) do
+      for pos to n do
+	for i to vp[h,pos] do
+	  v[pos] := v[pos] + 1
+	od
+      od
+    od;
+    
+    _sparse := v
+  fi;
+
+  if not reset then
+
+    max_score := _sparse[ilo];
+    pos := ilo;
+    for i from ilo + 1 to ihi do
+      if _sparse[i] > _sparse[pos] then
+	max_score := _sparse[i];
+	pos := i
+      fi
+    od;
+    
+    if max_score > 0 then
+      for i from pos to ilo by -1 while _sparse[i] = max_score do od;
+      for j from pos to ihi while _sparse[j] = max_score do od;
+      p(i+1, (j - i - 1))
+    else
+      []
+    fi
+  else
+    NULL
+  fi
+end:
+
+UnParsed  := proc (lo:posint, hi:posint)
+
+  if not assigned (_sparse) then error ('Must run SParse before') fi;
+  
+  n := hi-lo+1;
+  s := CreateString (n);
+  
+  j := 1;
+  for i from lo to hi do
+    if _sparse[i] <> 0 then s[j] := 'X' fi;
+    j := j + 1
+  od;
+      
+  for ilo to n while s[ilo] = 'X' do od;
+  for ihi from n to 1 by -1 while s[ihi] = 'X' do od;
+
+  if ilo > ihi then return (0) fi; 
+  
+  for j from ilo to ihi do
+    if s[j] = 'X' then
+      return (0)
+    fi
+  od;
+  
+  ihi - ilo + 1
+end:
+
+LongestUnParsedRegion := proc (lo:posint, hi:posint)
+
+  if not assigned (_sparse) then error ('Must run SParse firt') fi;
+  
+  n := hi-lo+1;
+  s := CreateString (n);
+  
+  j := 1;
+  for i from lo to hi do
+    if _sparse[i] <> 0 then s[j] := 'X' fi;
+    j := j + 1
+  od;
+      
+  pat := regexp ('[^X]+', s);
+  m := max (pat);
+ 
+  if m = 0 then
+    [1/0, 0]
+  else
+    for i to n while pat[i] < m do od;
+    [lo+i-1, pat[i]]
+  fi
+end:
+
+
+# Actual implementations of the parses.
+
+ConfirmedGap := proc (ma:array(string))
+  
+  description 'Confirmed gaps';
+  
+  len := length (ma[1]);
+  out := CreateArray (1..len, 0);
+
+  for pos to len do
+    fr := FrAtPos (ma, pos);
+
+    # should it be G also? (fr[AToInt ('P')] > 0 or fr[AToInt ('G')] > 0)
+    
+    if fr[22] > 0 and fr[AToInt ('P')] > 0 then
+      out[pos] := 1
+    fi
+  od;
+
+  out
+end:
+
+SurfSurfGlySurf := proc (ma:array(string), surfint:string)
+  
+  description 'Surface Surface Gly Surface';
+  
+  len := length (ma[1]);
+  out := CreateArray (1..len, 0);
+
+  si := uppercase (surfint);
+
+  for pos to len - 3 do
+    fr := FrAtPos (ma, pos + 2);
+    if si[pos] = 'S' and si[pos+1] = 'S' and fr[AToInt ('G')] > 0.9 and si[pos+3] = 'S' then
+      out[pos] := 1; out[pos+1] := 1; out[pos+2] := 1; out[pos+3] := 1
+    fi
+  od;
+
+  out
+end:
+
+DistPro := proc (ma:array(string))
+
+  description 'Distributed prolines';
+
+  # -- processing optional arguments --
+
+  pmin := 2;
+  
+  for i from 5 to nargs do
+    if type (args[i], string=anything) then
+      if SearchString ('pos', op (1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+        pmin := op (2, args[i])
+      elif SearchString ('total', op (1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+        total := op (2, args[i])
+      elif printlevel > 1 then
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    elif printlevel > 1 then
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  if not assigned (total) then
+    total := 2 * pmin
+  fi;
+  
+  # -- body of the procedure --
+
+  len := length (ma[1]);
+  out := CreateArray (1..len, 0);
+
+  for pos to len - 1 do
+    a := b := 0;
+
+    for i to length (ma) do
+      if ma[i,pos] = 'P' and ma[i,pos+1] <> 'P' then
+	a := a + 1
+      elif ma[i,pos] <> 'P' and ma[i,pos+1] = 'P' then
+	b := b + 1
+      fi
+    od;
+
+    if a >= pmin and b >= pmin and a + b >= total then
+      out[pos] := 2
+    fi
+  od;
+
+  out
+end:
+
+ConservedP := proc (ma:array(string), si_in:string)
+
+  out := Conserved (ma, 'P', threshold = 1.0);
+  si := uppercase (si_in);
+  len := length (out);
+  
+  for pos to len do
+    if out[pos] <> 0 then
+      left := right := false;
+      if pos > 1 and si[pos-1] = 'S' then
+	left := true
+      fi;
+      if pos < len and si[pos+1] = 'S' then
+	right := true
+      fi;
+      if not (left or right) then
+	out[pos] := 0
+      fi
+    fi
+  od;
+
+  out
+end:
+
+ApcGlySurf := proc (ma:array(string), si_in:string)
+
+  out := Conserved (ma, 'G', threshold = 1.0);
+  si := uppercase (si_in);
+  len := length (out);
+  
+  for pos to len - 1 do
+    if out[pos] <> 0 and si[pos+1] <> 'S' then
+      out[pos] := 0
+    fi
+  od;
+
+  out
+end:
+
+# \subsection{utilities}
+
+RegExpAli := proc (re:string, ma:array(string))
+
+  description 'Generic procedure to implement regex based parse heuristics';
+
+  m := CreateArray (1..length (ma));
+  
+  for seq to length (ma) do
+    m[seq] := regexp (re, ma[seq]);
+  od;
+  
+  m
+end:
+
+FrAtPos := proc (ma:array(string), pos:posint)
+  
+  description 'Amino acid frequencies at pos in alignment'; 
+  
+  fr := CreateArray (1..22, 0);
+  n := 0;
+  
+  for seq to length (ma) do
+    aa := ma[seq,pos];
+    if aa <> ' ' then
+      n := n + 1;
+      if aa = '_' or aa = '-' then
+	fr[22] := fr[22] + 1
+      else
+	i := AToInt(aa);
+	if i <> 0 then
+	  fr [i] := fr[i] + 1
+	fi
+      fi
+    fi
+  od;
+  
+  if n <> 0 then
+    fr / n
+  else
+    fr
+  fi
+end:
+
+Conserved := proc (ma:array(string), res:string)
+
+  description 'Generic procedure to implement parses based on conservation.';
+
+  # -- processing optional arguments --
+
+  threshold := 0.1;
+
+  for i from 3 to nargs do
+    if type (args[i], string=anything) then
+      if SearchString ('threshold', op (1, args[i])) <> -1 and type (op (2, args[i]), numeric) then
+        threshold := op (2, args[i])
+      elif printlevel > 1 then
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    elif printlevel > 1 then
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- body of the procedure --
+  
+  len := length (ma[1]);
+  out := CreateArray (1..len, 0);
+
+  for pos to len do
+
+    fr := FrAtPos (ma, pos);
+    
+    if res = '_' or res = '-' then
+      i := 22
+    else
+      i := AToInt (res);
+      if i = 0 then
+	i := 21
+      fi
+    fi;
+    
+    if fr[i] >= threshold then
+      out[pos] := 1
+    fi
+  od;
+
+  out
+end:
+
+NULL:

@@ -1,0 +1,74 @@
+#
+#	GapTree: build a phylogenetic tree based on the
+#		gaps of one/several multiple sequence alignments.
+#
+#	The assumption is that gap creation is a sufficiently
+#	rare which allows us to build better trees for longer
+#	distances.
+#
+#	The gaps are extracted from MAlignments given as arguments.
+#	Only single gaps which are clearly delimited are used.
+#	Areas in which no sequence is gapless are not considered.
+#	Areas where sequences have two gaps are also discarded.
+#
+#	The existence/non-existence of gaps is then fed to a
+#	parsimony algorithm to produce a tree.
+#
+#	The input MAlignments should be on the same set of
+#	labels.  More specifically, we expect the MAlignments to
+#	be over different sets of sequences belonging to the same
+#	set of species, identified by the same list of labels.
+#
+#	Proper reference to Victor's work is needed.
+#
+#			Gaston H. Gonnet (July 3, 2005)
+#
+GapTree := proc( msa:MAlignment )
+global GapTree_Title;
+if nargs < 1 then error('missing MAlignment arguments') fi;
+labs := msa['labels'];
+for i from 2 to nargs do
+    if not type(args[i],MAlignment) then
+	 error( 'the '.i.'th argument is not a MAlignment' )
+    elif labs <> args[i,'labels'] then
+	 error( 'the '.i.'th labels do not match the first ones')
+    fi
+od;
+
+n := length(labs);
+gaps := CreateArray(1..n,'');
+for i to nargs do
+    asi := args[i,AlignedSeqs];
+    m := length(asi[1]);
+    somegap := CreateArray(1..m,false);
+    for z in asi do for k to m do if z[k]='_' then somegap[k] := true fi od od;
+
+    # gap block is i1..i2 (inclusive)
+    for i1 to m do
+	if not somegap[i1] then next fi;
+	for i2 from i1+1 to m while somegap[i2] do od;
+	i2 := i2-1;
+	if {op(i1..i2,somegap)} <> {true} then error('should not happen') fi;
+	chars := CreateString(n,'A');
+	for k to n do
+	    t := asi[k,i1..i2];
+	    # count gap blocks
+	    gb := If( t[1]='_', 1, 0 );
+	    for j to length(t)-1 do if t[j] <> '_' and t[j+1]='_' then
+		gb := gb+1 fi od;
+	    if gb > 1 then break elif gb=1 then chars[k] := '_' fi;
+	od;
+	i1 := i2;
+	if gb > 1 or SearchString('A',chars) = -1 then next fi;
+	for k to n do gaps[k] := gaps[k] . chars[k] od;
+    od;
+od;
+if length(gaps[1]) = 0 then error('no suitable gaps could be collected') fi;
+
+t := PhylogeneticTree(gaps,labs,PARSIMONY);
+GapTree_Title :=
+    sprintf( '%d MSAs, %d gaps considered, %d extra indels needed',
+	nargs, length(gaps[1]), MST_Qual-length(gaps[1]) );
+t
+end:
+

@@ -1,0 +1,410 @@
+#
+#			rewritten: Gaston H. Gonnet (Jan 1994)
+#
+#                       ParExec2 version: Lukas J. Knecht (May 1994)
+EnzymeName := [
+	CNBrTrypsin,	
+	CNBrAspN,
+	CNBrLysC,
+	CNBrV8AmmoniumAcetate,
+	CNBrV8PhosphateBuffer,
+        ArmillariaMellea,
+	Armillaria,
+	BNPS_NCS, 
+	Chymotrypsin,
+	Clostripain,
+	CNBr_Cys,
+	CNBr, 
+	AspN,
+	LysC,
+	Hydroxylamine,
+	MildAcidHydrolysis,
+	NBS_long,
+	NBS_short,
+	NTCB,
+	PancreaticElastase,
+	PapayaProteinaseIV,
+	PostProline,
+	Thermolysin,
+	TrypsinArgBlocked,
+	TrypsinCysModified,
+	TrypsinLysBlocked,
+	Trypsin,
+	V8AmmoniumAcetate,
+	V8PhosphateBuffer
+	]:
+
+# Dna files (with the EMBL database) sorted in reverse size
+dnarel := TimedCallSystem ('csh -c "head -2 /pub/darwin-data/DB/EMBL39.fun"')[2]:
+dnarel := SearchTag ('DBRELEASE', dnarel):
+if dnarel = '' then dnarel := '39' fi:
+dnafiles := []:
+for ext in ['pri', 'pro', 'rod', 'vrl', 'inv', 'est', 'pln', 'fun',
+            'org', 'vrt', 'mam', 'unc', 'syn', 'phg', 'sts', 'patent'] do
+  dnafiles := append (dnafiles, 'dnafile := ''/pub/darwin-data/DB/EMBL'.dnarel.'/EMBL'.dnarel.
+		      '.'.ext.''':')
+od: 
+
+SampleSize := 15:
+Title := 'No title specified';
+cnbr := false;
+Havg := 1.0013;
+Hmono := 1.00008;
+
+DNAMassProfile2 := '
+
+DNAMassProfile2 := proc( dnafile:string, p:structure, m:integer )
+
+ReadDb(dnafile);
+BestMatches := SearchMassDb(p,m);
+len := length(BestMatches[1]);
+if len = 4 or len = 6 then masses := false else masses := true fi;
+if masses then k := len-1 else k := len fi;
+printf( ''\n\nScore  n k'' );
+to (k-4)/2 do printf( ''  n k'' ) od;
+printf( ''   AC      DE                   OS\n'' );
+
+for i from length(BestMatches) by -1 to 1 do
+  if length(BestMatches[i])>3 then 
+    ei := [GetEntryInfo(Entry(BestMatches[i,2]), ''AC'',''DE'',''OS'')];
+    tei := sprintf(''%5.1f%4d%2d '', BestMatches[i,1],
+        BestMatches[i,3], BestMatches[i,4], tei[3..-1] );   
+    if masses then
+      for j from 6 by 3 to k do
+  	  tei := tei . sprintf(''%2d%2d '', BestMatches[i,j], BestMatches[i,j+1]);
+      od;
+    else
+      for j from 5 by 2 to k do
+  	  tei := tei . sprintf(''%2d%2d '', BestMatches[i,j], BestMatches[i,j+1]);
+      od;
+    fi; 
+    for j from 2 by 2 to length(ei) do
+        if j=2 then tei := tei . ei[j] else tei := tei . ''  '' . ei[j] fi od;
+    if  masses  then     
+      for mm from 5 by 3 to len do
+        tmp := BestMatches[i,mm]; tmp := -sort(-tmp);  
+        tmp1 := sort(tmp, x->abs(x));
+        doub := false; 
+        for j from 2 to length(tmp) while doub = false do
+          if abs(tmp1[j]) = abs(tmp1[j-1]) then doub := true fi;
+        od;
+       # if doub = false and abs(sum(tmp))<0.1 and mod(length(tmp), 2)=0 then doub := true; fi;
+        for j from 2 to length(tmp) while tmp[j] > 0 or (tmp[j] <> tmp[j-1] and doub = true) do od;
+        if j<= length(tmp) and BestMatches[i, 4]<If(doub, length(tmp)/2, length(tmp))  then 
+           if doub = true then j:=j+2 fi;
+           tei := tei . sprintf('' Unmatched weights: [%4.1f'',-tmp[j]); 
+           for l from j+1 to length(tmp) do if tmp[l] < 0 and (tmp[l] = tmp[l-1] or doub = false) then 
+               tei := tei . sprintf('', %5.1f'',-tmp[l]); 
+           fi; od;  
+           tei := tei . sprintf(''].'');
+        else tei := tei . sprintf('' All weights matched.''); 
+        fi;
+      od;
+    fi;
+    printf( ''zzzzz%s'', tei );
+    printf( ''\n'' );
+  fi;
+od:
+end:
+
+# ---------------------
+init := proc () end:
+job := proc ()
+  global dnafile, wts, size;
+  OpenWriting (tmpfile);
+  DNAMassProfile2(dnafile, wts, size);
+  OpenWriting (terminal);
+  ReadRawFile (tmpfile)
+end:
+':
+
+ReadLibrary(MolWeight):
+isspace := c -> c<=' ' or c=',' or c=':' or c=';':
+separator := c -> c='(' or c=')' or c='=':
+dquoamp := c -> c='"' or c='&':
+
+NextToken := proc()
+global InputString;
+
+while length(InputString) > 0 and isspace(InputString[1]) do
+     InputString := 1+InputString od;
+if length(InputString) = 0 then return( 'EOS' )
+elif separator(InputString[1]) then
+     r := InputString[1];
+     InputString := 1+InputString;
+elif dquoamp(InputString[1]) then
+     r := '';
+     InputString := 1 + InputString;
+     while not dquoamp(InputString[1])  do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     InputString := 1+InputString;
+else r := '';
+     while not isspace(InputString[1]) and not separator(InputString[1]) do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     fi;
+r
+end:
+
+ParseMsg := proc (msg: string)
+global dna, InputString, SampleSize, Title, Database, mono, cnbr, Hmono, Havg;
+  description
+'Parses incoming message for MassSearch and returns
+   - a valid Protein data structure
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+  mono := false;
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+      lprint ('Invalid incoming message');
+      return (0)
+      fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+      lprint ('Start of message body not found');
+      return (0)
+      fi;
+
+  InputString := first+msg;
+  comm := NextToken();
+  if SearchString('masssearch',comm)=0 or SearchString('testnewfunction',comm)=0 then dna := false
+  else lprint('opcode not found');  return(0) fi;
+
+  r := Protein();
+  dw := DigestionWeights();
+  DigUsed := CreateArray(1..length(EnzymeName),false);
+
+  # Protein level loop
+  do
+	tok := NextToken();
+	if tok='EOS' then break
+	elif SearchString('Database',tok)=0 then
+	     t2 := NextToken();
+	     #t3 := NextToken();
+             Database :=t2;
+	     next
+	elif SearchString('approxmass',tok)=0 then
+	     w := sscanf(NextToken(),'%f');
+	     if not type(w,[numeric]) or w[1] < 400 then
+		  InputString := -22+InputString;
+		  return(
+		  '?The ApproxMass should be a number in Daltons, found: ' .
+		  InputString[1..22] ) fi;
+	     r := append(r,ApproxMass(w[1]));
+	     next
+	    
+        elif SearchString('Masses',tok)=0 then
+	     t2 := NextToken();
+             mono := true;
+	     next fi;
+	for i to length(EnzymeName) while SearchString(EnzymeName[i],tok) <> 0
+	     do od;
+	if i <= length(EnzymeName) then
+	     if DigUsed[i] then
+		printf('Warning, digester %s used more than once\n', tok ) fi;
+	     DigUsed[i] := true;
+	     if length(dw) > 1 then r := append(r,dw) fi;
+             if mono = true then 
+               dw := DigestionMono(EnzymeName[i]);
+             else
+	       dw := DigestionWeights(EnzymeName[i]);
+	     fi;
+             if SearchString('cnbr', EnzymeName[i])>-1 then cnbr := true fi;
+             next
+
+	elif length(tok)=1 and AToInt(tok) > 0 and AToInt(tok) < 21 then
+	     t2 := NextToken();
+	     t3 := NextToken();
+	     w := sscanf( t3, '%f' );
+	     if t2 <> '=' or not type(w,[numeric]) or w[1] < 18 then
+		  return(
+	'?Modification of amino acid weight is in the wrong format, found: ' .
+		       tok.t2.t3 ) fi;
+	     if length(dw)=0 then return(
+'?Modification of amino acid weight should be specified after a digester name'
+		   ) fi;
+	     dw := append(dw,tok=w[1]);
+	     next
+
+	elif SearchString('samplesize',tok)=0 then
+	     t2 := NextToken();
+	     t3 := NextToken();
+	     w := sscanf( t3, '%f' );
+	     if t2 <> '=' or not type(w,[integer]) or w[1] < 1 then
+		  return(
+	'?Modification of sample size to be displayed is in the wrong format, found: ' .
+		       tok.t2.t3 ) fi;
+	     SampleSize := w[1];
+	     next
+
+	elif SearchString('Title',tok)=0 then
+	     t2 := NextToken();
+	     t3 := NextToken();
+             Title :=t2;
+	     next
+     
+        elif SearchString('deuterated',tok)=0 then
+	     if length(dw)=0 then return(
+	'?The option Deuterated should be specified after a digester name' ) fi;
+	     dw := append(dw,Deuterated);
+	     next
+	fi;
+
+	w := sscanf(tok,'%f');
+	if type(w,[numeric]) then
+	     if length(dw)=0 then 
+	      #print(tok);
+	       #return('?Weights can only be given after a digester name' );
+	     fi;
+	     if w[1] < 100 then return( sprintf(
+	     '?the weight %f is too small for a digested fragment', w[1] )) fi;
+             if mono = true then
+  	       dw := append(dw,w[1]-Hmono);
+             else
+               dw := append(dw,w[1]-Havg);
+             fi;
+	     next
+	     fi;
+
+	return( sprintf(
+'?Could not recognize: "%s" in the input, check the exact names of digesters',
+		tok ))
+	od;
+
+  if length(dw) < 2 then return('?no weights of fragments were given')
+  else r := append(r,dw) fi;
+
+r
+end:
+
+Protein := proc(  )
+  option polymorphic;
+  noeval(Protein(args))
+end:
+Protein_type := noeval(structure(anything,Protein));
+
+###############
+# MainProgram #
+###############
+init := proc () end:
+
+job := proc ()
+  global msg, dna, Title, Database, mono, cnbr;
+  wts := ParseMsg (msg);
+  res := 'ERROR';
+  if not type(wts,numeric) then
+    prefix := '/tmp/'.getpid ().'.';
+    if type(wts,string) then
+      OpenWriting (tmpfile);
+      lprint ('Sorry, your request could not be processed,');
+      lprint ('because', wts[2..-1])
+    elif type(wts,Protein) = true then
+      
+      totwei := totdig := 0;
+      for digw in wts do 
+          if type(digw,structure(anything,DigestionWeights)) 
+            or type(digw,structure(anything,DigestionMono)) then
+	  totdig := totdig+1;
+	  for wei in digw do if type(wei,numeric) then
+	      totwei := totwei + 1 fi od
+	fi od;
+      printf('\nDatabase used: %s\n\n',Database);	
+      if SearchString('EMBL (DNA database)',Database) >= 0 then
+	ReadProgram( '~/DB/ParExec2.machines'); 
+	machines := GetMachines ({all}):
+	progname := prefix.'prog';
+	OpenWriting(progname);
+	printf( 'wts:=%a:size:=%d:\n%s', wts, SampleSize, DNAMassProfile2 );
+	OpenWriting(terminal);
+	ParExecuteIPC( dnafiles, progname, machines[1], 0, 10, 
+		 machines[2].'NoMail\n');
+	OpenWriting(tmpfile);
+	printf('Title of your search: %s\n\n',Title); 
+        if mono = true then lprint('Using monoisotopic massses');
+        else  lprint('Using average massses'); fi;
+	if cnbr =  true then printf('Note: for CNBr digests the number of matches (k) ca be greater
+than the number of weights given (modifications)\n'); fi;
+        lprint(
+'   Searching on EMBL version '.dnarel.'.  The sequences are printed in');
+	printf(
+'decreasing order of significance.  Scores lower than %d are probably\n',
+               round( 42.3714 + totdig*12.0471 + totwei*3.3951) );
+	lprint( 'not significant.' );
+	for digw in wts do
+	  if type(digw,structure(anything,DigestionWeights)) or type(digw,structure(anything,DigestionMono)) then
+	    printf( 'For digester %s, the fragment weights were:\n\t',
+		   digw[1] );
+	    for wei in digw do
+	      if type(wei,numeric) then printf('%7.1f',wei) fi od;
+	    printf( '\n' )
+	  fi od;
+	printf( '\n\nScore   n k' );
+	to totdig-1 do printf( '   n k' ) od;
+	printf( '   AC      DE                   OS\n' );
+	
+	ss := TimedCallSystem( 'sort -r ' . progname .
+		      '.out.* | sed "s/zzzzz//" | head -' . SampleSize );
+	ss := ss[2];
+
+	while length(ss) > 30 do
+	  i := SearchString('\n',ss);
+	  if i < 0 then break fi;
+	  print( Paragraph( ss[1..i], -15-6*totdig) );
+	  ss := i+1+ss
+	od;  
+	CallSystem( 'rm ' . progname . '*' );
+
+      else
+        db_path := '~darwin/DB/':
+        if SearchString ('Fusobacterium nucleatum',Database) >= 0 then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/FUSNU/fus.nuc.genome.db');
+        elif SearchString ('15 Genomes',Database) >= 0 then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/DB15/db15');
+	elif SearchString('C. elegans',Database) >= 0 then
+	  DB := ReadDb ('/pub/home/darwin/DB/genomes/CAEEL/wormpep/wormpep.db');	
+	elif SearchString ('C. albicans',Database ) >= 0 then
+	  DB := ReadDb ('/pub/home/darwin/DB/genomes/CANAL/canal.db');
+	elif SearchString ('Schizosaccharomyces pombe',Database) >= 0 then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/SCHPO/schpo.db');
+        else Database := 'SwissProt 39.18';
+          DB := ReadDb(db_path.'SP39.18/SwissProt39.18.Z');
+        fi;
+	OpenWriting (tmpfile);
+        printf('Title of your search: %s\n\n',Title);
+	 
+        if mono = true then printf('Using monoisotopic massses\n');        
+        else  printf('Using average massses\n'); fi;
+        if cnbr = true then printf('Note: for CNBr digests the number of matches (k) ca be greater
+than the number of weights given (modifications)\n'); fi;
+        rel := '';dbname := '';
+        dbname :=  SearchTag ('DBNAME', DB[string]);
+	rel := SearchTag ('DBRELEASE', DB[string]);
+        If(dbname<> '' and rel <> '',printf('\nSearching on %s release %s.\n',dbname,rel),
+	printf('\nSearching on %s.\n',Database));
+	lprint('The sequences are printed in decreasing order of significance.');
+        printf('Scores lower than %d are probably not significant.\n\n',
+               round( 29.4592 + totdig*17.9866 + totwei*2.4378) );
+	for digw in wts do
+	  if type(digw,structure(anything,DigestionWeights)) or type(digw,structure(anything,DigestionMono))then
+	    printf( 'For digester %s, the fragment weights were:\n\t',
+		   digw[1] );
+	    for wei in digw do
+	      if type(wei,numeric) then printf('%10.3f',wei) fi od;
+	    printf( '\n' )
+	  fi od;
+        print( SearchMassDb(wts,SampleSize) )
+      fi
+    else
+      OpenWriting(tmpfile);
+      lprint('Internal error, unable to complete request')
+    fi;
+    OpenWriting (terminal);
+    CallSystem ('rm '.prefix.'*');
+    res := ReadRawFile (tmpfile)
+  fi;
+  res
+end:
+
+# ReadProgram ('~cbrg/MassSearch/MassSearch');

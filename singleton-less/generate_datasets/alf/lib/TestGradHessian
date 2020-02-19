@@ -1,0 +1,108 @@
+#
+#	Function to test the gradient and hessian
+#	of a multivariate function.
+#
+#	Let
+#
+#	f( [x1,x2,...xn] ) -> y
+#
+#	be the multivariate function, then
+#	f'( [x1,x2,...xn] ) -> [y'1, y'2, ... y'n]
+#	and
+#	f''( [x1,x2,...xn] ) -> [[y''11, y''12, ...],[...]...]
+#	is the hessian matrix of second derivatives.
+#
+#	TestGradHessian performs some numerical tests to ensure
+#	that, within numerical rounding errors, the derivatives are
+#	correct.
+#
+#	The computations are done around a given point or a randomly
+#	chose point.
+#
+#	Gaston H. Gonnet (July 18th, 2010)
+#
+TestGradHessian := proc( f:procedure, f1:procedure, f2:procedure ;
+	'Tolerance'=((tol=100):positive),
+	inipoint:list,
+	n:posint )
+if not type(inipoint,list) then
+     if not type(n,posint) then
+	  error('cannot figure out dimension, please enter inipoint or n')
+     else inipoint := [seq(Rand(Normal),n)] fi
+else n := length(inipoint)
+fi;
+
+f0 := f(inipoint);
+f10 := f1(inipoint);
+if not type(f10,list(numeric)) or length(f10) <> n then
+     error(f10,'is an invalid gradient') fi;
+
+########################
+# testing the gradient #
+########################
+#> f(x+h/2)-f(x-h/2);
+#               f(x + 1/2 h) - f(x - 1/2 h)
+#
+#> series(%,h,4);
+#                           (3)         3      4
+#        D(f)(x) h + 1/24 (D   )(f)(x) h  + O(h )
+#
+#  assuming f'''(x) ~ f(x), then
+#  optimal h = ( 48*DBL_EPSILON ) ^ (1/3)
+#  (constants modified empirically)
+h := ( 24*DBL_EPSILON ) ^ (1/3);
+x := copy(inipoint):
+for i to n do
+    xi := x[i];
+    hi := If( xi=0, h, |xi|*h );
+    x[i] := xi+hi/2;  fip := f(x);
+    x[i] := xi-hi/2;  fim := f(x);
+    err := (fip-fim)/hi - f10[i];
+    if |err| > tol*DBL_EPSILON*(|fip|+|fim|)/hi then
+	printf( '%dth first derivative, error too large: %g,\n', i, err );
+	printf( 'f%dp=%.12g, f%dm=%.12g, (f%dp-f%dm)/h=%.8g, f10[%d]=%.8g\n',
+	    i, fip, i, fim, i, i, (fip-fim)/h, i, f10[i] );
+	printf( 'x[%d]p=%.12g, x[%d]m=%.12g, h=%g\n',
+	    i, xi+hi/2, i, xi-hi/2, hi );
+	printf( 'err / (DBL_EPSILON*(|fip|+|fim|)/h) = %g\n',
+	    err / (DBL_EPSILON*(|fip|+|fim|)/hi) );
+	return(false)
+    fi;
+    x[i] := xi;
+od:
+
+
+#######################
+# testing the hessian #
+#######################
+f20 := f2(inipoint);
+if not type(f20,array(numeric,n,n)) then
+     error(f20,'hessian of incorrect type')
+elif f20 <> transpose(f20) then error(f20,'is not symmetric') fi;
+
+# use gradient to test the hessian, which provides more
+# numerical stability and higher accuracy
+for i to n do
+    xi := x[i];
+    hi := If( xi=0, h, |xi|*h );
+    x[i] := xi+hi/2;  gp := f1(x);
+    x[i] := xi-hi/2;  gm := f1(x);
+    for j to n do
+	err := (gp[j]-gm[j])/hi - f20[i,j];
+	if |err| > tol*DBL_EPSILON*(|gp[j]|+|gm[j]|)/hi then
+	    printf( '(%d,%d) second derivative, error too large: %g,\n',
+		i, j, err );
+	    printf( 'f1[%d]p=%.12g, f1[%d]m=%.12g,\n', j, gp[j], j, gm[j] );
+	    printf( '(f1[%d]p-f1[%d]m)/h=%.8g, f2[%d,%d]=%.8g, h=%g\n',
+	        j, j, (gp[j]-gm[j])/hi, i, j, f20[i,j], hi );
+	    printf( 'err / (DBL_EPSILON*(|gp[j]|+|gm[j]|)/h) = %g\n',
+	        err / (DBL_EPSILON*(|gp[j]|+|gm[j]|)/hi) );
+	    return(false);
+	fi
+    od;
+    x[i] := xi;
+od:
+
+true
+end:
+

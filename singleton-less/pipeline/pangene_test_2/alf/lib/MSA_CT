@@ -1,0 +1,429 @@
+
+#
+#	MSA_CT - Multiple sequence alignments using Circular Tours
+#
+#			Gaston H. Gonnet (final version Dec 10, 2002)
+#
+
+module external MSA_CT, MSA_CircularTour;
+
+
+MSA_CT := proc( seqs:list, Labels:list ; Matches:matrix({Alignment,0}) )
+global MSA_CircularTour;
+
+n := length(seqs);
+if nargs < 2 then
+     # make it consistant with other return gmc
+     return( procname( seqs, [seq(i,i=1..n)] )) fi;
+if not assigned(DMS) then CreateDayMatrices() fi;
+Seq := [ Sequence(seqs) ];
+DM10 := SearchDayMatrix(10,DMS);
+
+if assigned(Matches) then
+    if not type(Matches,array({Alignment,0},n,n)) then
+        error('Alignments matrix is incorrect') fi;
+    for i1 to n do for i2 from i1+1 to n do
+	if Matches[i1,i2] <> Matches[i2,i1] then
+	     error('Alignments matrix is not symmetric');
+	elif not member(Global,Matches[i1,i2,'modes']) then
+	     error('for the circular mode, alignments must be global') fi
+    od od
+else
+    Matches := CreateArray(1..n,1..n):
+
+    # use PAM from 0..125 only
+    for i to length(DMS)-1 while DMS[i,PamNumber] < 125 do od;
+    dms125 := DMS[1..i];
+
+    # if the sequences are too short (<15 on average), it is likely to
+    # be a recursive call, in which case it does not make sense to estimate
+    # the pam distance over a very small subsequence in an area of deletions.
+    # It is better to use the default DM.
+    if sum(length(z),z=seqs) / n < 15 then dms125 := DM fi;
+
+    st1 := st := time();
+    nal := 0;
+    for a to n do for b from a+1 to n do
+	al := traperror( Align( Seq[a], Seq[b], dms125, Global ) );
+ 	if al=lasterror then al := Align( Seq[a], Seq[b], DM, Global ) fi;
+	Matches[a,b] := Matches[b,a] := al;
+	nal := nal+1;
+	if printlevel > 2 and time()-st > 300 then
+	    printf( '... matched %d against %d, %.1f mins left\n',
+		a, b, (time()-st1)*(n*(n-1)/2/nal-1)/60 );
+	    st := time();
+	fi;
+    od od;
+fi;
+
+# Check to see if all sequences align well (without gaps in the
+#  longest) with the longest sequence(s).  In which case we are done.
+m := max( seq( length(i), i=Seq ));
+bestscore := -DBL_MAX;
+for i to n do if length(Seq[i])=m then
+    dps := [];
+    # try aligning all the sequences against the longest ones
+    for k to n do
+	if k=i then dps := append(dps,[0,Seq[i],Seq[i]])
+	else t := DynProgStrings(Matches[i,k]);
+	     if length(t[2]) <> m then break fi;
+	     if i > k then t := [t[1],t[3],t[2]] fi;
+	     dps := append(dps,t);
+	     fi
+	od;
+    if k <= n then next fi;
+    ssc := sum( [seq(k[1],k=dps)] );
+    if ssc > bestscore then bestscore := ssc;  bestdps := dps fi
+    fi od;
+if bestscore > -DBL_MAX then return( [[seq(i[3],i=bestdps)], Labels, Matches] ) fi;
+
+
+
+NegSim := CreateArray(1..n,1..n):
+for i to n do for j from i+1 to n do
+    NegSim[i,j] := NegSim[j,i] := -Matches[i,j,'Score'] od od:
+msim := min(NegSim)-1;
+for i to n do for j from i+1 to n do
+    NegSim[i,j] := NegSim[j,i] := NegSim[i,j] - msim od od:
+
+t := ComputeCubicTSP( NegSim, min(150,n) );
+MSA_CircularTour := t := [op(t),t[1]];
+iwid := 1;
+for i from 2 to n do
+    if Matches[t[i],t[i+1],'Score'] < Matches[t[iwid],t[iwid+1],'Score'] then
+        iwid := i fi od;
+t := [op(t[iwid+1..n]), op(t[1..iwid])];
+
+for i to n-1 do
+    if printlevel > 2 then
+	printf( 'adding aligned %a with %a\n', Labels[t[i]], Labels[t[i+1]] )
+	fi ;
+    align := DynProgStrings(Matches[t[i],t[i+1]]);
+    if t[i] > t[i+1] then align := [ align[1], align[3], align[2] ] fi;
+
+    if i=1 then msa := align[2..3];  next fi;
+    ak := msa[length(msa)];
+    tk := align[2];
+    tk1 := align[3];
+
+    # check that the sequences are in the right order, in case that the
+    # Matches matrix was given by the user
+    if Matches[ t[i-1], t[i], If( t[i-1] > t[i],'Seq1','Seq2')] <>
+       Matches[ t[i], t[i+1], If( t[i] > t[i+1],'Seq2','Seq1')] then
+	error( 'All-against-all matrix not correct (order?)' )
+    fi;
+
+    ia := 1;
+    while ia <= max(length(ak),length(tk)) do
+	if ia > length(ak) then
+	    #
+	    #  case (0)
+	    #
+	    # AAAAAAAA   (ak)
+	    # AAAAAAAA__ (tk)
+	    #
+	    for it2 from ia to length(tk) do
+		if tk[it2] <> '_' then error(snh4) fi od;
+	    pad := CreateString( length(tk)-ia+1, '_' );
+	    for j to length(msa) do msa[j] := msa[j] . pad od;
+	    ak := msa[length(msa)];
+	    break
+	    fi;
+
+	if ak[ia] <> '_' and tk[ia] <> '_' then ia := ia+1;  next fi;
+	for ia2 from ia to length(ak) while ak[ia2] = '_' do od;
+	for it2 from ia to length(tk) while tk[it2] = '_' do od;
+
+	if ia2 = it2 then
+	    #
+	    # gaps are identical, just move ahead
+	    #
+	    ia := ia2
+
+	elif ia=ia2 then
+	    #
+	    # case (I)
+	    #
+	    #	AAAAAAA|BBBBBBBB
+	    #	AAAAAAA|BBBBBBBB
+	    #   CCCCCCC|DDDDDDDD (ak)
+	    #
+	    #   CCCCCCC   DDDDDDDD (tk)
+	    #   EEEEEEEGGGFFFFFFFF (tk1)
+	    #
+	    for j to length(msa) do
+		msa[j] := msa[j,1..ia-1] . (CreateString(it2-ia,'_')) .
+		    msa[j,ia..-1] od;
+	    ak := msa[length(msa)];
+	    ia := it2;
+	    if ak[1..ia] <> tk[1..ia] then error(snh2) fi;
+
+	elif ia=it2 then
+	    #
+	    # case (II)
+	    #
+	    #	AAAAAAA___BBBBBBBB
+	    #	AAAAAAA___BBBBBBBB
+	    #   CCCCCCC___DDDDDDDD (ak)
+	    #          |  |
+	    #         ia  ia2
+	    #
+	    #        it2
+	    #          |
+	    #   CCCCCCCDDDDDDDD (tk)
+	    #   EEEEEEEFFFFFFFF (tk1)
+	    #
+	    tk := tk[1..ia-1] . (CreateString(ia2-ia,'_')) . tk[ia..-1];
+	    tk1 := tk1[1..ia-1] . (CreateString(ia2-ia,'_')) . tk1[ia..-1];
+	    ia := ia2;
+	    if ak[1..ia-1] <> tk[1..ia-1] then
+		prints(ak[1..ia-1],tk[1..ia-1]);
+		lprint(ia,ia2,it2);
+		prints(tk,tk1);
+		error(snh3) fi;
+
+	elif it2 < ia2 then
+	    #
+	    # case (III)
+	    #
+	    #	AAAAAAAYYYYYBBBBBBBB  (3)
+	    #	AAAAAAAYYYYYBBBBBBBB
+	    #	AAAAAAA  WWWBBBBBBBB  (2)
+	    #	AAAAAAA     BBBBBBBB
+	    #	AAAAAAA     BBBBBBBB  (1)
+	    #	AAAAAAA     BBBBBBBB
+	    #   CCCCCCC     DDDDDDDD (ak)
+	    #
+	    #   CCCCCCC   DDDDDDDD (tk)
+	    #   EEEEEEEGGGFFFFFFFF (tk1)
+	    #
+	    #   tk1 is shorter and will have to be opened with a gap,
+	    #	  find the most suitable place to open it.
+
+	    gapcount := CreateArray(1..it2-ia+1);
+	    GGG := tk1[ia..it2-1];
+	    for z in msa do
+		YYY := z[ia..ia2-1];
+		aas := 0;
+		for j to length(YYY) do
+		    if YYY[j] <> '_' then aas := aas+1 fi od;
+		if aas > length(GGG) then
+		    CountGapLocations( GGG, YYY, gapcount, DM10 ) fi
+		od;
+	    k := 1;
+	    for j from 2 to length(gapcount) do
+		if gapcount[j] > gapcount[k] then k := j fi od;
+	    tk := tk[1..ia+k-2] . (CreateString(ia2-it2,'_')) .
+		tk[ia+k-1..-1];
+	    tk1 := tk1[1..ia+k-2] . (CreateString(ia2-it2,'_')) .
+		tk1[ia+k-1..-1];
+	    ia := ia2
+
+	else
+	    #
+	    # case (IV)
+	    #
+	    #	  AAAAAAAYYYYYBBBBBBBB  (3)
+	    #	  AAAAAAAYYYYYBBBBBBBB
+	    #	  AAAAAAA  WWWBBBBBBBB  (2)
+	    #	  AAAAAAA     BBBBBBBB
+	    #	  AAAAAAA     BBBBBBBB  (1)
+	    #	  AAAAAAA     BBBBBBBB
+	    #     CCCCCCC     DDDDDDDD (ak)
+	    #
+	    #   CCCCCCC         DDDDDDDD (tk)
+	    #   EEEEEEEGGGGGGGGGFFFFFFFF (tk1)
+	    #
+	    gapcount := CreateArray(1..ia2-ia+1);
+	    GGG := tk1[ia..it2-1];
+	    for z in msa do
+		YYY := z[ia..ia2-1];
+		if SearchString( '_', YYY ) = -1 then
+		     CountGapLocations( YYY, GGG, gapcount, DM10 )
+		else for j to length(YYY) do
+			 if YYY[j] = '_' then
+			      if j = 1 or YYY[j-1] <> '_' then
+				   gapcount[j] := gapcount[j]+1 fi;
+			      gapcount[j+1] := gapcount[j+1]+1;
+			      fi
+			 od
+		     fi
+		od;
+	    k := 1;
+	    for j from 2 to length(gapcount) do
+		if gapcount[j] > gapcount[k] then k := j fi od;
+
+	    for j to length(msa) do
+		msa[j] := msa[j,1..ia+k-2] . (CreateString(it2-ia2,'_')) .
+		    msa[j,ia+k-1..-1] od;
+	    ak := msa[length(msa)];
+	    ia := it2;
+	    if ak[1..min(ia,length(ak))] <> tk[1..min(ia,length(tk))] then
+		error(snh5) fi;
+
+	    fi;
+
+
+	od;
+    if tk <> ak then error(snh1) fi;
+    msa := append(msa,tk1);
+
+    od;
+
+    m := length(msa[1]);
+    if m > 200 then close := 20
+    elif m > 100 then close := 10
+    else close := 5 fi;
+
+    # find the columns with deletions
+    gaps := {};
+    for i to m do
+	for j to n while msa[j,i] <> '_' do od;
+	if j <= n then gaps := gaps union {i} fi
+	od:
+
+    # find the blocks of columns with deletions
+    blocks := [];
+    while length(gaps) > 2 do
+	for i to length(gaps)-1 while gaps[i+1]-gaps[i] <= close do od;
+	if i >= length(gaps) then blocks := append(blocks,gaps);  break
+	elif i > 1 then blocks := append(blocks,{gaps[1..i]}) fi;
+	gaps := {gaps[i+1..-1]};
+	od;
+
+    # can resolve recursively, if the blocks are smaller than the original msa
+    for ib from length(blocks) by -1 to 1 do
+	bl := blocks[ib];
+	i1 := max(1,bl[1]-1);
+	i2 := min(m,bl[length(bl)]+1);
+
+	ingap := CreateArray(1..n,'');
+	for j to n do
+	    for k from i1 to i2 do
+		if msa[j,k] <> '_' then ingap[j] := ingap[j] . msa[j,k] fi
+		od
+	    od:
+	l := max( seq( length(ingap[j]), j=1..n ) );
+	ingaps := [op({op(ingap)} minus {''})];
+
+	# easy cases
+	if length(ingaps) = 1 then
+	     PatchMSA( msa, i1, i2, ingap, ingaps, ingaps );
+	     next
+	elif length(ingaps) = 2 then
+	     dps := DynProgStrings(Align(ingaps[1],ingaps[2],DM10,Global));
+	     PatchMSA( msa, i1, i2, ingap, ingaps, dps[2..3] );
+	     next
+	     fi;
+
+	long := {op(mselect( x -> evalb(length(x)=l), ingaps ))};
+	bestscore := -DBL_MAX;
+
+	# try with a recursive MSA
+	if length(ingaps) < length(msa) or i2-i1+1 < 3/4*m then
+	    if printlevel > 2 then
+	        printf( 'calling MSA_CT recursively on %a\n', ingaps ) fi;
+	    msa2 := MSA_CT( ingaps );
+	    msa3 := [ seq( msa2[1,SearchArray(j,msa2[2])],
+		j=1..length(ingaps) ) ];
+	    for j to length(ingaps) do if length(ingaps[j]) = l then
+		w := msa3[j];
+		dps := [];
+		for z in msa3 do
+		    dps := append(dps, [CalculateScore(z,w,DM10),z,w]) od;
+		ssc := sum( [seq(k[1],k=dps)] );
+		if ssc > bestscore then bestscore := ssc;  bestdps := dps fi
+		fi od;
+	    fi;
+
+	# try aligning all the sequences against the longest ones
+	# (although this is done in the recursive call to MSA, it is
+	#  not redundant, and sometimes realigns a gutter).
+	for z in long do
+	    dps := [seq( DynProgStrings(Align(k,z,DM10,Global)), k=ingaps )];
+	    # if some aligned lengths are different, then ignore this
+	    if length({seq( length(k[2]), k=dps )}) > 1 then next fi;
+	    ssc := sum( [seq(k[1],k=dps)] );
+	    if ssc > bestscore then bestscore := ssc;  bestdps := dps fi
+	    od;
+
+
+	if bestscore > -DBL_MAX then
+	    PatchMSA( msa, i1, i2, ingap, ingaps, [seq(k[2],k=bestdps)] ) fi;
+
+	od;
+
+
+r := [ msa, [seq(Labels[i],i=t)], Matches ];  # return the allall as well. /MF
+
+# do a sanity check
+for i to n do
+    s1 := Seq[t[i]];
+    s2 := msa[i];
+    for j to length(s1) do
+	while length(s2) > 0 and s2[1]='_' do s2 := 1+s2 od;
+	if length(s2)=0 or s1[j] <> s2[1] then
+	    error('internal error in MSA_CT') fi;
+	s2 := 1+s2;
+	od
+    od;
+r
+end:
+
+
+##############################################################
+# find where short will be broken when aligned with long and #
+#  tally in count where this happened relative to short      #
+#   count[i] means that a gap is placed before short[i]      #
+##############################################################
+CountGapLocations := proc( short, long, count, dm )
+
+    # remove any gaps from long
+    longng := '';
+    for i to length(long) do if long[i] <> '_' then
+	longng := longng . long[i] fi od;
+    if length(short)+1 <> length(count) then error('invalid lengths') fi;
+
+    al2 := DynProgStrings(Align(short,longng,dm,Global));
+    short2 := al2[2];
+    if length(al2[3]) = length(longng)+length(short) then
+	 # complete mismatch/non-overlap
+	 count[1] := count[1]+1;
+	 count[-1] := count[-1]+1;
+	 return()
+    elif SearchString(short,short2) >= 0 then
+	 # short is not broken
+	 if short2[1]='_' then count[1] := count[1]+1 fi;
+	 if short2[-1]='_' then count[-1] := count[-1]+1 fi;
+	 return()
+    fi;
+
+    # add 1 to the count before every symbol
+    j := 0;
+    for i to length(short2) do
+	if short2[i] <> '_' then
+	    j := j+1;
+	    if i>1 and short2[i-1] = '_' then count[j] := count[j]+1 fi
+    fi od;
+    if short2[-1]='_' then count[-1] := count[-1]+1 fi;
+end:
+
+PatchMSA := proc( msa:list(string), i1:posint, i2:posint,
+	ingap:list(string), ingaps:list(string), alingap:list(string) );
+n := length(msa);
+k := length(ingaps);
+l := length(alingap[1]);
+if n <> length(ingap) or k <> length(alingap) then error('invalid lengths') fi;
+
+for i to n do
+    if ingap[i]='' then
+	 if l <> i2-i1+1 then
+	     msa[i] := msa[i,1..i1-1] . CreateString(l,'_') . msa[i,i2+1..-1] fi
+    else j := SearchArray( ingap[i], ingaps );
+	 msa[i] := msa[i,1..i1-1] . alingap[j] . msa[i,i2+1..-1]
+	 fi
+    od;
+end:
+
+
+end:

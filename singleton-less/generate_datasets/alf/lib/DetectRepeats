@@ -1,0 +1,117 @@
+module external DetectRepeats, DetectRepeatsInSeqs, WriteTreks;
+
+WriteDb := proc(seqs:list(string),labels:list(string),filename:string)
+   OpenWriting(filename);
+   for i from 1 to length(seqs) do
+      printf('<E><ID>%s</ID><SEQ>%s</SEQ></E>\n',labels[i],seqs[i]);
+   od:
+   OpenWriting(previous);
+end:
+
+DetectRepeats := proc(s:string)
+   a := Align(s,s,NoSelf):
+   aa := DynProgStrings(a):
+
+   units := []:
+
+   o1 := SearchString(a[Seq1],s);
+   o2 := SearchString(a[Seq2],s);
+
+   if o1 < o2 then
+      #o1 := a[Offset1];
+      #o2 := a[Offset2];
+      #l1 := a[Length1];
+      #l2 := a[Length2];
+      a1 := aa[2];
+      a2 := aa[3];
+   else
+      [o1,o2] := [o2,o1];
+      #o2 := a[Offset1];
+      #o1 := a[Offset2];
+      #l2 := a[Length1];
+      #l1 := a[Length2];
+      a2 := aa[2];
+      a1 := aa[3];
+   fi;
+
+   offset := o1 + 1;
+
+   #print(a):
+
+   while o1 <> o2 do
+      units := append(units,s[o1+1..o2]);
+      l := o2 - o1;
+      i := 1:
+      j := 0:
+
+      while l > 0 do
+         if i > length(a1) then
+            break;
+         fi;
+         if a1[i] <> '_' then
+            l := l - 1;
+         fi;
+         if a2[i] <> '_' then
+            j := j + 1;
+         fi;
+
+         i := i + 1;
+      od:
+
+      o1 := o2;
+      o2 := o2 + j;
+
+      tmpa1 := a1:
+      a1 := a2[i..-1]:
+      a2 := tmpa1[i..-1]:
+   od;
+
+   #print(units):
+
+   if length(units) < 2 then
+      return([]):
+   fi:
+
+   labels := [seq('rep'.i, i=1..length(units))]:
+   #aaa := ProgressiveGraphMSA(units,labels):
+   if min(seq(length(u),u=units)) >= 5 then
+      aaa := MafftMSA(units,labels):
+   else
+      aaa := ProgressiveGraphMSA(units,labels,trdetector=''):
+   fi:
+
+   return([noeval(Repeat(aaa,offset))]);
+end:
+
+DetectRepeatsInSeqs := proc(seqs:list(string),labels:list(string))
+   pid := getpid():
+   input_db  := GetTmpDir().'input_' . pid . '.db':
+   WriteDb(seqs,labels,input_db);
+   ReadDb(input_db):
+   CallSystem('rm -f '.input_db.' '.input_db.'.tree');
+
+   repeats := table();
+   for i from 1 to length(seqs) do
+      repeats[labels[i]] := DetectRepeats(Sequence(Entry(i)));
+   od:
+
+   return(repeats);
+end:
+
+WriteTreks := proc(repeats:table, treks_out:string)
+   OpenWriting(treks_out):
+   for i in Indices(repeats) do
+      printf('>%s\n',i):
+      for r in repeats[i] do
+         [a,o] := [r[1],r[2]]:
+         printf('Length: from %d to\n',o):
+         for s in a[AlignedSeqs] do
+            printf('%s\n',s):
+         od:
+         printf('**********************\n\n'):
+      od:
+   od:
+   OpenWriting(previous);
+end:
+
+end; #module

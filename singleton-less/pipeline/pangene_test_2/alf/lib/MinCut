@@ -1,0 +1,189 @@
+module external MinCut;
+local _NR_CLUSTERS;
+
+FindClust := proc(x, arr)
+    y := x;
+    while arr[arr[y]]<>arr[y] do
+        y := arr[y] := arr[arr[y]];
+    od:
+    return( arr[y] );
+end:
+MergeClust := proc(x,y,pnt,sizes)
+    global _NR_CLUSTERS;
+    cX := FindClust(x,pnt):
+    cY := FindClust(y,pnt):
+    if cX<>cY then
+       if sizes[cY]>sizes[cX] then
+          t := cX; cX := cY; cY := t;
+       fi:
+       pnt[cY] := pnt[cX];
+       sizes[cX] := sizes[cX] + sizes[cY];
+       sizes[cY] := 0;
+       _NR_CLUSTERS := _NR_CLUSTERS - 1;
+    fi:
+end:
+
+BasicMinCut := proc( N, E_ ; (ErrProb=.05):nonnegative )
+    global _NR_CLUSTERS:
+    M := length(E_);
+    lprint('nr nodes/edges:',N,'/',M);
+    minCut := DBL_MAX: V1 := V2 := [];
+    t0 := time():
+    NrIters := floor(.5*ln(ErrProb)*N*(1-N));
+    lprint('NrIters=',NrIters);
+    for i to NrIters do
+        E := copy(E_); M := length(E):
+        _NR_CLUSTERS := N;
+        uf := [seq(i,i=1..N)]:
+        sizes := [seq(1,N)]:
+   
+        t := RandomContract(E, 2, uf, sizes):
+        E := t[1]; uf := t[2]; sizes:=t[3];
+
+        cut := []; clsNrs := {};
+        for e in E do
+            c1 := FindClust(e[1],uf); c2 := FindClust(e[2],uf);
+            if not member(c1,clsNrs) then clsNrs := append(clsNrs, c1) fi;
+            if not member(c2,clsNrs) then clsNrs := append(clsNrs, c2) fi;
+            if c1<>c2 then cut := append(cut,e) fi:
+        od:
+
+        if minCut > length(cut) then
+            minCut := length(cut):
+            assert( length(clsNrs)=2);
+            clsNrs := [op(clsNrs)];
+            V1 := V2 := [];
+            for v to N do
+                clst := FindClust(v,uf);
+                if clst=clsNrs[1] then V1 := append(V1, v);
+                elif clst=clsNrs[2] then V2 := append(V2, v);
+                else error(sprintf(
+                    'invariant violated: v=%d clst=%d must not happen. clsNrs=%a',
+                    v,clst,clsNrs ));
+                fi:
+            od:
+        fi:
+        if mod(i,100)=0 then 
+            printf(' %d/%d (%.2f%%) done\n', i, NrIters, 100*i/NrIters) 
+        fi:
+    od:
+    return( [minCut,V1,V2] ):
+end:
+
+
+RandomContract := proc( E_:list, t:posint, uf:list, sizes:list )
+    global _NR_CLUSTERS;
+    fails := 0;
+    E := E_;
+    M := length(E):
+    while _NR_CLUSTERS>t and M>0 do
+        r := Rand(1..M):
+        u := E[r,1]; v := E[r,2];
+        # we need to contract the two edges (keep adj. edges, remove cicles (lazy).
+        if FindClust(u,uf) = FindClust(v,uf) then
+           # lazy fix: after a certain amount of successless merges as they are 
+           # already belonging to the same cluster, we shrink the list of edges by 
+           # removing the cicles within a merged cluster.
+           fails := fails + 1;
+           if fails >= min(2, M/50) then
+               # cleanup to thin out list of possible edges.
+               E := [seq( If(FindClust(z[1],uf)=FindClust(z[2],uf), NULL, z), z=E)];
+               #printf( 'shrinking edges from %d to %d\n', M, length(E));
+               M := length(E): fails := 0;
+           fi:
+        else
+           MergeClust(u,v,uf,sizes):
+        fi:
+    od:
+    return( [ If(M=0,[],E) , uf, sizes] ):
+end:
+
+SophisticatedMinCutR := proc( E_:list, uf_:list, sizes_:list )
+    global _NR_CLUSTERS:
+    
+    N := _NR_CLUSTERS: 
+    if N < 2 then error('should not happen');
+    elif N = 2 then
+        cut := 0; balance := -2;
+        for e in E_ do
+            c1 := FindClust(e[1],uf_); c2 := FindClust(e[2],uf_);
+            if c1<>c2 then 
+                cut := cut + 1;
+                if balance<-1 then 
+                    balance := (sizes_[c1] - sizes_[c2]) / (sizes_[c1]+sizes_[c2]);
+                fi:
+            fi:
+        od:
+        return( [cut, uf_, balance] ); 
+    else
+       t := If( N>=16,ceil(N/sqrt(2))+1, ceil(N/2) );
+       E := [seq( If(FindClust(z[1],uf_)=FindClust(z[2],uf_), NULL, z), z=E_)];
+
+       _NR_CLUSTERS := N;
+       H1 := RandomContract( copy(E), t, copy(uf_), copy(sizes_) ):
+       if length(H1[1])=0 then return( [0, H1[2], 0] ) fi:
+       M1 := procname( H1[1], H1[2], H1[3] ):
+
+       _NR_CLUSTERS := N;
+       H2 := RandomContract( copy(E), t, copy(uf_), copy(sizes_) ):
+       if length(H2[1])=0 then return( [0, H2[2], 0] ) fi:
+       M2 := procname( H2[1], H2[2], H2[3] ):
+       return( If(M1[1]<M2[1] or (M1[1]=M2[1] and |M1[3]|<|M2[3]|), M1, M2) ):
+    fi:
+end:
+ 
+SophisticatedMinCut := proc( N, E_ ; (ErrProb=.05):nonnegative )
+    global _NR_CLUSTERS:
+    M := length(E_);
+    minCut := DBL_MAX: 
+    t0 := time():
+    NrIters := max(1, round( -log(ErrProb)*log(N) ));
+    if printlevel>4 then 
+        lprint('# Nr nodes/edges:',N,'/',M);
+        lprint('# Nr iterations:',NrIters);
+    fi:
+    itFoundMin := 0;
+    for i to NrIters do
+        E := copy(E_); M := length(E):
+        _NR_CLUSTERS := N;
+        uf := [seq(i,i=1..N)]:
+        sizes := [seq(1,N)]:
+        
+        MC := SophisticatedMinCutR( E, uf, sizes ):
+        if MC[1]<minCut or (MC[1]=minCut and |MC[3]|<balance) then 
+            if MC[1]<minCut then itFoundMin := i fi:
+            minCut := MC[1]; 
+            BMC := MC;
+            balance := |MC[3]|;
+        fi:
+        if minCut=0 then break fi:
+    od:
+    if printlevel > 4 then 
+        printf('mincut found in iteration %d of %d\n', itFoundMin, NrIters);
+    fi:
+    uf := BMC[2]; 
+    cls := [ seq(FindClust(i, uf), i=1..N) ];
+    clsSet := {op(cls)}: 
+#   assert( length( clsSet )=2 );
+    
+    V := [seq( [seq( If(cls[i]=z,i,NULL), i=1..N)], z=clsSet)]: 
+    return( [BMC[1], op(V)] );
+end:
+
+
+MinCut := proc(G:Graph; (meth='soph'):{'soph','basic'}, (alpha=.05):nonnegative)
+    nds := sort([op( G[Nodes] )]);
+    N := length(nds):
+    edg := [];
+    for e in G[Edges] do
+       edg := append(edg, {SearchOrderedArray( e['From'], nds),
+                           SearchOrderedArray( e['To'], nds)} ):
+    od:
+    
+    t0 := time():
+    method := If( meth='soph', SophisticatedMinCut, BasicMinCut );
+    mincut := method( N, edg, alpha );
+    return( [mincut[1], seq( Nodes(seq(nds[z], z=mincut[k])), k=2..length(mincut))] ); 
+end:
+
+end: #module

@@ -1,0 +1,354 @@
+# Purpose: TreeGen server (ParExecuteIPC version)
+# Author:  CompBioResGrp (L.J. Knecht)
+# Created: 26 May 1994
+#
+#					TreeGen Modifications ReadMe
+#
+# 11/22/99 Ari Kahn -- TreeGen was not returning results.
+#		job proc was not evaluating type(cmds...)... correctly
+# 		because ParseMsg and GetMatrix were returning objects 
+#		instead of lists.  Changed last statements in ParseMsg and
+#		GetMatrix to use return statements and return a list.  
+#		Also changed if statement in job proc to evealuate each 
+#		object in cmds list and added return statement.  Saved
+#		old TreeGen as TreeGenOld and copied TreeGenWorks as 
+#		TreeGen.
+#
+#
+#
+
+GetSym := proc (scan: [posint, string])
+  separator := ' ;:<>,''"()[]{}!@#$%^&*';
+  for i from scan[1] to length (scan[2]) while scan[2,i] <= ' ' do od;
+  if i <= length (scan[2]) and CaseSearchString (scan[2,i], separator) >= 0 then
+    j := i + 1
+  else
+    for j from i to length (scan[2]) while
+    CaseSearchString (scan[2,j], separator) < 0 do od;
+  fi;
+  scan[1] := j;
+  scan[2,i..j-1]
+end:
+
+GetMatrix := proc(data: string, which: string)
+  scan := [1,data];
+  m := [];
+  s := GetSym (scan);
+  while length (s) > 0 and s[1] < 'A' do
+    d := []; z := 0;
+    do
+      if s = ',' then s := GetSym (scan) fi;
+      if length (s) = 0 then
+	     return ('?; missing in '.which.' matrix')
+      fi;
+      if s = ';' then break fi;
+      t := sscanf(s, '%g');
+      if length (t) = 0 then
+	return ('?invalid symbol "'.s.'" in '.which.' matrix');
+      fi;
+      d := append (d, t[1]);
+      if t[1] = 0 then
+	     if z > 0 then
+	        return ('?more than one zero entry for node '.(length (m) + 1).' in '.which.' matrix')
+	fi;
+	z := length (d);
+      fi;
+      s := GetSym (scan);
+    od;
+    if z = 0 then
+      return ('?no zero entry for node '.(length (m) + 1).' in '.which.' matrix')
+    fi;
+    m := append (m, [z, d]);
+    s := GetSym (scan);
+  od;
+  n := length (m);
+  res := CreateArray (1..n, 1..n);
+  for i to n do
+    i1 := i - m[i,1];
+    if i1 < 0 or length (m[i,2]) - m[i,1] + i > n then
+      return ('?too many elements for node '.i);
+    fi;
+    for k to length (m[i,2]) do
+      j := i1 + k;
+      res[i,j] := m[i,2,k];
+      if res[j,i] = 0 then res[j,i] := m[i,2,k] fi;
+    od;
+  od;
+  for i to n do
+    for j to i - 1 do
+      if res[i,j] <> res[j,i] then
+	return ('?'.which.' matrix is not symmetric');
+      fi;
+    od;
+  od;
+  return([scan[1] - 2, res, s]); #11/99 modified AK
+end:
+
+ParseMsg := proc (msg: string)
+  global db;
+  description
+'Parses incoming message for TreeGen and returns
+   - a text with commands and distance and variance matrices if these are
+     correct
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    lprint ('Invalid incoming message');
+    return (0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    lprint ('Start of message body not found');
+    return (0)
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('?there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  body := msg[first+3..first+2+last];
+  token := sscanf (body, '%s');
+  token := If (length (token) = 0, '', token[1]);
+  if length (token) < 6 or SearchString (token, 'TreeGen') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token))
+  fi;
+  data := CaseSearchString (token, body) + length (token) + body;
+ 
+  res := GetMatrix (data, 'distance');
+ 
+  if type (res, string) then #11/99 modified from [res], array(string) by AK
+    return (res)
+  fi;
+  data := res[1] + data;
+  dist := res[2];
+  if SearchString ('variance', res[3]) = 0 then
+    res := GetMatrix (data, 'variance');
+    if type ([res], array(string)) then
+      return (res)
+    fi;
+    data := res[1] + data;
+    var := res[2]
+  else
+    var := dist
+  fi;
+  return([dist, var, res[3].' '.data]); #11/99 Modified by AK - added return(...);
+end:
+
+AppendPostScript := proc (fromfile: string, tofile: string, title: string)
+  global tmpfile;
+  t := ReadRawFile (fromfile);
+  p := CaseSearchString ('\n', t);
+  OpenAppending (tofile);
+  printf ('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending (tmpfile)
+end:
+
+DoTreeGen := proc (dist: matrix, var: matrix, commands: string)
+  global prefix;
+  ne := length (dist);
+  phy := SearchString( 'phylotree', commands ) >= 0;
+  roo := SearchString( 'rootedtree', commands ) >= 0;
+  spld := SearchString( 'splitdata', commands ) >= 0;
+  splt := SearchString( 'splitgraph', commands ) >= 0;
+  twod := SearchString( '2dplace', commands ) >= 0;
+  if not (phy or roo or spld or splt or twod) then
+    printf('No commands requested. You should request at least one\n' );
+    printf('of the following functions (following the distance data))\n' );
+    printf('CreatePhyloTree, RootedTree, SplitData, SplitGraph, 2DPlacement.\n' );
+    lprint('Error: no command specified');
+    return ()
+  fi;
+  req := nreq := NULL;
+  if phy then req := req,'CreatePhyloTree' else nreq := nreq,'CreatePhyloTree' fi;
+  if roo then req := req,'RootedTree' else nreq := nreq,'RootedTree' fi;
+  if spld then req := req,'SplitData' else nreq := nreq,'SplitData' fi;
+  if splt then req := req,'SplitGraph' else nreq := nreq,'SplitGraph' fi;
+  if twod then req := req,'2DPlacement' else nreq := nreq,'2DPlacement' fi;
+  if length([nreq]) = 0 then printf('All commands requested\n')
+  else
+    lprint('commands requested:', req);
+    lprint('commands not requested:', nreq)
+  fi;
+  
+  singlet := 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+  ls := length (singlet);
+  Names := [];
+  for i to ne do
+    Names := append (Names, If(i <= ls, singlet[i], 
+			       singlet[round(i/ls-0.5)].singlet[mod(i-1,ls)+1]))
+  od;
+  printf ('Trees computed from the following distance/variance data\n');
+  w := 5;
+  for m by w to ne do
+    printf ('\n   ');
+    for j from m to min (m + w - 1, ne - 1) do
+      printf ('%14s', Names[j])
+    od;
+    printf ('\n');
+    for i to ne do
+      if i - 1 >= m then
+	printf ('%2s ', Names[i]);
+	for j from m to min (m + w - 1, i - 1) do
+	  printf (' %6.1f/%6.1f', dist[i,j], var[i,j])
+	od;
+	printf ('\n')
+      fi
+    od
+  od;
+  lprint ();
+  MinLen := 0.2;
+  tree := MinSquareTree (dist, var, Names);
+
+  if phy then
+    plotfile := prefix.'ps'; 
+    postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'tree.ps';
+    WriteFile (postscriptfile); AppendFile (tmpfile);
+    Set(plotoutput=plotfile);
+    printf('\nPick up your unrooted tree at:\n');
+    printf('http://cbrg.ethz.ch/Server/results/%stree.ps\n',5+prefix);
+    printf('http://cbrg.ethz.ch/Server/results/%stree.pdf\n',5+prefix);
+    printf('The file will be deleted after seven days!\n');
+    DrawUnrootedTree(tree);
+    AppendPostScript (plotfile, postscriptfile, 'phylogenetic tree');
+    #CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'tree.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df');
+    #CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+  fi;
+  
+  if roo then
+   postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'roo.ps';
+   WriteFile (postscriptfile); AppendFile (tmpfile);
+   Set(plotoutput=plotfile);
+    printf('\nPick up your rooted tree at:\n');
+    printf('http://cbrg.ethz.ch/Server/results/%sroo.ps\n',5+prefix);
+    printf('http://cbrg.ethz.ch/Server/results/%sroo.pdf\n',5+prefix);
+    printf('The file will be deleted after seven days!\n');
+    DrawTree(tree);
+    AppendPostScript (plotfile, postscriptfile, 'rooted tree');
+    #CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'roo.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df');
+    #CallSystem ('chmod 644 '.(postscriptfile-1).'df');
+  fi;
+  
+  if spld or splt then
+   postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'split.ps';
+   WriteFile (postscriptfile); AppendFile (tmpfile);
+   Set(plotoutput=plotfile);
+    #ReadLibrary (dSplits);
+    splits := dSplits (dist);
+    if length (splits) = 0 then
+      printf ('Distances do not define any d-splits (all isolation indices zero)\n')
+    else
+      lprint ();
+      printf ('Distances are %.1f %% splittable\n', 
+	      100 * dSplitIndex (dist, splits));
+      for s in splits do
+	for i to length (s[2]) do
+	  s[2,i] := Names[s[2,i]] od od;
+      if spld then
+	for s in splits do printf ('%5.1f  %a\n', s[1], s[2]) od
+      fi;
+      if splt then
+        printf('\nPick up your dsplits at:\n');
+        printf('http://cbrg.ethz.ch/Server/results/%ssplit.ps\n',5+prefix);
+	printf('http://cbrg.ethz.ch/Server/results/%ssplit.pdf\n',5+prefix);
+	printf('The file will be deleted after seven days!\n');
+	DrawSplits (splits, {op (Names)});
+	AppendPostScript (plotfile, postscriptfile, 'splitgraph');
+        #CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'split.ps');
+	CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df');
+	#CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+
+      fi
+    fi
+  fi;
+
+  if twod then
+    if ne <= 2 then
+      printf('2DPlacement cannot be computed with less than 3 points\n')
+    elif ne >= 249 then
+      printf('2DPlacement cannot be computed with more than 248 points\n')
+    else
+      postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'twod.ps';
+   WriteFile (postscriptfile); AppendFile (tmpfile);
+   Set(plotoutput=plotfile);
+    printf('\nPick up your Two D Placement at:\n');
+    printf('http://cbrg.ethz.ch/Server/results/%stwod.ps\n',5+prefix);
+    printf('http://cbrg.ethz.ch/Server/results/%stwod.pdf\n',5+prefix);
+    printf('The file will be deleted after seven days!\n');
+    NBSol := NBody(dist,var,min(ne-1,4),2);
+    ToPlot := CreateArray(1..2*ne):
+    y := zip ((x->x[2])(NBSol));
+    pts := (max (y) - min (y)) / 500;
+    for i to ne do
+      ToPlot[2*i-1] := CIRCLE(NBSol[i,1],NBSol[i,2],7);
+      ToPlot[2*i] := CTEXT(NBSol[i,1],NBSol[i,2]-pts*4,Names[i])
+    od:
+    DrawPlot(ToPlot);
+    sumv := np := 0:
+    if type(AllAll,list(list(Match))) then
+    for i to ne do
+      for j from i+1 to ne do
+	  sumv := sumv + (AllAll[i,j,PamNumber] -
+			  sqrt( (NBSol[i,1]-NBSol[j,1])^2 +
+			       (NBSol[i,2]-NBSol[j,2])^2 ) )^2 /
+	  AllAll[i,j,PamVariance];
+	  np := np+1
+      od
+    od;
+    printf('2D placement quality index: %.3f\n', sqrt(sumv/np) );
+    fi;
+    AppendPostScript (plotfile, postscriptfile, '2D placement');
+    #CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix).'twod.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df');
+    #CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+    fi
+  fi;
+  
+end:
+
+init := proc () end:
+
+job := proc ()
+  global msg, prefix;
+  str := sprintf('%d',trunc(Rand()*100));
+  prefix := '/tmp/'.getpid ();
+  prefix := prefix . str . '.';
+  cmds := ParseMsg (msg):
+  res := 'ERROR';					#11/99 Modified type below to evaluate each object in a list
+  if (type(cmds, string) or (type(cmds[1], matrix) and type(cmds[2], matrix) and type(cmds[3], string))) then
+    OpenWriting (tmpfile);
+    if type (cmds, string) then
+      lprint ('Sorry, your request could not be processed,');
+      lprint ('because', cmds[2..-1]);
+    else
+       a := traperror(DoTreeGen(cmds[1],cmds[2],cmds[3]));
+        if a = lasterror then
+          lprint ();
+          lprint ();
+          lprint ('Sorry, your request could not be processed');
+          lprint ('because an error was encountered.');
+          lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+          lprint ('Thank you, the cbrg team.');
+          lprint ();
+          lprint ();
+          printf ('%s', a);
+          lprint ();
+        fi;
+    fi;
+    OpenWriting(terminal);
+    res := ReadRawFile(tmpfile);
+  fi;
+  CallSystem('rm '.prefix.'*');
+  return(res); #11/99 modified by AK added return(....);
+end:
+
+# ReadProgram('/homes/cbrg/TreeGen/msg');
+# ReadLibrary('Server/TreeGen');
+
+# dist := [[1,2,3], [3,4,5],[6,1,2]];

@@ -1,0 +1,426 @@
+#
+# Tree/Leaf
+#
+# data structure and basic function definitions for
+#   binary trees with external nodes
+#
+#			Gaston H. Gonnet (Nov 1992)
+#
+Tree := proc( Left:Tree, Height, Right:Tree ) option polymorphic;
+if nargs < 3 then error('insufficient number of values in Tree') fi;
+noeval(Tree(args))
+end:
+Tree_type := noeval({structure(anything,Tree),structure(anything,Leaf)}):
+
+
+Leaf := proc( Label, Height ) option polymorphic;
+  noeval(Leaf(args))
+end:
+Leaf_type := noeval(structure(anything,Leaf)):
+
+Tree_select := proc( u, select, val );
+  sel := uppercase(select);
+  if SearchString('XTRA', sel) > -1 or sel = 'X' or
+	SearchString('PARS', sel) > -1 then
+       if nargs=3 then u[4] := val else u[4] fi; 
+  elif SearchString('NODESET', sel) > -1 or sel = 'NS' then
+       if nargs=3 then u[5] := val else u[5] fi;
+  elif SearchString('PAM', sel) > -1 then
+       if nargs=3 then u[6] := val else u[6] fi;
+  else error(u,'is an invalid selector for a Tree') fi
+end:
+
+
+# Convert a binary tree into a graph
+#  (assume that labels are distances from root, and hence
+#   the length of the branches/arcs can be computed)
+#
+#				Gaston H. Gonnet (Nov 1992)
+#
+Tree_Graph := proc( no:Tree )
+  global Tree_Graph_Edges, Tree_Graph_Nodes;
+  description
+  'Convert a binary tree into a graph (unrooted tree).';
+Tree_Graph_Edges := Edges();
+Tree_Graph_Nodes := Nodes();
+n1 := Tree_GraphR( no[Left] );
+n2 := Tree_GraphR( no[Right] );
+Tree_Graph_Edges := append( Tree_Graph_Edges,
+	Edge(2*no[Height]-no[Left,Height]-no[Right,Height],n1,n2));
+Graph(Tree_Graph_Edges,Tree_Graph_Nodes)
+end:
+
+#
+Tree_GraphR := proc( t:Tree )
+global Tree_Graph_Edges, Tree_Graph_Nodes;
+n := length(Tree_Graph_Nodes)+1;
+if type(t,Leaf) then
+     Tree_Graph_Nodes := append(Tree_Graph_Nodes,t[Label]);
+     t[Label]
+else Tree_Graph_Nodes := append(Tree_Graph_Nodes,'I'.n);
+     n1 := Tree_GraphR( t[Left] );
+     Tree_Graph_Edges := append( Tree_Graph_Edges, Edge(t[2]-t[1][2],'I'.n,n1));
+     n2 := Tree_GraphR( t[3] );
+     Tree_Graph_Edges := append( Tree_Graph_Edges, Edge(t[2]-t[3][2],'I'.n,n2));
+     'I'.n
+     fi;
+end:
+
+
+
+
+# convert a Tree into a distance matrix
+# The tree has to have leaves with a 1st or 3rd argument which is the
+# index of the leaf.			Gaston H. Gonnet (Dec 4th, 2005)
+Tree_matrix := proc( t:Tree ; index:{list,table,procedure} )
+
+indexTab  := proc(l) return( index[l['Label']] ) end:
+indexList := proc(l) return( SearchArray( l['Label'], index) ) end:
+
+indexFun := 0;
+if type(index,list) then indexFun := indexList;
+elif type(index,table) then indexFun := indexTab;
+elif type(index,procedure) then indexFun := index;
+fi:
+
+LeafToIndex := proc(z)
+    if indexFun<>0 then indexFun(z);
+    elif length(z) >= 3 and type(z[3],posint) then z[3];
+    elif type(z[1],posint) then z[1];
+    else error(z,'Leaf does not have index information') fi;
+end:
+
+ls := [];
+for z in Leaves(t) do 
+    i := LeafToIndex(z);
+    ls := append(ls,[i,z[Height]])
+od;
+
+n := length(ls);
+if {seq(z[1],z=ls)} <> {seq(i,i=1..n)} then
+    error({op(ls)},'indices from leaves are not sequential integers') fi;
+D := CreateArray(1..n,1..n);
+if n<2 then return(D) fi;
+hei := CreateArray(1..n):
+for z in ls do hei[z[1]] := z[2] od:
+
+ComputeDist := proc( t1:Tree )
+global D;
+if type(t1,Leaf) then
+     { LeafToIndex(t1) }
+else l1 := procname( t1[1] );
+     l3 := procname( t1[3] );
+     t1h := t1[Height];
+     for i1 in l1 do for i3 in l3 do
+	D[i1,i3] := D[i3,i1] := |t1h-hei[i1]| + |t1h-hei[i3]| od od;
+     l1 union l3
+fi
+end:
+
+ComputeDist( t );
+D
+end:
+
+
+# ********* ADDED FROM CHANTAL KOROSTENSKY JUNE 98 ********
+
+
+Signature := proc()
+  option polymorphic;
+  description 'Calculate the signature for a specific data type
+  Trees: the signature is the same for isomorphic trees, and
+         for trees with different roots. Only the graph topology
+	 is relevant.
+	 
+	 The function has the following form: to get the signature
+	 for two leaves a and b that are connected to the same node c,
+	 the signature value for node c is
+	 (x^a + x^b) modulo n.
+	 n is a large number, i.e. 2^32
+	 x is a "generator" number, which means that
+	 x^1 mod n, x^2 mod n etc etc produces all numbers between 
+	 0 and n-1.
+	 ';
+end:
+
+Tree_Signature := proc();
+  
+  GetLeafPos := proc(link: array, what: integer);
+    for i to length(link) while link[i] <> what do od;
+    return(i);
+  end:
+  
+  tree := Tree(args);
+  
+  modulo := 65536; 
+  gen := 3; # generator for mod 2^16 or 2^32
+  
+  ed := TreeToEdge(tree);
+  nred := length(ed);
+  nrnod := nred + 1;
+  nrleaves := (nred+3)/2;
+ 
+  nodes := CreateArray(1..nrnod, 1..3);
+ 
+  # 1: contains the degree
+  # 2: set of nodes to which this node is connected
+  # 3: signature of the node - at the beginning it is
+  #    simply the number of the node
+  for i to nrnod do 
+    nodes[i,2] := copy({}); 
+    nodes[i,3] := i;
+  od;
+  
+  leaves :=[GetTreeLabels(tree)];
+  biggest := max(leaves);
+  smallest := min(leaves);
+  dolinks := false;
+  if biggest <> nrleaves or smallest <> 1 then # we need to rename all the leaves
+    dolinks := true;
+    link := CreateArray(1..nrleaves);
+    smallest := biggest;
+    for i to nrleaves do
+      # find the smallest element and the position
+      for j to nrleaves do 
+	if leaves[j] < smallest then
+	  smallest := leaves[j];
+	  which := j;
+	fi;
+      od;
+      link[i] := smallest;
+      leaves[which] := biggest+1;
+      smallest := biggest;
+    od;
+  fi;
+  
+  # get the degree for all nodes, and also
+  # the remember to which other node the node
+  # is connected
+  for i to nred do
+    a := ed[i,2]+1;
+    b := ed[i,3]+1;
+    # find a and b in the link list
+    if dolinks = true then
+      a := GetLeafPos(link, a);
+      b := GetLeafPos(link, b);
+    fi;
+    
+    nodes[a,1] := nodes[a,1] + 1;
+    nodes[b,1] := nodes[b,1] + 1;
+    nodes[a,2] := union(nodes[a,2], {b});
+    nodes[b,2] := union(nodes[b,2], {a});
+  od;
+   
+  count := 0; finished := false;
+  while not finished do  
+    # first find all nodes of degree one
+    ones := copy({});
+    for a to nrnod do
+      if nodes[a, 1] = 1 then
+	ones := union(ones, {a});
+      fi;
+    od;
+    
+    # *then* remove all nodes of degree one,
+    # calculate the signature 
+    newnodes := copy(nodes);
+    if length(ones)>3 then
+      for a in ones do
+	# check if the next node is also connected to
+	# a node of degree one
+	c := op(nodes[a,2]);
+	which := minus(nodes[c,2], {a});
+	# check if one of those nodes also has degree one
+	b := intersect(which, ones);
+	if b <> {} then # there IS one!
+	  # count the number of steps
+	  # there are
+	  count := count + 1;
+	  b := op(b);
+	  # now calculate the signature for those two leaves
+	  sig := BinPower(gen, nodes[a,3], modulo) + BinPower(gen, nodes[b,3], modulo);
+	  # this signature is the number for the node in the middle, c
+	  newnodes[c, 3] := sig;
+	  # and it becomes degree one because we remove the connected nodes
+	  newnodes[c, 1] := 1;
+	  # and we also remove a and b from the connectivity list
+	  newnodes[c, 2] := minus(which, {b});
+	  # we change the degree of the processed nodes to 0
+	  # to "delete" them
+	  newnodes[a,1] := 0;
+	  newnodes[b,1] := 0;
+	  # and we also have to remove them from the "ones" list
+	  ones := minus(ones, {a, b});
+	fi;
+      od;
+      nodes := copy(newnodes);
+    else # we are at the end 
+      finished := true;
+    fi;
+  od; # next round up to maxconn
+  # now we either have two or three nodes of degree one left    
+  
+  sig := BinPower(gen, nodes[ones[1],3], modulo) + BinPower(gen, nodes[ones[2],3], modulo);
+  if length(ones) = 3 then
+    sig := sig + BinPower(gen, nodes[ones[3],3], modulo);
+  fi;
+#  lprint('longest path in tree:', count);
+  return(sig);
+end:
+
+GetRootedTreeSignature := proc(t: Tree); 
+  modulo := 65536; 
+  gen := 3; # generator for mod 2^16 or 2^32
+  if type(t['left'], Leaf) = false then
+    left := GetRootedTreeSignature(t['left'], modulo);
+  else
+    left := t['left','label'];
+  fi;
+  if type(t['right'], Leaf)  = false then
+    right := GetRootedTreeSignature(t['right'], modulo);
+  else
+    right := t['right','label'];
+  fi;
+  sig := BinPower(gen, left, modulo) + BinPower(gen, right, modulo); 
+  return(sig);
+end:
+
+ChangeLeafLabels := proc (t: Tree, Labels: list)
+ description
+  'Replaces the number of the leaves (t[3]) by the name in the list Labels'; 
+  if type(t,Leaf) then
+    Leaf(t[1],t[2],Labels[t[1]])
+  else
+    Tree( ChangeLeafLabels (t[1], Labels), t[2],
+	  ChangeLeafLabels (t[3], Labels)); 
+  fi
+end:
+
+
+FindCircularOrder := proc (t: Tree)
+  order := [];
+  for z in Leaves(t) do order := append(order,z[Label]) od;
+  append(order,order[1])
+end:
+
+
+# *********  TOPOLOGICAL DISTANCE *****
+# Added from Chantal Korostensky, June 11 1998
+
+
+GetTreeLabels := proc(t)
+  if type(t, Leaf) then
+       if length(t) >= 3 then t[3] else t[1] fi
+  else procname(t[1]), procname(t[3]) fi
+end:
+
+GetSubTree_r := proc(t: Tree, i, j)
+description
+  'Get the subtree that has both leaves i and j, one in the left and one
+  in the right subtree'; 
+  if op(0,t) <> Tree or length(t) < 5 or
+     not type(t[4],{list,set}) or not type(t[5],{list,set}) then
+	error(t,'tree not suitable or not enlarged for finding subtrees') fi;
+  l := t[4]; r := t[5]; 
+  if member(i, l) and member(j, l) then
+    GetSubTree_r(t[1], i, j); 
+  elif member(i, r) and member(j, r) then
+    GetSubTree_r(t[3], i, j); 
+  elif member(i,r) and member(j,l) or member(i,l) and member(j,r) then
+    t
+  else error(i,j,'are not both in the tree') fi
+end:
+
+
+
+GetTree := proc()
+  option polymorphic;
+  error(args, 'invalid argument for GetTree')
+end:
+
+
+Tree_Newick := proc( t:Tree ; 'scale'=((scale=1):numeric), 'printBootstrapInfo'=((printBootstrapInfo=true):boolean),
+                      'NHXfield'=((NHXfield=''):{procedure,string}), (baseH=0):numeric, (sciNotation=true):boolean ) 
+   # if we have height info, we compute the difference
+   stringH := '';  absH := NULL;
+   if length(t) > 1 then
+       deltaH := abs(t[Height]) - baseH;
+	   stringH := ':'.string(deltaH*scale);
+       absH := abs(t[Height]);
+   fi;
+ 
+   # we have a leaf -> filter name and return
+   if type(t,Leaf) then 
+       # remove any ()[],: and from label name, and replace
+       # space by _
+           lab := t[Label];
+	   if not type(lab,string) then lab := string(lab)
+	   else lab := copy(lab) fi;
+	   for i while i <= length(lab)  do
+                   if member(lab[i],{'(', ')', '[', ']', ',', ':'}) then
+                        lab := lab[1..i-1].lab[i+1..-1];  next
+                   elif lab[i] = ' ' then lab[i] := '_'; fi;
+           od;
+           return(lab.stringH);
+   # we do not have a leaf -> append left and right 
+   else
+       # maybe we have bootstrapping info
+       if printBootstrapInfo and length(t) = 4 and type(t[xtra],numeric) then
+           stringH := string(t[xtra]).stringH; 
+       fi;
+       if type(NHXfield,procedure) then
+            NHXstring := NHXfield(t);
+            if not type(NHXstring,string) then
+                error(NHXstring,type(NHXstring),'the output of the NHXfield function should be a string');
+            fi;
+       else
+            NHXstring := '';
+       fi;
+            
+       return('(' . procname(t[Left], absH, 'scale'=scale, sciNotation, 'printBootstrapInfo'=printBootstrapInfo,
+                        'NHXfield'=NHXfield) . ',' .
+	                procname(t[Right], absH, 'scale'=scale, sciNotation, 'printBootstrapInfo'=printBootstrapInfo,
+                        'NHXfield'=NHXfield) . 
+               ')' . stringH . NHXstring ); 
+   fi;
+end:
+
+###
+# Prunes a tree according a given set of of leaves
+PruneTree := proc(t:Tree, contains:{list,set,procedure})
+    if type(t,Leaf) then
+	if type(contains,procedure) then isIn := contains(t);
+	else isIn := member(t[Label], contains) fi:
+
+        if isIn then return(t) else return(NULL) fi;
+    else
+        l := PruneTree(t[Left], contains);
+        r := PruneTree(t[Right],contains);
+        if l=NULL and r=NULL then return(NULL);
+        elif l=NULL and r<>NULL then return(r);
+        elif l<>NULL and r=NULL then return(l);
+        else return( Tree(l,t[Height],r,t[4..-1]) );
+        fi:
+    fi:
+end:
+
+###
+# convert tree distances from PAM to substitutions per site
+Pam2SpS := proc(t:Tree)
+    t[Height] := t[Height] / 100:
+    if not type(t, Leaf) then
+        Pam2SpS(t[Left]):
+        Pam2SpS(t[Right]):
+    fi:
+end:
+
+###
+# convert tree distances from substitutions per site to PAM
+SpS2Pam := proc(t:Tree)
+    t[Height] := t[Height] * 100:
+    if not type(t, Leaf) then
+        SpS2Pam(t[Left]):
+        SpS2Pam(t[Right]):
+    fi:
+end:
+

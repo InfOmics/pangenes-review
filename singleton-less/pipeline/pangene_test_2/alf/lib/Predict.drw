@@ -1,0 +1,3200 @@
+# PredictSecStruct -- package assigns secondary structure.
+# Author          : Marcel TURCOTTE
+# Created On      : Thu Jun 27 16:19:29 1996
+# Last Modified By: Marcel TURCOTTE
+# Last Modified On: Tue May 13 14:05:20 1997
+
+#ignore off
+
+# \section{PredictSecStruct}
+# This section presents the program {\tt PredictSecStruct} which assigns
+# secondary structure.
+#
+# When the program is first loaded into the system, we make sure that
+# all the packages we need have also been loaded.
+
+if not assigned (Combine) then 
+  ReadLibrary ('Local/Search') 
+fi:
+if not assigned (AllAlpha) then 
+  ReadLibrary ('Local/AllAlpha') 
+fi:
+if not assigned (AllBeta) then 
+  ReadLibrary ('Local/AllBeta') 
+fi:
+if not assigned (AllSi) then
+  ReadLibrary ('Local/AllSi')
+fi:
+if not assigned (PropHAllAll) then 
+  ReadLibrary ('Caraco/tools/choufasman/choufas02/PropTablesLog') 
+fi:
+if not assigned (ChouFasmanMA) then 
+  ReadLibrary ('Caraco/tools/choufasman/choufas04/ChouFasman') 
+fi:
+
+# The program has 5 mandatory parameters: multiple alignment (ma), 
+# surface/interior assignments (si), primary parses (pp),
+# horizontal parses (hp) and vertical parses (vp).
+
+PredictSecStruct := proc (ma:array(string), si:string, pp, hp, vp)
+  
+  description 'Secondary structure prediction.';
+  
+# There are also a number of optional arguments to the program, these
+# are 
+# supplied after the mandatory parameters with an associations like
+# this: {\tt Tag = value}. If an optional parameter is not supplied
+# then a default value is assigned. The optional parameters {\tt ILo =
+# posint} and {\tt IHi = posint}, specify a starting and ending
+# position along the alignment, the defaults are the starting and
+# ending positions  of the target sequence.  The user specifies to the
+# program which sequence is considered to be the target, {\tt Target =
+# posint}, otherwise it is assumed to be the first. The user has
+# control the combinatorial behavior of the  program, some segments
+# may have more than  one possible secondary structure assignment, in
+# that case the program generates all the combinations if {\tt Combine
+# = true}, the default is {\tt Combine = false}.  The argument {\tt
+# Dump} tells the program to write all possibilities to a file for
+# further analysis by the user. Furthermore, there is another way the
+# user can modify the behavior of the program, the user can assign the
+# global variable {\tt printlevel} before calling the procedure, a
+# value greater than 1 will force the program to log all its
+# actions. 
+#  
+# The use of {\tt SearchString} to match the arguments has two
+# implications: {\em i)\/} it makes it case insensitive and {\em ii)\/}
+# one might specify an argument with a partial string, such as {\tt
+# comb = true}. 
+  
+  target := 1;
+  combine := false;
+  dump := false;
+  title := 'Not specified';
+  
+  for i from 6 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'ILo') <> -1 and
+        type (op (2, args[i]), posint) then
+        left := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'IHi') <> -1 and 
+        type (op (2, args[i]), posint) then
+        right := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'Target') <> -1 and 
+        type (op (2, args[i]), posint) then
+        target := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'Combine') <> -1 and
+        type (op (2, args[i]), boolean) then
+        combine := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'Dump') <> -1 and 
+        type (op (2, args[i]), boolean) then
+        dump := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'Title') <> -1 and 
+        type (op (2, args[i]), string) then
+        title := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  if not assigned (left) then
+    for left to length (ma[target]) 
+    while ma[target,left] = ' ' or ma[target,left] = '_' or ma[target,left] = '-' do od
+  fi;
+  
+  if not assigned (right) then
+    for right from length (ma[target]) to 1 by -1
+    while ma[target,right] = ' ' or ma[target,right] = '_' or ma[target,right] = '-' do od
+  fi;
+  
+  pred := [];
+  len := length (pp);
+  
+  if dump then
+    printf ('ss :=\n[NULL\n')
+  fi;
+
+  if printlevel > 1 then
+    printf ('Title of your job: %s\n', title)
+  fi;
+  
+# The program first makes sure, it does not predict any secondary 
+# structure to the left of the target sequence (or the
+# preset left border).
+
+  for i to length (pp) while pp[i,1] + pp[i,2] <= left do od;
+
+# Then, it moves from primary parse to primary parse, and calls the
+# {\tt PredictSegment} routine  to assign the delimited segment. 
+# It does so until it reaches the end of the target 
+# sequence (or the preset right border).
+
+  do
+    if i = 1 then
+      ilo := left;
+      p_left := P(left, 0, 901)
+    else
+      if left >= pp[i-1,1] + pp[i-1,2] then
+        ilo := left;
+        p_left := P(left, 0, 901)
+      else
+        ilo := pp[i-1,1] + pp[i-1,2];
+        p_left := P(pp[i-1,1], pp[i-1,2], 902)
+      fi
+    fi;
+    
+    if i = len + 1 then
+      ihi := right;
+      p_right := P(right, 0, 903)
+    else
+      if right < pp[i,1] - 1 then
+        ihi := right;
+        p_right := P(right, 0, 903)
+      else
+        ihi :=  pp[i,1] - 1;
+        p_right := P(pp[i,1], pp[i,2], 902)
+      fi
+    fi;
+
+    if ihi - ilo + 1 > 1 then
+      pred := append (pred, 
+                      p_left, 
+                      op(PredictSegment (ma, si, hp, vp, ilo, ihi, combine, dump, target)))
+    fi;
+    
+    if i = len + 1 then
+      pred := append (pred, p_right);
+      break
+    fi;
+
+    i := i + 1
+  od;
+  
+  if dump then
+    printf ('\n]:\n')
+  fi;
+
+  pred
+end:
+
+# {\tt PredictSegment} returns a list of secondary structure
+# assignments for the segment delimited by parameters {\tt lo} and
+# {\tt hi}.  An assignment has either the form {\tt H(i, len)},  where
+# {\tt H} can be substitued  by {\tt E} or {\tt C} or {\tt p}, {\tt i}
+# is the starting position of this segment in the alignment and {\tt
+# len} its length. The second form is {\tt [[assign1], [assign2]]}.
+# The latter case  arises in ambiguous situations, such as {\tt [
+# ... [[H(i, leni)], [E(j, lenj)]] ... ]}. The list format contains
+# always two levels of lists, because it should accomodate for
+# multiple assignments per segment, here is an example {\tt [
+# ... [[H(i, leni)], [E(j, lenj), E(k, lenk)]] ... ]} which  would
+# represents the choices between these assignments {\tt ... HHHHHHHH
+# ...} or {\tt ... EEEE EEE ...}.  
+#
+# {\tt PredictSegment} is not called directly by the user, it is
+# rather called by the {\tt PredictSecStruct} routine or by itself when the
+# segment is  very long.  The routine has 5 mandatory arguments and
+# no optionals. The procedure makes its decision based on
+# the length of the segment. The different cases are :
+# 1,2,3,4,5,6,7-14, longer than 14.
+
+PredictSegment := proc (ma:array(string), 
+                        si_in:string, 
+                        hp, 
+                        vp, 
+                        lo:posint, 
+                        hi:posint, 
+                        combine, 
+                        dump,
+                        target)
+  
+  description 'PredictSecStruct the secondary structure for a segment.';
+  
+  len := hi - lo + 1;
+
+# If the length of the segment is 1, no secondary structure
+# assignement is made, the procedure returns immediately.
+  
+  if len < 2 then
+    return ([])
+  fi;
+
+  si := si_in [lo..hi];
+  pred := [];
+
+# If the global variable {\tt printlevel} has a value greater then
+# one, the program reports its actions (the so called talking sheet). 
+  
+  if printlevel > 1 then
+    msg := sprintf ('\nSegment %d to %d', lo, hi);
+    printf ('%s\n%s\n\n', msg, CreateString (length (msg), '-'));
+    writeln ('Surface/interior assignments:','Ind'=2);
+    writeln (si,'Ind'=4);
+  fi;
+
+  if len >=2 and len <= 6 then
+
+    pred := ShortSegmentWellParsed (ma, si_in, hp, vp, lo, hi, combine, dump, target)
+
+  elif len >= 7 and len <= 14 then
+    
+    # For segments of length 7 to 14 the scheme is different.
+    # All possible strands, surface and interior helices are considered.
+    # See {\tt PredictLongSegment} defined on
+    # page~\pageref{fct:PredictLongSegment}.
+
+    pred := PredictLongSegment (ma, si_in, hp, vp, lo, hi, combine, dump, target)
+    
+  else
+
+    # When the segments are longer than 14 residues, the program first
+    # looks for secondary parses. If one is found, the procedure
+    # recursively calls itself on each newly created segment.
+    # Otherwise it proceeds with {\tt PredictLongSegment}.
+    
+    sp := SParse (hp, vp, ma, lo, hi);
+    if sp <> [] then
+
+      if printlevel > 1 then
+        writeln ('The segment is longer than 14 and contains a parse.', 'Ind'=2);
+        writeln ('It will be divided in two independent segments.', 'Ind'=2)
+      fi;
+
+      pred := [op (PredictSegment (ma, si_in, hp, vp, lo, sp[1] - 1,
+                                   combine, dump, target)),
+               p(sp[1], sp[2], '904'),
+               op (PredictSegment (ma, si_in, hp, vp, sp[1] + sp[2],
+                                   hi, combine, dump, target))] 
+    else
+
+      as := ActiveSite (ma, lo, hi, 'Conservative' = true);
+      
+      if as <> [] then
+        
+        if printlevel > 1 then
+          writeln ('The segment is longer than 14 and do not contain parses.','Ind'=2);
+          writeln ('Possible active site segment(s) have been identified:','Ind'=2);
+          print (as);
+          writeln ('The segment will be further sub-divided.','Ind'=2)
+        fi;
+
+        # An active site string maybe used to parse a long segment.  Alternative
+        # active sites are reported to the user, but only the best alternative is used.
+        # Predictions are made for the newly created segments if their length is six
+        # or more residues.
+        
+	if as[1,1] - lo > 1 and as[1,1] - lo < 6 then
+          pred := append (pred, 
+			  op(ShortSegmentNearActiveSite (ma, si_in, hp, vp, lo,
+							 as[1,1] - 1, combine,
+							 dump, target)))
+	else
+          pred := append (pred, op(PredictSegment (ma, si_in, hp, vp, lo,
+                                                as[1,1] - 1, combine,
+                                                dump, target)))
+        fi;
+        
+        pred := append (pred, as[1]);
+        
+        if hi - as[1,1] + as[1,2] + 1 > 1 and hi - as[1,1] + as[1,2] < 6 then
+          pred := append (pred, 
+			  op(ShortSegmentNearActiveSite (ma, si_in, hp, vp,
+							 as[1,1] + as[1,2],
+							 hi, combine, dump, target)))
+	else
+          pred := append (pred, op(PredictSegment (ma, si_in, hp, vp,
+                                                as[1,1] + as[1,2],
+                                                hi, combine, dump, target)))
+        fi
+        
+      else
+
+        if printlevel > 1 then
+          writeln ('This segment is very long and contains no secondary parse.','Ind'=2)
+        fi;
+        
+        pred := PredictLongSegment (ma, si_in, hp, vp, lo, hi,
+                                    combine, dump, target)
+      fi
+    fi
+  fi;
+
+  if printlevel > 1 then
+    printf ('\n');
+    writeln ('Assignment for the whole segment:','Ind'=2);
+    writeln_solution (pred,'Ind'=2);
+  fi;
+  
+  pred
+end:
+
+ShortSegmentWellParsed := proc (ma:array(string),
+			     si_in:string,
+			     hp, 
+			     vp, 
+			     lo:posint,
+			     hi:posint,
+			     combine:boolean,
+			     dump:boolean,
+			     target:posint)
+
+  description 'Secondary structure for short segments.';
+
+  pred := [];
+  len := hi - lo + 1;
+  si := si_in [lo..hi];
+  SI := uppercase (si);
+  un_parsed := UnParsed (lo, hi);
+  sp := SParse (hp, vp, ma, lo, hi);
+  secondary_parse := sp <> [];
+
+  if len = 2 then
+
+    # The program calls {\tt PredictSegment2}, 
+    # see page~\pageref{fct:PredictSegment2}.   
+    
+    if un_parsed > 0 then
+      pred := PredictSegment2(ma, si, SI, hp, vp, lo, hi, len, 
+                              secondary_parse, combine, dump)
+    fi
+    
+  elif len = 3 then
+
+    # The program calls {\tt PredictSegment3},
+    # see page~\pageref{fct:PredictSegment3}.   
+    
+    if un_parsed > 0 then
+      pred := PredictSegment3(ma, si, SI, hp, vp, lo, hi, len, 
+                              secondary_parse, combine, dump)
+    fi
+    
+  elif len = 4 then
+
+    # The program calls {\tt PredictSegmentMeta}, with argument {\tt
+    # PredictSegment4}, see page~\pageref{fct:PredictSegment4}.   
+
+    if un_parsed > 0 then
+      pred := PredictSegmentMeta (PredictSegment4, ma, si_in, hp, vp, lo, hi, len, 
+                                  secondary_parse, combine, dump)
+    fi
+    
+  elif len = 5 then
+
+    # The program calls {\tt PredictSegment5},
+    # see page~\pageref{fct:PredictSegment5}.   
+    
+    if un_parsed > 0 then
+      pred := PredictSegmentMeta (PredictSegment5, ma, si_in, hp, vp, lo, hi, len, 
+                                  secondary_parse, combine, dump)
+    fi
+
+  elif len = 6 then
+
+    # The program calls {\tt PredictSegment6},
+    # see page~\pageref{fct:PredictSegment6}.   
+    
+    if un_parsed > 0 then
+      pred := PredictSegmentMeta (PredictSegment6, ma, si_in, hp, vp, lo, hi, len, 
+                                  secondary_parse, combine, dump)
+    fi
+  fi;
+  
+  if pred = [] then
+    lupr := LongestUnParsedRegion (lo, hi);
+  
+    if lupr[2] > 0 and lupr[2] < hi-lo+1 then
+      pred := ShortSegmentWellParsed (ma, si_in, hp, vp, lupr[1], lupr[1]+lupr[2]-1, combine, dump, target)
+    fi
+  fi;
+
+  if pred = [] then
+
+    beta := AllBeta (SI, 'Automaton' = A06r1);
+    xs := [];
+    for i to length (beta) do
+      if beta[i] <> 0 then
+	xs := append (xs, E(lo + i - 1, beta[i], 'Strand, Automaton A06r1'))
+      fi
+    od;
+
+    beta := AllBeta (SI, 'Automaton' = A05a);
+    xs := [];
+    for i to length (beta) do
+      if beta[i] <> 0 then
+	xs := append (xs, E(lo + i - 1, beta[i], 'Strand, Automaton A05a'))
+      fi
+    od;
+
+    beta := AllBeta (SI, 'Automaton' = A05b);
+    xs := [];
+    for i to length (beta) do
+      if beta[i] <> 0 then
+	xs := append (xs, E(lo + i - 1, beta[i], 'Strand, Automaton A05b'))
+      fi
+    od;
+
+    if xs <> [] then
+      pred := sort (xs, x->-x[2])[1..1]
+    fi;
+  fi;
+  pred
+end:
+
+ShortSegmentNearActiveSite := proc (ma:array(string),
+				    si_in:string,
+				    hp, 
+				    vp, 
+				    lo:posint,
+				    hi:posint,
+				    combine:boolean,
+				    dump:boolean,
+				    target:posint)
+
+  pred := [];
+  len := hi - lo + 1;
+
+  if len < 2 then
+    return (pred)
+  fi;
+  
+  si := si_in [lo..hi];
+  SI := uppercase (si);
+  un_parsed := UnParsed (lo, hi);
+  sp := SParse (hp, vp, ma, lo, hi);
+  secondary_parse := sp <> [];
+
+  # Wall to Wall All Inside
+  
+  beta := AllBeta (SI, 'Automaton' = A03a, 'NonDet'=false);
+
+  for i to length (beta) do
+    if beta[i] <> 0 then
+      pred := append (pred, 
+		      e(lo + i - 1, beta[i], 
+			'Strand near active site, Automaton A03a'))
+    fi
+  od;
+
+  beta := AllBeta (SI, 'Automaton' = A06r1a, 'NonDet'=false);
+  
+  for i to length (beta) do
+    if beta[i] <> 0 then
+      pred := append (pred, 
+		      e(lo + i - 1, beta[i], 
+			'Strand near active site, Automaton A06r1a'))
+    fi
+  od;
+
+  if length (pred) > 1 then
+    pred := sort (pred, x->-x[2])[1..1]
+  fi;
+
+  pred
+end:
+  
+# The procedure {\tt PredictLongSegment} considers all hydrophobic 
+# cores first then calls {\tt PredictLongSegment2} for the remaining
+# unassigned segments, if their length is longer than 6 residues.
+# \label{fct:PredictLongSegment}
+
+PredictLongSegment := proc (ma:array(string),
+                            si_in:string,
+                            hp, 
+                            vp, 
+                            lo:posint,
+                            hi:posint,
+                            combine,
+                            dump,
+                            target:posint)
+
+  si := si_in [lo..hi];
+  SI := uppercase (si);
+  sp := SParse (hp, vp, ma, lo, hi);
+  secondary_parse := sp <> [];
+  len := hi - lo + 1;
+
+  pred := HydrophobicCores (ma, si_in, hp, vp, lo, hi, target);
+
+  if pred = [] then
+
+    pred := PredictLongSegment2 (ma, si_in, hp, vp, lo, hi, combine, dump)
+  
+  else
+    
+    n := length (pred);
+    tmp := [];
+
+    for i to n+1 do
+
+      # here we assume that HydrophobicCores does not 
+      # return multiple values ...
+
+      ilo := If (i = 1, lo, pred[i-1,1] + pred[i-1,2]);
+      ihi := If (i > n, hi, pred[i,1]-1);
+      
+      if ihi - ilo > 6 then
+        tmp := append (tmp, op(PredictLongSegment2 (ma, si_in, hp, vp, ilo, ihi, combine, dump)))
+      fi
+    
+    od;
+    
+    pred := sort ([op(pred), op(tmp)], x->x[1])
+    
+  fi;
+  pred
+end:
+
+PredictLongSegment2 := proc (ma:array(string),
+                            si_in:string,
+                            hp, 
+                            vp, 
+                            lo:posint,
+                            hi:posint,
+                            combine,
+                            dump)
+  tags := '';
+  for i from 9 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Tags') <> -1 and 
+        type (op (2, args[i]), string) then
+        tags := op (2, args[i])
+      else
+        msg := sprintf ('Uncaught case ('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  si := si_in [lo..hi];
+  SI := uppercase (si);
+  sp := SParse (hp, vp, ma, lo, hi);
+  secondary_parse := sp <> [];
+  len := hi - lo + 1;
+
+# The first thing the procedure does, is to locate all
+# structural units.
+  
+  res := LocateAll (SI, 'Lo' = lo);
+  xs := res[1]; ys := res[2];
+  
+# At this point, the variables {\tt xs} and {\tt ys} have been
+# assigned to all the possible locations for strands and helices
+# respectively.  The presence of strands and helices 
+# in the same segment is considered an ambiguity.  Multiple starting
+# points for units of the same type are not considered as ambiguous
+# case however.  Finally, it is also possible that some or all
+# the segments do not overlap.
+  
+  pred := [];
+  
+  ambiguous := xs <> [] and ys <> [];
+  
+  if not ambiguous then
+    
+    xs := [op(xs), op(ys)];
+    
+    if combine then
+      ys := Combine (xs, NoOverlap)
+    else
+      ys := Combine (xs, proc (x, y) length(y) = 0 end)
+    fi;
+    
+    if length (ys) > 0 then
+
+      ys := Tag (ys, tags . '309');
+
+      if dump then Dump (lo, hi, ys) fi;
+    
+      pred := RankAlternatives (ma, ys, lo, hi)[1]
+    
+    else
+      
+# It appears that there are no assignment at all, thus the program the
+# will apply less restrictive critera. The automaton {\tt A05} is used
+# to find  partially buried strands.  Here, for the performance
+# analysis, the two paths of the automaton have been separated, the
+# first accounts for strands burried on the left, while the second one
+# accounts for burried strands on the right.
+
+      if printlevel > 1 then
+        writeln ('No assignment.  The program will work with a relaxed set of rules.', 'Ind'=2)
+      fi;
+      
+      beta := AllBeta (SI, 'Automaton' = A05a);
+      
+      xs := [];
+      for i to length (beta) do
+        if beta[i] <> 0 then
+          xs := append (xs, E(lo + i - 1, beta[i], 'EBL'))
+        fi
+      od;
+
+      beta := AllBeta (SI, 'Automaton' = A05b);
+      
+      for i to length (beta) do
+        if beta[i] <> 0 then
+          xs := append (xs, E(lo + i - 1, beta[i], 'EBR'))
+        fi
+      od;
+      
+      if combine then
+        ys := Combine (xs, NoOverlap)
+      else
+        ys := Combine (xs, proc (x, y) length(y) = 0 end)
+      fi;
+      
+      ys := Tag (ys, tags . '18');
+
+# In the event that more than one such assignments are detected, the
+# assignment that covers the most residue positions will be
+# favored. 
+      
+      sorted := sort (ys, x -> - Cost(x));
+      
+      if length (sorted) = 0 then
+        if printlevel > 1 then
+          writeln ('No assignment.  This segment shows no amphiphilicity pattern.','Ind'=2)
+        fi
+      else
+        if dump then Dump (lo, hi, ys) fi;
+        pred := sorted [1]
+      fi
+    fi
+      
+  else
+
+# Here we have to deal with ambiguous secondary structure assigments.    
+
+    if printlevel > 1 then
+      writeln ('Ambiguous secondary structure assignment detected:','Ind'=2);
+      writeln_solution (xs,'Ind'=4);
+      writeln_solution (ys,'Ind'=4)
+    fi;
+
+    xs := [op(xs), op(ys)];
+    
+    pred := ConflictResolver (xs, si_in);
+    
+    if printlevel > 1 then
+      writeln ('Result of ConflictResolver:','Ind'=2);
+      writeln_solution (pred, 'Ind'=2)
+    fi;
+      
+    if dump then Dump (lo, hi, pred) fi
+  
+  fi;
+  
+  pred
+end:
+
+# This procedure is called on segments of
+# length two. \label{fct:PredictSegment2} 
+
+PredictSegment2 := proc (ma:array(string),
+                         si:string,
+                         SI:string,
+                         hp, 
+                         vp, 
+                         lo:posint,
+                         hi:posint,
+                         len:posint,
+                         secondary_parse:boolean,
+                         combine,
+                         dump)
+  pred := [];
+
+# The program looks for all internal s/i assignments, unknown s/i
+# assignments are allowed.  For the purpose of performance analysis,
+# separated cases are made for strong and weaker assignments\footnote{
+# Previously, the program would have relied on the automaton {\tt A02}
+# for pattern recognition, but here all cases are made explicit}.
+  
+  if si = 'II' then
+    pred := [E(lo, len, '1a')]
+  elif si = 'Ii' then
+    pred := [E(lo, len, '1b')]
+  elif si = 'iI' then
+    pred := [E(lo, len, '1c')]
+  elif si = 'ii' then
+    pred := [E(lo, len, '1d')]
+  elif si = 'I.' then
+    pred := [e(lo, len, '1e')]
+  elif si = '.I' then
+    pred := [e(lo, len, '1f')]
+  elif si = 'i.' then
+    pred := [e(lo, len, '1g')]
+  elif si = '.i' then
+    pred := [e(lo, len, '1h')]
+  elif si = '..' then
+    pred := [e(lo, len, '1i')]
+  fi;
+
+  if pred <> [] and dump then Dump (lo, hi, pred) fi;
+
+  pred
+end:
+
+# This procedure processes the segments of length 3.
+# \label{fct:PredictSegment3}
+
+PredictSegment3 := proc (ma:array(string),
+                         si:string,
+                         SI:string,
+                         hp, 
+                         vp, 
+                         lo:posint,
+                         hi:posint,
+                         len:posint,
+                         secondary_parse:boolean,
+                         combine,
+                         dump)
+
+# The program calls the procedure {\tt
+# Beta} with the automaton {\tt A03} as an argument.  {\tt Beta} will
+# check that the  amphiphilic pattern conrespond to a $\beta$-strand
+# and return the length of the unit, here 3, if it corresponds and zero
+# otherwise. For the purpose of  the performance analysis, the
+# automaton {\tt A03} has been split into 4 automata, III, IIS, ISI,
+# and SII.
+  
+  pred := [];
+
+  if Beta (SI, A03a) <> 0 then
+    pred := [E(lo, len, '2a')]
+  elif Beta (SI, A03b) <> 0 then
+    pred := [e(lo, len, '2b')]
+  elif Beta (SI, A03c) <> 0 then
+    pred := [e(lo, len, '2c')]
+  elif Beta (SI, A03d) <> 0 then
+    pred := [e(lo, len, '2d')]
+  fi;
+
+  if pred <> [] and dump then Dump (lo, hi, pred) fi;
+  
+  pred
+end:
+
+# The treatment for segments of length 4-6 is divided in two principal
+# procedures, the first one {\tt MetaPredictSegment} does the logic of
+# looking for indeterminate S/Is and resolve the cases of ambigous
+# assignments. The second procedure, {\tt f} passed as an argument,
+# returns all possible cases given in input a surface/interior
+# assignment string. \label{fct:PredictSegmentMeta}
+
+PredictSegmentMeta := proc (f:procedure,
+                            ma:array(string),
+                            si_in:string,
+                            hp, 
+                            vp, 
+                            lo:posint,
+                            hi:posint,
+                            len:posint,
+                            secondary_parse:boolean,
+                            combine:boolean,
+                            dump:boolean)
+
+  description 'Process segments of length 4-6.  It does the higher level
+  logic of looking for indeterminate S/Is and resolves ambiguous
+  assigments.';
+  
+  si := si_in [lo..hi];
+  SI := uppercase (si);
+
+  for i to length (SI) while SI[i] <> '.' do od;
+  
+  if i > length (SI) then
+    pred := f (ma, si, SI, hp, vp, lo, hi, len, 
+               secondary_parse, combine, dump)
+  else
+  
+    sis := AllSi (si_in, 'ILo' = lo, 'IHi' = hi);
+    preds := CreateArray (1..length (sis), []);
+    for i to length (sis) do
+      new_si := sis[i,lo..hi];
+      new_SI := uppercase (new_si);
+      preds[i] := [f (ma, new_si, new_SI, hp, vp, lo, hi, len, 
+                      secondary_parse, combine, dump)]
+    od;
+    preds := zip (Concatenate (preds));
+    for i to length (preds) do
+      preds[i] := [op({op(zip ((x->op(0,x))(preds[i])))})];
+    od;
+    preds := sort (Concatenate (preds));
+    
+    pred := [];
+    if preds <> [] then
+      c := 1;
+      curr := preds[1];
+      xs := [];
+    
+      for i from 2 to length (preds) do
+        if preds[i] = curr then
+          c := c + 1
+        else
+          xs := append (xs, [curr, c]);
+          c := 1;
+          curr := preds[i]
+        fi
+      od;
+      xs := append (xs, [curr, c]);
+      
+      if xs <> [] then
+        xs := sort (xs, x-> -x[2]);
+        for i from 2 to length (xs) while xs[i,2] = xs[i-1,2] do od;
+        if i > 2 then
+          for j to i-1 do
+            pred := append (pred, [(xs[j,1])(lo, len, 'UnkM')])
+          od
+        else
+          pred := [(xs[1,1])(lo, len, 'UnkM')]
+        fi
+      fi
+    fi
+  fi;
+
+  if length (pred) > 1 then
+
+# If the program faces an ambiguity, {\em i.e.\/} {\tt length
+# (pred) > 1}, it sorts the alternatives 
+# in reverse order of propensity, and the best candidate
+# will be the first of the list.
+
+    pred := RankAlternatives (ma, pred, lo, hi);
+    if dump then 
+      Dump (lo, hi, pred)
+    fi;
+    pred := pred [1]
+    
+  elif length (pred) = 1 and dump then
+    Dump (lo, hi, pred)
+  fi;
+
+  pred
+end:
+
+# The following procedure returns all possible assignments of length
+# four given a surface/interior prediction. \label{fct:PredictSegment5}
+
+PredictSegment4 := proc (ma:array(string),
+                              si:string,
+                              SI:string,
+                              hp, 
+                              vp, 
+                              lo:posint,
+                              hi:posint,
+                              len:posint,
+                              secondary_parse:boolean,
+                              combine,
+                              dump)
+
+  pred := [];
+
+# The program looks for a secondary parse in the segment.
+    
+  if secondary_parse then
+      
+# Here, in this branch of the {\tt if} statement, the segment contains
+# a secondary parse, if the amphiphilic pattern is one of the
+# following: SSSS, SSSI, SSIS, SISS, ISSS, or ISSI, the segment will be
+# predicted as a coil.
+
+    if SI = 'ISIS' then
+      pred := [e(lo, len, '201cb')]
+    elif SI = 'SISI' then
+      pred := [e(lo, len, '201db')]
+    elif SI = 'SSSS' then
+      pred := [C(lo, len, '3a')]
+    elif SI = 'SSSI' then
+      pred := [C(lo, len, '3b')]
+    elif SI = 'SSIS' then
+      pred := [C(lo, len, '3c')]
+    elif SI = 'SISS' then
+      pred := [C(lo, len, '3d')]
+    elif SI = 'ISSS' then
+      pred := [C(lo, len, '3e')]
+    elif SI = 'ISSI' then
+      pred := [C(lo, len, '3f')]
+      
+# If the the amphiphilic pattern is one of the following, the program
+# has to consider coil and strand 
+# as possible alternatives.
+        
+    elif SI = 'SSII' then
+      pred := [[c(lo, len, '201aa')],[e(lo, len, '201ab')]]
+    elif SI = 'SIIS' then
+      pred := [[c(lo, len, '201ba')],[e(lo, len, '201bb')]]
+    elif SI = 'IISS' then
+      pred := [[c(lo, len, '201ea')],[e(lo, len, '201eb')]]
+    elif SI = 'IIIS' then
+      pred := [[c(lo, len, '201fa')],[e(lo, len, '201fb')]]
+    elif SI = 'IISI' then
+      pred := [[c(lo, len, '201ga')],[e(lo, len, '201gb')]]
+    elif SI = 'ISII' then
+      pred := [[c(lo, len, '201ha')],[e(lo, len, '201hb')]]
+    elif SI = 'SIII' then
+      pred := [[c(lo, len, '201ia')],[e(lo, len, '201ib')]]
+    elif SI = 'IIII' then
+      pred := [[c(lo, len, '201ja')],[e(lo, len, '201jb')]]
+      
+# This is a sink whole for uncaught cases, there should be none by now.
+# If {\tt printlevel} is greater the user is informed and is able
+# to improve the program.
+      
+    elif printlevel > 1 then
+      msg := sprintf ('There is an uncaught case for segments of length 4 (code a) "%s"', si);
+      writeln (msg, 'Ind'=2);
+    fi
+    
+  else
+
+# Here no secondary parse is present.  If the amphiphilicity of
+# the segment corresponds to one of following patterns: SSSS, SSSI,
+# SSIS, SISS, ISSS, or ISSI then both assignments, coil and strand, are
+# considered.
+
+    if SI = 'SSIS' then
+      pred := [[c(lo, len, '202ca')],[e(lo, len, '202cb')]]
+    elif SI = 'SISS' then
+      pred := [[c(lo, len, '202da')],[e(lo, len, '202db')]]
+    elif SI = 'ISSI' then
+      pred := [[c(lo, len, '202fa')],[e(lo, len, '202fb')]]
+    elif SI = 'SSSI' then
+      pred := [[c(lo, len, '202ba')],[e(lo, len, '202bb')]]
+    elif SI = 'ISSS' then
+      pred := [[c(lo, len, '202ea')],[e(lo, len, '202eb')]]
+    elif SI = 'SSSS' then
+      pred := [[c(lo, len, '202aa')],[e(lo, len, '202ab')]]
+
+# The following amphiphilic patterns lead to the prediction of a strand.
+
+    elif SI = 'IIII' then
+      pred := [E(lo, len, '4j')]
+    elif SI = 'ISIS' then
+      pred := [E(lo, len, '4c')]
+    elif SI = 'SISI' then
+      pred := [E(lo, len, '4d')]
+    elif SI = 'IIIS' then
+      pred := [E(lo, len, '4f')]
+    elif SI = 'SIII' then
+      pred := [E(lo, len, '4i')]
+    elif SI = 'SIIS' then
+      pred := [e(lo, len, '4b')]
+    elif SI = 'IISI' then
+      pred := [e(lo, len, '4g')]
+    elif SI = 'ISII' then
+      pred := [e(lo, len, '4h')]
+    elif SI = 'IISS' then
+      pred := [e(lo, len, '4e')]
+    elif SI = 'SSII' then
+      pred := [e(lo, len, '4a')]
+      
+# This is a sink whole for uncaught cases, there should be none by now.
+# If {\tt printlevel} is greater the user is informed and is able
+# to improve the program.
+      
+    elif printlevel > 1 then
+      msg := sprintf ('There is an uncaught case for segments of length 4 (code b) "%s"', si);
+      writeln (msg, 'Ind'=2);
+    fi
+  
+  fi;
+
+  pred
+end:
+
+# The following procedure returns all possible secondary structure
+# assignments of length 5 given in input a surface/interior prediction
+# string. \label{fct:PredictSegment5}
+
+PredictSegment5 := proc (ma:array(string),
+                         si:string,
+                         SI:string,
+                         hp, 
+                         vp, 
+                         lo:posint,
+                         hi:posint,
+                         len:posint,
+                         secondary_parse:boolean,
+                         combine,
+                         dump)
+
+  pred := [];
+
+# The first set of rules is based only on amphiphilicity and predicts
+# only strands.
+    
+  if SI = 'IIIII' then
+    pred := [E(lo, len, '5a')]
+  elif SI = 'IIIIS' then
+    pred := [E(lo, len, '5b')]
+  elif SI = 'IIISI' then
+    pred := [E(lo, len, '5c')]
+  elif SI = 'IIISS' then
+    pred := [E(lo, len, '5d')]
+  elif SI = 'SIIII' then
+    pred := [E(lo, len, '5k')]
+  elif SI = 'SIIIS' then
+    pred := [E(lo, len, '5l')]
+  elif SI = 'ISIII' then
+    pred := [E(lo, len, '5m')]
+  elif SI = 'SISIS' then
+    pred := [E(lo, len, '5h')]
+  elif SI = 'ISISI' then
+    pred := [E(lo, len, '5i')]
+  elif SI = 'SSISI' then
+    pred := [E(lo, len, '5q')]
+  elif SI = 'ISISS' then
+    pred := [E(lo, len, '5j')]
+  elif SI = 'SSIII' then
+    pred := [E(lo, len, '5o')]
+  elif SI = 'IISIS' then
+    pred := [E(lo, len, '5f')]
+  elif SI = 'SIISS' then
+    pred := [e(lo, len, '5n')]
+  elif SI = 'SSIIS' then
+    pred := [e(lo, len, '5p')]
+  elif SI = 'SSSII' then
+    pred := [e(lo, len, '5r')]
+  elif SI = 'IISSS' then
+    pred := [e(lo, len, '5g')]
+  elif SI = 'IISII' then
+    pred := [e(lo, len, '5e')]
+    
+# This second set of rules assigns coils.
+    
+  elif SI = 'SSSSS' then
+    pred := [C(lo, len, '6i')]
+  elif SI = 'ISSSS' then
+    pred := [C(lo, len, '6c')]
+  elif SI = 'SSSSI' then
+    pred := [C(lo, len, '6h')]
+  elif SI = 'ISSSI' then
+    pred := [C(lo, len, '6b')]
+  elif SI = 'SSSIS' then
+    pred := [C(lo, len, '6g')]
+  elif SI = 'SISSS' then
+    pred := [c(lo, len, '6e')]
+  elif SI = 'SISSI' then
+    pred := [c(lo, len, '6d')]
+  elif SI = 'SSISS' then
+    pred := [c(lo, len, '6f')]
+  elif SI = 'ISSIS' then
+    pred := [c(lo, len, '6a')]
+
+# For the remaining rules, we consider the cases where a secondary
+# parse is present and where it is not. 
+    
+  elif secondary_parse then
+
+# In this branch of the {\tt if} statement, we consider the case where the
+# segment does contain a secondary parse, and we predict a coil.
+      
+    if SI = 'IISSI' then
+      pred := [c(lo, len, '7a')]
+    elif SI = 'ISIIS' then
+      pred := [c(lo, len, '7b')]
+    elif SI = 'ISSII' then
+      pred := [c(lo, len, '7c')]
+    elif SI = 'SIISI' then
+      pred := [c(lo, len, '7d')]
+    elif SI = 'SISII' then
+      pred := [c(lo, len, '7e')]
+    elif printlevel > 1 then
+      msg := sprintf ('Uncaught case for a segment of length 5 case a %s', si);
+      writeln (msg, 'Ind'=2)
+    fi
+    
+  else
+
+# As here, the segment does not contain a parse. The assignment is
+# not unique, both cases, helix and strand, are considered.
+      
+    if SI = 'IISSI' then
+      pred := [[h(lo, len, '301aa')], [e(lo,len, '301ab')]]
+    elif SI = 'ISIIS' then
+      pred := [[h(lo, len, '301ba')], [e(lo,len, '301bb')]]
+    elif SI = 'ISSII' then
+      pred := [[h(lo, len, '301ca')], [e(lo,len, '301cb')]]
+    elif SI = 'SIISI' then
+      pred := [[h(lo, len, '301da')], [e(lo,len, '301db')]]
+    elif SI = 'SISII' then
+      pred := [[h(lo, len, '301ea')], [e(lo,len, '301eb')]]
+    elif printlevel > 1 then
+      msg := sprintf ('Uncaught case for a segment of length 5 case b %s', si);
+      writeln (msg, 'Ind'=2)
+    fi
+  fi;
+
+  pred
+end:
+
+# Proceeding with segments of length six. 
+# \label{fct:PredictSegment6}
+
+PredictSegment6 := proc (ma:array(string),
+                         si:string,
+                         SI:string,
+                         hp, 
+                         vp, 
+                         lo:posint,
+                         hi:posint,
+                         len:posint,
+                         secondary_parse:boolean,
+                         combine,
+                         dump)
+
+  pred := [];
+
+# The first set of rules
+# considers only the amphiphilicity and the only possible assignment
+# is a strand.
+    
+  if SI = 'IIIIII' then
+    pred := [E(lo, len, '9a')]
+  
+  elif SI = 'SIIIII' then
+    pred := [E(lo, len, '9q')]
+  elif SI = 'ISIIII' then
+    pred := [E(lo, len, '9l')]
+  elif SI = 'IIIISI' then
+    pred := [E(lo, len, '9c')]
+  elif SI = 'IIIIIS' then
+    pred := [E(lo, len, '9b')]
+  
+  elif SI = 'SSIIII' then
+    pred := [E(lo, len, '9y')]
+  elif SI = 'IIIISS' then
+    pred := [E(lo, len, '9d')]
+  elif SI = 'SIIIIS' then
+    pred := [E(lo, len, '9r')]
+  
+  elif SI = 'ISISIS' then
+    pred := [E(lo, len, '9p')]
+  elif SI = 'SISISI' then
+    pred := [E(lo, len, '9w')]
+  elif SI = 'IISISI' then
+    pred := [E(lo, len, '9i')]
+  elif SI = 'SSISIS' then
+    pred := [E(lo, len, '9A')]
+  elif SI = 'SISISS' then
+    pred := [E(lo, len, '9x')]
+  elif SI = 'SSSISI' then
+    pred := [E(lo, len, '9C')]
+  elif SI = 'IISISS' then
+    pred := [E(lo, len, '9j')]
+  elif SI = 'SISIII' then
+    pred := [E(lo, len, '9v')]
+  elif SI = 'ISISII' then
+    pred := [E(lo, len, '9o')]
+  elif SI = 'ISIIIS' then
+    pred := [E(lo, len, '9m')]
+  
+  elif SI = 'IIISIS' then
+    pred := [E(lo, len, '9e')]
+  elif SI = 'IIISSI' then
+    pred := [E(lo, len, '9f')]
+  elif SI = 'IIISSS' then
+    pred := [E(lo, len, '9g')]
+  elif SI = 'IISIII' then
+    pred := [E(lo, len, '9h')]
+  elif SI = 'SIIISI' then
+    pred := [E(lo, len, '9s')]
+  elif SI = 'SIIISS' then
+    pred := [E(lo, len, '9t')]
+  elif SI = 'SSIIIS' then
+    pred := [E(lo, len, '9z')]
+  elif SI = 'SSSIII' then
+    pred := [E(lo, len, '9B')]
+  
+  elif SI = 'IISSSS' then
+    pred := [e(lo, len, '9k')]
+  elif SI = 'SIISSS' then
+    pred := [e(lo, len, '9u')]
+  elif SI = 'ISIISS' then
+    pred := [e(lo, len, '9n')]
+    
+# This second set of rules is for coils.
+      
+  elif SI = 'ISSSSI' then
+    pred := [C(lo, len, '10a')]
+  elif SI = 'ISSSSS' then
+    pred := [C(lo, len, '10b')]
+  elif SI = 'SISSSS' then
+    pred := [C(lo, len, '10c')]
+  elif SI = 'SSSSIS' then
+    pred := [C(lo, len, '10f')]
+  elif SI = 'SSSSSI' then
+    pred := [C(lo, len, '10g')]
+  elif SI = 'SSSSSS' then
+    pred := [c(lo, len, '10h')]
+  elif SI = 'SSISSS' then
+    pred := [c(lo, len, '10d')]
+  elif SI = 'SSSISS' then
+    pred := [c(lo, len, '10e')]
+
+# If none of the above amphiphilicity patterns matches, 
+# we consider two separate cases, with and without secondary
+# parse.
+    
+  elif secondary_parse then
+
+# There is a secondary parse and the s/i pattern matches
+# one of the following cases, then a coil is assigned.
+      
+    if SI = 'SSSSII' then
+      pred := [C(lo, len, '12h')]
+    elif SI = 'SISSSI' then
+      pred := [C(lo, len, '11c')]
+    
+    elif SI = 'ISSSIS' then
+      pred := [C(lo, len, '11e')]
+    elif SI = 'ISSSII' then
+      pred := [C(lo, len, '12c')]
+    elif SI = 'ISISSS' then
+      pred := [C(lo, len, '12i')]
+    elif SI = 'ISSIII' then
+      pred := [C(lo, len, '12j')]
+    elif SI = 'IISSSI' then
+      pred := [C(lo, len, '12m')]
+    
+    elif SI = 'SISSIS' then
+      pred := [c(lo, len, '11b')]
+    elif SI = 'SIISIS' then
+      pred := [c(lo, len, '12k')]
+    
+    elif SI = 'ISSISI' then
+      pred := [c(lo, len, '12b')]
+    elif SI = 'SISIIS' then
+      pred := [c(lo, len, '12l')]
+    elif SI = 'ISISSI' then
+      pred := [c(lo, len, '12n')]
+    
+    elif SI = 'SSISII' then
+      pred := [c(lo, len, '12f')]
+    elif SI = 'SSISSI' then
+      pred := [c(lo, len, '11f')]
+    elif SI = 'ISSISS' then
+      pred := [c(lo, len, '11d')]
+    
+    elif SI = 'SSIISI' then
+      pred := [c(lo, len, '12d')]
+    elif SI = 'IISSIS' then
+      pred := [c(lo, len, '11h')]
+    elif SI = 'ISSIIS' then
+      pred := [c(lo, len, '12a')]
+    elif SI = 'SIISSI' then
+      pred := [c(lo, len, '11i')]
+    elif SI = 'IISSII' then
+      pred := [c(lo, len, '11g')]
+    elif SI = 'SSIISS' then
+      pred := [c(lo, len, '12e')]
+    elif SI = 'SSSIIS' then
+      pred := [c(lo, len, '12g')]
+    elif SI = 'ISIISI' then
+      pred := [c(lo, len, '12o')]
+    elif SI = 'SISSII' then
+      pred := [c(lo, len, '11a')]
+    
+    elif printlevel > 1 then
+      msg := sprintf ('Uncaught case (%s) %s', procname, si);
+      writeln (msg, 'Ind'=2)
+    fi
+  
+  else
+
+# In this branch of the {\tt if} statement, we consider the case of a segment of length
+# six that contains no secondary parse.  The assignment is not unique,
+# the program considers both cases, helix and strands.
+      
+    if SI = 'SISSII' then
+      pred := [[h(lo, len, '302aa')], [e(lo, len, '302ab')]]
+    elif SI = 'SISSIS' then
+      pred := [[h(lo, len, '302ba')], [e(lo, len, '302bb')]]
+    elif SI = 'SISSSI' then
+      pred := [[h(lo, len, '302ca')], [e(lo, len, '302cb')]]
+    elif SI = 'ISSISS' then
+      pred := [[h(lo, len, '302da')], [e(lo, len, '302db')]]
+    elif SI = 'ISSSIS' then
+      pred := [[h(lo, len, '302ea')], [e(lo, len, '302eb')]]
+    elif SI = 'SSISSI' then
+      pred := [[h(lo, len, '302fa')], [e(lo, len, '302fb')]]
+    elif SI = 'IISSII' then
+      pred := [[h(lo, len, '302ga')], [e(lo, len, '302gb')]]
+    elif SI = 'IISSIS' then
+      pred := [[h(lo, len, '302ha')], [e(lo, len, '302hb')]]
+    elif SI = 'SIISSI' then
+      pred := [[h(lo, len, '302ia')], [e(lo, len, '302ib')]]
+
+# If the amphiphilicity of the segment matches one of the following
+# cases, the program assigns a strand.
+      
+    elif SI = 'ISIISI' then
+      pred := [E(lo, len, '13o')]
+    elif SI = 'ISISSI' then
+      pred := [E(lo, len, '13n')]
+    elif SI = 'ISSISI' then
+      pred := [E(lo, len, '13b')]
+    elif SI = 'SISIIS' then
+      pred := [E(lo, len, '13l')]
+    elif SI = 'SIISIS' then
+      pred := [E(lo, len, '13k')]
+    
+    elif SI = 'ISISSS' then
+      pred := [E(lo, len, '13i')]
+    
+    elif SI = 'ISSIIS' then
+      pred := [e(lo, len, '13a')]
+    elif SI = 'SSIISI' then
+      pred := [e(lo, len, '13d')]
+    elif SI = 'SSIISS' then
+      pred := [e(lo, len, '13e')]
+    elif SI = 'SSISII' then
+      pred := [e(lo, len, '13f')]
+
+    elif SI = 'ISSIII' then
+      pred := [e(lo, len, '13j')]
+    elif SI = 'SSSIIS' then
+      pred := [e(lo, len, '13g')]
+    elif SI = 'SSSSII' then
+      pred := [e(lo, len, '13h')]
+    elif SI = 'ISSSII' then
+      pred := [e(lo, len, '13c')]
+    elif SI = 'IISSSI' then
+      pred := [e(lo, len, '13m')]
+    
+# If there is no secondary parse in that segment and the 
+# surface/interior assignments match one of the following  patterns
+# the program proposes a strand as well as a helix.
+     
+    elif SI = 'IISIIS' then
+      pred := [[h(lo, len, '303aa')],[e(lo, len, '303ab')]]
+    elif SI = 'SIISII' then
+      pred := [[h(lo, len, '303ba')],[e(lo, len, '303bb')]]
+    elif SI = 'IIISII' then
+      pred := [[h(lo, len, '303ca')],[e(lo, len, '303cb')]]
+    elif printlevel > 1 then
+      msg := printf ('Uncaught case (%s) %s', procname, si);
+      writeln (msg, 'Ind'=2)
+    fi
+  fi;
+
+  pred
+end:
+
+# This procedure locates all the strands and helices based on
+# amphiphilicity.
+
+LocateAll := proc (SI:string)
+
+  description 'Returns the tuple of all strands and helices that are
+  detected by amphiphilicity. The procedure has an optional argument,
+  Lo = posint.';
+  
+  lo := 0;
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Lo') <> -1 and 
+        type (op (2, args[i]), posint) then
+        lo := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+# In order to locate all the strands, the program calls {\tt AllBeta},
+# the result is a vector of the same length as the segment, here it is
+# assigned to the local variable {\tt beta}. This vector is such that
+# {\tt beta[i]} is different than zero if a strand starts at position
+# {\tt i}, in that case {\tt beta[i]} indicates the length of the
+# match, otherwise the value is zero.  For the purpose of the
+# performance analysis, the automaton {\tt A06r1} has been divided
+# into two automata. These automata recognize surface and interior
+# strands respectively.
+  
+  beta := AllBeta (SI, 'Automaton' = A06r1a);
+  
+# Next, the vector is transformed into a list of the form {\tt [E(lo,
+# len, Tag)]}.
+  
+  xs := [];
+  for i to length (beta) do
+    if beta[i] <> 0 then
+      xs := append (xs, E(lo + i - 1, beta[i], 'ES'))
+    fi
+  od;
+
+  beta := AllBeta (SI, 'Automaton' = A06r1b);
+  for i to length (beta) do
+    if beta[i] <> 0 then
+      xs := append (xs, E(lo + i - 1, beta[i], 'EI'))
+    fi
+  od;
+  
+# Notice that {\tt xs} is not reset so that the lists are appended.
+#  
+# A similar computation is applied to calculate all possible surface
+# helices. The minimum length and the minimum number of surface or
+# interior residue per turn are constrained.
+  
+  alpha := AllAlpha3 (SI, winlen = 1, minlen = 7);
+  
+  ys := [];
+  for i to length (alpha) do
+    if alpha[i] <> 0 then
+      ys := append (ys, H(lo + i - 1, alpha[i], 'HS'))
+    fi
+  od;
+  
+# Internal helices. Here the internal helices are detected whenever
+# seven or more 
+# internal residues are observed. Notice that the program uses the
+# variable {\tt SI}, rather than {\tt si}, thus there is no need to
+# worry about weaker/stronger assignments.
+  
+  int_hlx := regexp ('IIIIIII+', SI);
+  
+  for i to length (int_hlx) do
+    if int_hlx[i] <> 0 then
+      ys := append (ys, H(lo + i - 1, int_hlx[i], 'HI'))
+    fi
+  od;
+
+  [xs, ys]
+end:
+
+# Hydrophobic cores are sources of ambiguous assignments.
+# Because of that, they are recognized and process first.
+# The program will look for additional sources of information:
+# \begin{itemize} 
+#  \item extending the segment:
+#  \begin{itemize}
+#   \item first, until an indeterminate S/I position,
+#   \item then until a parse,
+#   \item and finally pass the parse if necessary,
+#  \end{itemize}
+#  \item additional information is provided by regular patterns, 
+#  \begin{itemize}
+#   \item {\tt APC Ser X X APC Ser},
+#   \item S/I pattern {\tt Unk I I Unk}, three is better {\tt Unk I I Unk I I Unk}
+#  \end{itemize}
+#  \item and the length of the core segment.
+# \end{itemize}
+# Be cautious, if the number of indeterminate is too high, leave 
+# it for later, also concentrate on the most valuable pieces of
+# information, {\tt IISSII..}.  An helix that has to have two
+# consecutive surface, and two consecutive interior to be stronger
+# than such a full motif {\tt ISIS}.
+
+regexp2 := proc (pat:string, s:string, i:posint, j:posint)
+
+  description 'Regular expression search on a segment of
+  a string.';
+  
+  res := regexp (pat, s[i..j]);
+  
+  xs := [];
+  for k to length (res) do 
+    if res[k] <> 0 then
+      xs := append (xs, [i+k-1, res[k], s[i+k-1..i+k+res[k]-2]])
+    fi
+  od;
+  xs
+end:
+
+Alpha := proc (si_in:string, lo:posint, hi:posint)
+  
+  alpha := AllAlpha3 (uppercase (si_in[lo..hi]), winlen = 1, minlen = 7);
+
+  xs := [];
+  for k to length (alpha) do 
+    if alpha[k] <> 0 then
+      xs := append (xs, H(lo + k - 1, alpha[k], false))
+    fi
+  od;
+  xs
+end:
+
+has  := proc (xs:list, p:procedure)
+  description 'Test weither the list xs has the property
+  identified by the predicate p.';
+  
+  for x in xs do if p(x) then return (true) fi od;
+  false
+end:
+
+lookup  := proc (xs:list, p:procedure)
+
+  description 'Returns the first element of xs that satisties
+  the predicate p or false if none.';
+  
+  for x in xs do if p(x) then return (x) fi od;
+  false
+end:
+
+lookup_rev  := proc (xs:list, p:procedure)
+  description 'Returns the first element starting from the tail of xs
+  that satisfies the predicate p or false if none.';
+  
+  for i from length (xs) to 1 by -1 do if p(xs[i]) then return (xs[i]) fi od;
+  false
+end:
+
+ratio := proc (si, elem, what)
+  
+  What := uppercase (what);
+  
+  c := 0;
+  for i from elem[1] to elem[1] + elem[2] - 1 do
+    if uppercase (si[i]) = What then
+      c := c + 1
+    fi
+  od;
+  
+  c / elem[2]
+end:
+
+HydrophobicCores := proc (ma:array(string), si_in:string, hp, vp,
+                         lo:posint, hi:posint, target:posint)
+
+  pred := [];
+  
+  # Find hydrophobic patches
+  
+  cores := regexp2 ('[Ii.][Ii.][Ii.][Ii.]+', si_in, lo, hi);
+
+  # But first let's worry about possible active sites
+
+  as := [];
+  
+  for c in cores do
+    tmp := ActiveSite (ma, c[1], c[1] + c[2] - 1, 'Conservative' = true);
+    if tmp <> [] then
+      as := append (as, op(tmp))
+    fi
+  od;
+
+# If there are potential active sites then the flanking segments are
+# analysed independently if their length is longer than 6 residues.
+  
+  if as <> [] then
+
+    n := length (as);
+
+    for i to n+1 do
+
+      ilo := If (i = 1, lo, as[i-1,1] + pred[i-1,2]);
+      ihi := If (i > n, hi, as[i,1]-1);
+      
+      if ihi - ilo > 0 and ihi - ilo < 5 then
+	pred := append (pred, op(ShortSegmentNearActiveSite (ma, si_in, hp, vp,
+							     ilo, ihi, true, false, target)))
+	
+      else
+        pred := append (pred, op(HydrophobicCores (ma, si_in, hp, vp, ilo, ihi, target)))
+      fi;
+
+      if i <= n then
+        pred := append (pred, as[i])
+      fi
+    od;
+    
+  else
+  
+    if cores = [] then return (pred) fi;
+    
+    len_cores := length (cores);
+    
+    if printlevel > 1 then
+      
+      tmp := AllHlxFeatures (ma[target,lo..hi], lo);
+      if tmp <> [] then
+        writeln ('There are reminiscent features of an alpha helix are:','Ind'=2);
+        writeln_solution (tmp, 'Ind'=2)
+      fi;
+
+      tmp := Turns (ma, lo, hi);
+      if tmp <> [] then
+        writeln ('There are possibly turns in that segment','Ind'=2);
+        writeln_solution (tmp,'Ind'=2)
+      fi
+    fi;
+    
+    for ci to len_cores do
+
+      c := cores[ci];
+      
+      prefix := [];
+      suffix := [];
+      
+      ilo := If (ci > 1 and c[1]-cores[ci-1,1]+cores[ci-1,2] > 3, cores[ci-1,1]+cores[ci-1,2]+2, lo);
+      ihi := If (ci < len_cores and cores[ci+1,1]-c[1]+c[2] > 3, cores[ci+1,1] - 1, hi);
+      
+      start := c[1];
+      for i from start to ilo by -1  
+      while (mod (start - i + 1, 2) = 1 and uppercase (si_in[i]) = 'I') or
+            (mod (start - i + 1, 2) = 0 and uppercase (si_in[i]) = 'S') do od;
+      i := i + 1;
+      len := start - i + 1;
+      if len > 3 then
+        prefix := append (prefix, E(i, len, 'Prefix'))
+      fi;
+
+      start := c[1] + c[2] - 1;
+      if si_in[start] <> '.' then
+        for i from start to ihi
+        while (mod (i - start + 1, 2) = 1 and uppercase (si_in[i]) = 'I') or
+              (mod (i - start + 1, 2) = 0 and uppercase (si_in[i]) = 'S') do od;
+
+        i := i - 1;
+        len := i - start + 1;
+        if len > 3 then
+          suffix := append (suffix, E(start, len, 'Suffix'))
+        fi
+      else
+        start := start + 1;
+        for i from start to ihi
+        while (mod (i - start + 1, 2) = 0 and uppercase (si_in[i]) = 'I') or
+              (mod (i - start + 1, 2) = 1 and uppercase (si_in[i]) = 'S') do od;
+
+        i := i - 1;
+        len := i - start + 1;
+        if len > 3 then
+          suffix := append (suffix, E(start, len, 'Suffix'))
+        fi
+      fi;
+      
+      alpha := sort (Alpha (si_in, ilo, ihi), x->x[1]);
+        
+      for a in alpha do
+        
+        if a[1] < c[1] - 3 and a[1] + a[2] > c[1] then
+          prefix := append (prefix, a)
+        elif a[1] < c[1] + c[2] and a[1] + a[2] > c[1] + c[2] + 3 then
+          suffix := append (suffix, a)
+        fi;
+      od;
+      
+      # analysis
+      
+      prefix_has_strand := has (prefix, x -> op(0, x) = 'E');
+      suffix_has_strand := has (suffix, x -> op(0, x) = 'E');
+      strand_signal := prefix_has_strand or suffix_has_strand;
+      
+      prefix_has_helix := has (prefix, x -> op(0, x) = 'H');
+      suffix_has_helix := has (suffix, x -> op(0, x) = 'H');
+      helix_signal := prefix_has_helix or suffix_has_helix;
+
+      if strand_signal and helix_signal then
+
+        prefix_conflict := prefix_has_strand and prefix_has_helix;
+        suffix_conflict := suffix_has_strand and suffix_has_helix;
+        
+        if not prefix_conflict and not suffix_conflict then
+
+          msg := 'Hydrophobic core with different flanking signals';
+          
+          if prefix_has_strand then
+
+            tmp := lookup (prefix, x-> op (0, x) = 'E');
+            pred := append (pred, noeval (e(tmp[1], tmp[2], msg)));
+
+            tmp := lookup (suffix, x-> op (0, x) = 'H');
+            pred := append (pred, noeval (h(c[1] + 1, tmp[1] + tmp[2] - c[1] - 1, msg)))
+          
+          else
+
+            tmp := lookup_rev (prefix, x-> op (0, x) = 'H');
+            pred := append (pred, noeval (h(tmp[1], c[1] + c[2] - tmp[1] - 1, msg)));
+
+            tmp := lookup (suffix, x-> op (0, x) = 'E');
+            pred := append (pred, noeval (e(tmp[1], tmp[2], msg)));
+
+          fi
+          
+        elif prefix_conflict and suffix_conflict then
+          
+          # we have sisi ... sisi
+
+          hd := lookup (prefix, x-> op (0, x) = 'E');
+          tl := lookup (suffix, x-> op (0, x) = 'E');
+          msg := 'Hydrophobic core with conflicting signal at head and start';
+          
+          pred := append (pred, noeval (e(hd[1], tl[1] + tl[2] - 1, msg)))
+                                        
+        else
+          
+          # things we should be considering: length, placement, possible parse ...
+          
+          hd := lookup (prefix, x-> op (0, x) = 'E');
+          if hd <> false then
+            hd := hd[1]
+          else
+            hd := c[1]
+          fi;
+
+          tl := lookup (suffix, x-> op (0, x) = 'E');
+          if tl <> false then
+            tl := tl[1] + tl[2] - 1;
+          else
+            tl := c[1] + c[2] - 1
+          fi;
+          
+          msg := 'Hydrophobic core with conflicting signal at head or start';
+          pred := append (pred, noeval (e(hd, tl - hd + 1, msg)));
+
+        fi
+        
+      elif strand_signal then
+
+        hd := lookup (prefix, x-> op (0, x) = 'E');
+        if hd <> false then
+          hd := hd[1]
+        else
+          hd := c[1]
+        fi;
+
+        tl := lookup (suffix, x-> op (0, x) = 'E');
+        if tl <> false then
+          tl := tl[1] + tl[2] - 1
+        else
+          tl := c[1] + c[2] - 1
+        fi;
+        
+        msg := 'Hydrophobic core and strand signal(s)';
+        pred := append (pred, noeval (E(hd, tl - hd + 1, msg)))
+      
+      elif helix_signal then
+        
+        hd := lookup_rev (prefix, x-> op (0, x) = 'H');
+        if hd <> false then
+          prefix_surf_r := ratio (si_in, hd, 'S');
+          prefix_int_r := ratio (si_in, hd, 'I');
+          hd := hd[1]
+        else
+          hd := c[1]
+        fi;
+
+        tl := lookup (suffix, x-> op (0, x) = 'H');
+        if tl <> false then
+          suffix_surf_r := ratio (si_in, tl, 'S');
+          suffix_int_r := ratio (si_in, tl, 'I');
+          tl := tl[1] + tl[2] - 1
+        else
+          tl := c[1] + c[2] - 1
+        fi;
+
+        if ((prefix_has_helix and prefix_surf_r > .33 and prefix_int_r > 0.33) or (not prefix_has_helix)) and
+           ((suffix_has_helix and suffix_surf_r > .33 and suffix_int_r > 0.33) or (not suffix_has_helix)) then
+          msg := 'Hydrophobic core and helix signal';
+          pred := append (pred, noeval (H(hd, tl - hd + 1, msg)))
+        else
+          msg := 'Hydrophobic core and weak helix signal';
+          pred := append (pred, noeval (h(hd, tl - hd + 1, msg)))
+        fi
+      
+      else
+        
+        n := hi - lo + 1;
+        if n <= 8 then
+
+          msg := 'Hydrophobic core, small segment';
+          pred := append (pred, noeval (E(c[1], c[2], msg)))
+
+        else
+
+          if c[2] < 8 then
+
+            msg := 'Hydrophobic core, small patch, long segment';
+            pred := append (pred, noeval (E(c[1], c[2], msg)))
+            
+          else
+            
+            lupr := LongestUnParsedRegion (c[1], c[1]+c[2]-1);
+
+            if lupr[2] < 8 then
+
+              msg := 'Hydrophobic core, small patch, small parsed segment';
+              pred := append (pred, noeval (E(c[1], c[2], msg)))
+              
+            else
+              
+              msg := 'Hydrophobic core, long';
+              pred := append (pred, noeval (h(c[1], c[2], msg)))
+              
+            fi
+          fi
+        fi
+      fi
+    od
+  fi;
+  pred
+end:
+
+# {\tt GrowHelix} and {\tt GrowStrand} are allowed to modify weak S/Is
+# in order to extend a prediction, they are also allowed to cross
+# parse boundaries also. Not yet implemented.
+
+GrowHelix := proc ()
+
+# When? And how? To change weak S/I assignments:
+# \begin{enumerate}
+#  \item At the interface of the two surfaces, hydrophobic split.
+#  \item any weak S/I.
+# \end{enumerate}  
+
+end:
+
+GrowStrand := proc ()
+
+
+
+end:
+
+
+# \subsection{Utilities}
+
+# While looking trough a large number of S/I prediction by TFJ's
+# program, we realized that some assignments were wrong, in a way that
+# would make the secondary structure prediction fails.  The following
+# procedure recognize and fix these positions.  The typical case is
+# that of APC KREND assigned weak surface, here they are
+# assigned indeterminate (APC CHQ are already undetermined by TJF).
+# TFJ's program will have to be modified to accommodate these cases.
+
+PatchAllSi := proc (ma:array(string), si:string, lo:posint, hi:posint)
+  
+  new_si := copy (si);
+  n := length (ma);
+  interior_indicators := 'FAMILYVWPG';
+  surface_indicators := 'KREND';
+  
+  for pos from lo to hi do
+
+    # patch for APC KREND
+
+    c := APC (ma, pos);
+    if SearchString (c, 'KREND') <> -1 then
+      new_si[pos] := '.'
+    fi;
+
+    # patch for interior positions that contains no 
+    # interior indicator residues.
+    
+    if si[pos] = 'i' or si[pos] = 'I' then
+      interior := false;
+      for j to n do 
+        if SearchString (ma[j,pos], interior_indicators) <> -1 then
+          interior := true;
+          break
+        fi
+      od;
+      if not interior then
+        new_si[pos] := '.'
+      fi
+    fi;
+
+    # patch for surface positions that contains no 
+    # surface indicator residues.
+    
+    if si[pos] = 's' or si[pos] = 'S' then
+      surface := false;
+      for j to n do 
+        if SearchString (ma[j,pos], surface_indicators) <> -1 then
+          surface := true;
+          break
+        fi
+      od;
+      if not surface then
+        new_si[pos] := '.'
+      fi
+    fi;
+    
+    # The above two patches should resolve the problems assiciated
+    # with Ser/Thr positions.
+    
+  od;
+  
+  new_si
+end:
+
+# This procedure is applied to an individual segment and attempts to
+# fix the undetermined S/Is. The actual strategy is simple, if  more
+# than one surface indicator residue is observed at the position then
+# it is assigned surface, otherwise it is assigned interior.
+
+FixUnknowns  := proc (ma:array(string), si:string, lo:posint, hi:posint)
+  
+  description 'This procedure is applied to an individual segment and
+  attempts to fix the undetermined S/Is.';
+  
+  new_si := copy (si);
+
+  for pos from lo to hi do
+    if si[pos] = '.' then
+      
+      surf := 0;
+      
+      for i to length (ma) do
+        if SearchString (ma[i, pos], 'KREND') <> -1 then
+          surf := surf + 1
+        fi
+      od;
+      
+      if surf > 1 then
+        new_si[pos] := 's'
+      else
+        new_si[pos] := 'i'
+      fi
+    fi
+  od;
+  
+  new_si
+end:
+
+# Unsatisfied with the resolution scheme based on propensity to
+# assign secondary structure to ambiguous segment, I developed the
+# following one:
+# \begin{enumerate}
+#   \item Find out if the overlapping regions are such that
+#         there are more than one domain, where a domain is 
+#         connected graph of overlapping segments
+#   \item Each domain will be processed independently
+#   \item Segments are shorten and shifted in all possible ways
+#         to find out if the segment can accommodate all assignments
+#   \item If not, the assignments that are not stable are removed
+#   \item This new list is shorten and shifted in all possible ways
+#         to find out if the segment can accommodate all the new
+#         assignments
+#   \item if not, the longest stable non-overlapping are retained
+# \end{enumerate}
+#
+# Nota: one returns to the above scheme by uncommenting the
+# two calls to {BestPlacement}.  It turns out that the strategy
+# over-predicts strands, the actual one considers only stable segments,
+# which eliminates a lot of small strands, and finds the assignment
+# that maximize the number of positions assigned, sometimes that would
+# mean an helix is shorten to it can accommodate a strand at its
+# end, which resolts is slight over-prediction.
+
+ConflictResolver := proc (sol_in:list(structure), si)
+
+  description 'Implements a resolution sheme for ambigous secondary
+  structure assignments that is not based on propensity.';
+  
+  sol := sort (sol_in, x->x[1]);
+  n := length (sol);
+
+# First graphs of overlapping segments are created, each of them will
+# constitute a domain and each of them will be processed
+# independently.
+  
+  ov := CreateArray (1..n, 1..n, false);
+  
+  for i to n-1 do
+    for j from i + 1 to n do
+      if i <> j and uppercase (op(0,sol[i])) <> uppercase (op(0,sol[j])) then
+        ov[i,j] := Overlap (sol[i], sol[j]) > 0
+      fi
+    od;
+  od;
+  
+  domains := ConnectedGraphs (ov);
+  nb := length (domains);
+
+  for i to nb do
+    tmp := [];
+    for j to length (domains[i]) do
+      tmp := append (tmp, sol[domains[i,j]])
+    od;
+    domains[i] := tmp
+  od;
+
+  if nb > 1 and printlevel > 1 then
+    msg := sprintf ('There are %d domains:', nb);
+    writeln (msg, 'Ind'=2);
+    for i to nb do
+      writeln_solution (domains[i], 'Ind'=4)
+    od;
+  fi;
+  
+  for i to nb do
+  
+    xs := [];
+    
+    for j to length (domains[i]) do
+      if Stable (domains[i,j], si) then
+	xs := append (xs, domains[i,j])
+      fi
+    od;
+
+    if xs = [] then
+      
+      # domains[i] := BestPlacement (domains[i], DiffTypeNoOverlap)
+      domains[i] := BestSolution (domains[i])
+    
+    else
+      if printlevel > 1 then
+	msg := sprintf ('The stable assignments are:', nb);
+	writeln (msg, 'Ind'=2);
+	writeln_solution (xs, 'Ind'=4)
+      fi;
+      
+      # ys := BestPlacement (xs, DiffTypeNoOverlap);
+      ys := BestSolution (xs);
+    
+      domains[i] := ys
+    fi
+  od;
+  Concat (domains)
+end:
+
+BestPlacement := proc (solution:list(structure), constraint:procedure)
+
+  n := length (solution);
+  tagged_solution := copy (solution);
+  for i to n do
+    tagged_solution[i,3] := solution[i]
+  od;
+  
+  all := sort (AllPlacements ([], tagged_solution, constraint), SolCost);
+
+  if all <> [] then
+    best := all[1];
+    for i to n do 
+      best[i,3] := best[i,3,3]
+    od;
+    best
+  else
+    []
+  fi;
+end:
+
+BestSolution := proc (solution:list(structure))
+
+  n := length (solution);
+  tagged_solution := copy (solution);
+  for i to n do
+    tagged_solution[i,3] := solution[i]
+  od;
+  
+  all := sort (AllPlacements ([], tagged_solution, NoOverlap, 'Combinatorial'=true),LenCost);
+
+  if all <> [] then
+    best := all[1];
+    for i to  length(best) do 
+      best[i,3] := best[i,3,3]
+    od;
+    best
+  else
+    []
+  fi;
+end:
+
+AllPlacements := proc (partial:list(structure), domains:list(structure), constraint:procedure)
+
+  combinatorial := false;
+  for i from 4 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Combinatorial?') <> -1 and 
+        type (op (2, args[i]), boolean) then
+        combinatorial := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  sols := [];
+  
+  if domains = [] then
+    if partial <> [] then
+      [partial]
+    else
+      []
+    fi
+  else
+    domain := GenPlacements (domains[1]);
+    rest := domains[2..-1];
+  
+    for i to length (domain) do
+      if constraint (domain [i], partial) then
+	sols := [op (sols),
+		 op (AllPlacements (append (partial, domain[i]), rest, constraint, 'Combinatorial?'=combinatorial))]
+      fi
+    od;
+    
+    if combinatorial then
+      sols := [op (sols),
+	       op (AllPlacements (partial, rest, constraint, 'Combinatorial?'=combinatorial))]
+    fi;
+
+    sols
+  fi;
+end:
+
+GenPlacements := proc (p:structure)
+
+  description 'Generates all possible combinations of start
+  and length.';
+  
+  if uppercase (op(0,p)) = 'H' then
+    GenericGenPlacements (p, 7);
+  elif  uppercase (op(0,p)) = 'E' then
+    GenericGenPlacements (p, 4);
+  else
+    error ('wrong argument');
+  fi;
+end:
+
+GenericGenPlacements := proc (p:structure, smallest:posint)
+
+  description 'Generates all combinations of length and start.';
+  
+  xs := [];
+  
+  for len from p[2] to smallest by - 1 do
+    for start from p[1] to p[1] + p[2] - len do
+      xs := append (xs, op(0,p)(start, len, p[3]))
+    od
+  od;
+
+  xs;
+end:
+
+DiffTypeNoOverlap := proc (v, partial_solution)
+
+  for p in partial_solution do
+    if uppercase (op(0,v)) <> uppercase (op(0,p)) and Overlap (v, p) > 0 then
+      return (false)
+    fi
+  od;
+
+  true
+end:
+
+SolCost := proc (sol:list(structure))
+  
+  c := 0;
+  for s in sol do
+    c := c + s[3,2] - s[2]
+  od;
+  c
+end:
+
+LenCost := proc (sol:list(structure))
+  
+  c := 0;
+  for s in sol do
+    c := c + s[2]
+  od;
+  -c
+end:
+
+# 
+#
+
+ConnectedGraphs := proc (connected:array(array(boolean)))
+
+  description 'Returns the list of all connected graphs.  The argument
+  connected is an upper triangular matrix such that connected[i,j] is true
+  if i and j are connected false otherwise.';
+  
+  n := length (connected);
+  if n = 0 or length (connected[1]) <> n then
+    error ('This is not a graph.')
+  fi;
+  
+  visited := CreateArray (1..n, false);
+  graphs := curr := neighbors := [];
+  i := 1;
+
+  do
+    if neighbors <> [] then
+      curr := [neighbors[1], op(curr)];
+      neighbors := neighbors[2..-1]
+    else
+      if curr <> [] then
+	graphs := append (graphs, sort (curr))
+      fi;
+
+      for j from i to n while visited [j] do od;
+      if j > n then break fi;
+      visited[j] := true;
+      curr := [j];
+      i := i + 1
+    fi;
+    
+    j := curr[1];
+    for k from j+1 to n do
+      if not visited[k] and connected[j,k] then
+	neighbors := append (neighbors, k);
+	visited [k] := true;
+      fi
+    od
+  od;
+
+  graphs
+end:
+
+# There is a set of rules that could be used to further test
+# the stability of helices:
+# - if it starts with SIS then the first residue is excluded, and the
+#   rest of the helix is tested for stability.
+# - same for C terminal end
+# rational: 
+
+# The following procedures implement filters to be used for ambiguous
+# segments.
+#
+# The procedure {\tt Stable} filters a list of secondary structure
+# assignments.  It retains only the assignments that does not depend on
+# indeterminate s/i, the following {\tt S.S.} would not be retained as
+# is only found in 1 out of the four possible ways to assign the
+# unknown S/Is.  There is an optional parameter, {\tt 'Cutoff' =
+# numeric}, that gives some flexibility to the filter, a cutoff of
+# 0.75 would retain an assignment that contains two unknown S/Is and is
+# observed in 3 out of 4 possible ways to assign the unknows.
+
+Holds := proc (x:structure, si:string)
+
+  description 'See if prediction x holds.';
+  
+  lo := x[1]; hi := x[1] + x[2] - 1;
+  SI := uppercase (si[lo..hi]);
+
+  if x[3] = 'ES' then
+    ys := AllBeta (SI, 'Automaton' = A06r1a)
+  elif x[3] = 'EI' then
+    ys := AllBeta (SI, 'Automaton' = A06r1b)
+  elif x[3] = 'HS' then
+    ys := AllAlpha3 (SI, winlen = 1, minlen = 7)
+  elif x[3] = 'HI' then
+    ys := regexp ('IIIIIII+', SI)
+  else
+    if printlevel > 1 then
+      msg := sprintf ('Uncaught case (%s)', procname);
+      writeln (msg,'Ind'=2);
+      lprint (xs,2)
+    fi;
+    return (false)
+  fi;
+
+  max (ys) > 0 
+end:
+
+# {\tt Stable} is a procedure that tries to evaluate the reliability of 
+# an assignment.  It uses the following heuristics:  systematically
+# replacing all undetermined surface/interior assignments, in case
+# where the assignment is a helix it {\tt ISI} and {\tt SIS} ends are
+# shorten by one position.
+
+Stable := proc (x_in:structure, si:string)
+
+  description 'This filter retains only the segments that do not depend on
+  unknow assignments, i.e. if mutating the unknowns disrupt the
+  pattern then it is not retained.';
+  
+  cutoff := 1.0;
+  
+  for i from 3 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Cutoff') <> -1 and 
+        type (op (2, args[i]), numeric) then
+        cutoff := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  stable := false;
+
+  x := x_in;
+  
+  if uppercase (op(0,x)) = 'H' then
+    
+    prefix := uppercase (si[x[1]..x[1]+2]);
+    suffix := uppercase (si[x[1]+x[2]-3..x[1]+x[2]-1]);
+
+    if prefix = 'SIS' or prefix = 'ISI' then
+      x := (op(0,x))(x[1]+1, x[2] - 1, x[3])
+    fi;
+
+    if suffix = 'SIS' or suffix = 'ISI' then
+      x := (op(0,x))(x[1], x[2] - 1, x[3])
+    fi
+  
+  fi;
+  
+  lo := x[1];
+  hi := x[1] + x[2] - 1;
+  sis := AllSi (si, 'ILo' = lo, 'IHi' = hi);
+
+  c := 0;
+  for s in sis do
+    if Holds (x,s) then
+      c := c + 1
+    fi
+  od;
+  if c / length (sis) >= cutoff then
+    stable := true
+  fi;
+  stable
+end:
+
+Stretch := proc ()
+
+  # not yet implemented
+
+end:
+
+# This procedure attempts to locate active site regions.  The criteria
+# are 3 or more APC and at least one CHQST.
+
+ActiveSite := proc (ma:array(string), lo:posint, hi:posint)
+
+  description 'This procedure attempts to locate active site regions.';
+
+  conservative := false;
+  for i from 4 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Conservative') <> -1 and 
+        type (op (2, args[i]), boolean) then
+        conservative := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  s := CreateString (hi - lo + 1);
+  
+  for i from lo to hi do
+    s[i-lo+1] := MyAPC (ma, i)
+  od;
+  
+  if conservative then
+    m := regexp ('[CHQSTPGKREND]+', s)
+  else
+    m := regexp ('[^ ]+', s)
+  fi;
+  
+  sites := [];
+  for i to length (m) do
+    if m[i] > 1 then
+      c := 0;
+      for j to m[i] do
+        if SearchString (s[i+j-1], 'CHQST') <> -1 then
+          c := c + 1
+        fi
+      od;
+      if c > 0 then
+        sites := append (sites, A(lo + i - 1, m[i], s[i..i + m[i] - 1]))
+      fi
+    fi
+  od;
+    
+  sort (sites, RankAS)
+end:
+
+RankAS := proc (a,b)
+  
+  a1 := a2 := a3 := 0;
+  for i to length (a[3]) do
+    if SearchString (a[3,i], 'PG') <> -1 then
+      a1 := a1 + 1
+    elif SearchString (a[3,i], 'CHQST') <> -1 then
+      a2 := a2 + 1
+    elif SearchString (a[3,i], 'KREND') <> -1 then
+      a3 := a3 + 1
+    fi
+  od;
+
+  b1 := b2 := b3 := 0;
+  for i to length (b[3]) do
+    if SearchString (b[3,i], 'PG') <> -1 then
+      b1 := b1 + 1
+    elif SearchString (b[3,i], 'CHQST') <> -1 then
+      b2 := b2 + 1
+    elif SearchString (b[3,i], 'KREND') <> -1 then
+      b3 := b3 + 1
+    fi
+  od;
+
+  if a1 > b1 then
+    true
+  elif a1 < b1 then
+    false
+  elif a2 > b2 then
+    true
+  elif a2 < b2 then
+    false
+  elif a3 > b3 then
+    true
+  elif a3 < b3 then
+    false
+  elif a[2] > b[2] then
+    true
+  elif a[2] < b[2] then
+    false
+  else
+    # Here we which we had some more information, such as the location
+    # of the site relative to the possible sec struc assignments, to decide.
+    true
+  fi
+end:
+
+# For very long segments, more than 30, if no reliable parse can be
+# found we are looking for clusters of functional residues.  The
+# rational is that no matter what we should be carefull in this region
+# when doing a prediction.
+
+FunctionalCluster := proc (ma:array(string), lo:posint, hi:posint)
+
+  description 'This procedure locates clusters of functional residues.';
+
+  s := CreateString (hi - lo + 1);
+
+  v := [AToInt('C'), AToInt('H'), AToInt('Q'), AToInt('S'), AToInt('T'), AToInt('G')]; # ?P
+  
+  for pos from lo to hi do
+    obs := Obs (ma, pos);
+    
+    c := 0;
+    for i to length (v) do
+      c := c + obs[v[i]];
+    od;
+    
+    if c / length (ma) >= 0.4 then
+      s[pos - lo + 1] := '$'
+    fi
+  od;
+  
+  m := regexp ('$$$+', s);
+  
+  sites := [];
+  for i to length (m) do
+    if m[i] > 0 then
+      sites := append (sites, A(lo + i - 1, m[i], s[i..i + m[i] - 1]))
+    fi
+  od;
+    
+  sort (sites, x -> -x)
+end:
+
+Turns := proc (ma:array(string), lo:posint, hi:posint)
+
+  description 'This procedure attempts to locate active site regions.';
+
+  s := CreateString (hi - lo + 1);
+  
+  j := 1;
+  for i from lo to hi do
+    s[j] := MyAPC (ma, i);
+    j := j + 1;
+  od;
+  
+  pats := regexp2 ('[G]+[KREND][KREND][G]+', s, 1, length (s));
+  
+  turns := [];
+  for p in pats do
+    turns := append (turns, T(lo+p[1]-1, p[2], p[3]));
+  od;
+  turns
+end:
+
+# {\tt RankAlternatives} calculates the propsensity score for each
+# solution, for that it calls {\tt SegmentChouFasman} (a misnamed procedure,
+# it sould have been {\tt SecStrucPropensity}).  The solutions are then
+# sorted in reverse order, so that the best candidate is the first of
+# the list.
+
+RankAlternatives := proc (ma:array(string), sols, lo:posint, hi:posint)
+
+  v := CreateArray (1..length (sols));
+  
+  for i to length (sols) do
+    v[i] := [SegmentChouFasman (ma, sols[i], lo, hi), sols[i]]
+  od;
+
+  w := sort (v, v -> -v[1]);
+
+  if printlevel > 1 then
+    writeln ('Possible assignments ordered by propensity:','Ind'=2);
+    writeln_solutions (w,'Ind'=4)
+  fi;
+
+  zip ((x->x[2])(w))
+end:
+
+# This procedure assigns the tag {\tt v} to each segment
+# of the solution {\tt sol}.  If the element {\tt s} was already
+# tagged then {\tt v } is appended to its tag.
+
+Tag  := proc (sol, v:string)
+  
+  xs := [];
+  
+  for s in sol do
+    if type (s, list) then
+      xs := append (xs, Tag (s, v))
+    else
+      if length (s) = 3 then
+        xs := append (xs, op(0, s)(s[1], s[2], s[3].v))
+      else
+        xs := append (xs, op(0, s)(s[1], s[2], v))
+      fi
+    fi
+  od;
+
+  xs
+end:
+
+# The procedure prints all alternatives for later studies.
+
+Dump := proc (ilo:posint, ihi:posint, what)
+
+  printf (',\n[%d, %d, ', ilo, ihi);
+  
+  Dump_print_list (what);
+  
+  printf (']');
+  
+end:
+
+Dump_print_list  := proc (xs)
+
+  printf ('[');
+  n := length (xs);
+  i := 1;
+  do
+    if i > n then
+      break
+    elif i > 1 then
+      printf (', ')
+    fi;
+    
+    if type (xs[i], list) then
+      Dump_print_list (xs[i]);
+    else
+      printf ('%c(%d, %d, ''%s'')', op(0, xs[i]), xs[i,1], xs[i,2], xs[i,3])
+    fi;
+    
+    i := i + 1
+  od;
+  printf (']');
+  NULL
+end:
+
+# {\tt SegmentChouFasm} calculates the propensity for {\tt sol}.
+
+SegmentChouFasman := proc (ma:array(string), sol, ilo:posint, ihi:posint)
+
+  global PropHAllAll, PropEAllAll, PropCAllAll;
+  accum := 0;
+  
+  len_sol := length (sol);
+  
+  # score coils
+
+  lo := ilo; i := 1;
+
+  do
+    if i > len_sol then break fi;
+
+    if op(0, sol[i]) <> 'C' and sol[i,1] - 1 > 0 then
+      accum := accum + 
+               ChouFasmanMA (ma, lo, sol[i,1] - 1, PropCAllAll)
+    fi;
+
+    if op(0, sol[i]) = 'H' then
+      prop := PropHAllAll
+    elif op(0, sol[i]) = 'E' then
+      prop := PropEAllAll
+    else
+      prop := PropCAllAll
+    fi;
+
+    accum := accum + 
+             ChouFasmanMA (ma, sol[i,1], sol[i,1] + sol[i,2] - 1, prop);
+
+    lo := sol[i,1] + sol[i,2];
+    i := i + 1;
+  od;
+
+  if op(0, sol[len_sol]) <> 'C' and 
+    ihi - sol[len_sol,1] + sol[len_sol,2] > 0 then
+    accum := accum + 
+             ChouFasmanMA (ma, sol[len_sol,1] + sol[len_sol,2], ihi, PropCAllAll)
+  fi;
+
+  accum
+end:
+
+# 
+
+Overlap := proc (v1, v2)
+  min (v1[1] + v1[2], v2[1] + v2[2]) - max (v1[1], v2[1])
+end:
+
+NoOverlap  := proc (v, partial_solution)
+
+  for p in partial_solution do
+    if Overlap (v, p) > 0 then
+      return (false)
+    fi
+  od;
+
+  true
+end:
+
+NoOverlap4  := proc (v, partial_solution)
+
+  for p in partial_solution do
+    if Overlap (v, p) > 4 then
+      return (false)
+    fi
+  od;
+
+  true
+end:
+
+SgmtMatch := proc (xs:array, ps:array)
+  
+  description 'Given two list of segments it reports: the list of segments
+  that overlap, the list of segments present in the list xs with no
+  overlap in ps and then the list of segments from ps that do not
+  overlap any segment in xs.';
+  
+  # xs :: experimental, ps :: predicted ms :: match, 
+  # os :: overprediction, us :: underprediction
+  
+  ms := []; os := []; us := [];
+
+  xs_i := ps_i := 1;
+
+  matched_x := matched_p := false;
+  
+  do
+    if xs_i > length (xs) then
+      if ps_i > length (ps) then
+        break
+      else
+        if not matched_p then
+          os := append (os, ps[ps_i])
+        fi;
+        ps_i := ps_i + 1;
+        matched_p := false
+      fi
+    else
+      if ps_i > length (ps) then
+        if not matched_x then
+          us := append (us, xs[xs_i])
+        fi;
+        xs_i := xs_i + 1;
+        matched_x := false
+      else
+        ov := SgmtOverlap (xs[xs_i],ps[ps_i]);
+        if ov > 0 then
+          ms := append (ms, [xs[xs_i],ps[ps_i]]);
+          matched_x := matched_p := true
+        fi;
+        if xs[xs_i,2] < ps[ps_i,2] then
+          if not matched_x then
+            us := append (us, xs[xs_i])
+          fi;
+          xs_i := xs_i + 1;
+          matched_x := false
+        else
+          if not matched_p then
+            os := append (os, ps[ps_i])
+          fi;
+          ps_i := ps_i + 1;
+          matched_p := false
+        fi
+      fi
+    fi
+  od;
+
+  [ms, us, os]
+end:
+
+SgmtOverlap := proc (s1:structure, s2:structure)
+
+  description 'Returns the number of overlaping positions, when
+  segments overlap, otherwise the result indicates their distance 
+  bears a negative sign.';
+  
+  min (s1[2], s2[2]) - max (s1[1], s2[1]) + 1
+end:
+
+
+Ov := proc (s1:structure, s2:structure)
+  
+  ov := SgmtOverlap (s1, s2);
+  if ov < 0 then ov := 0 fi;
+  
+  2 * ov / (s1[2] - s1[1] + s2[2] - s2[1] + 2)
+end:
+
+Concat := proc (xs:array)
+    ys := [];
+    for x in xs do
+        ys := append (ys, op(x))
+    od;
+    ys;
+end:
+
+Concatenate := proc (xs)
+  if type (xs, list) then
+    ys := [];
+    for x in xs do
+      ys := append (ys, op(Concatenate (x)))
+    od;
+    ys
+  else
+    [xs]
+  fi;
+end:
+
+# Fix it? When two solutions have the same
+# score it should favor helix.
+
+Cost := proc (solution)
+  
+  n := 1;
+  for s in solution do
+    x := s[1] + s[2] - 1;
+    if x > n then
+      n := x
+    fi
+  od;
+  
+  zone := CreateString (n, ' ');
+  
+  for s in solution do
+    for i to s[2] do
+      zone[s[1] + i - 1] := 'X'
+    od
+  od;
+
+  x := 0;
+  for i to n do
+    if zone[i] = 'X' then
+      x := x+1
+    fi
+  od;
+      
+  x
+end:
+
+MyAPC  := proc (MA:array (string), pos:posint)
+
+  description 'All position conserved.';
+  
+  n := length (ma);
+  obs := Obs (MA, pos);
+  
+  i := 1;
+  for j from 2 to 20 do
+    if obs[j] > obs[i] then
+      i := j
+    fi
+  od;
+  
+  # If needed replace the static threshold values with parameters.
+  # Here we allow one sequence to be deleted, that is because
+  # of possible sequencing errors!
+  
+  res := ' ';
+  if obs[22] <= 1 and n * obs[23] <= 0 and obs[i] / sum (obs[1..20]) >= 1.0 then
+    res := IntToA(i)
+  fi;
+
+  res
+end:
+
+Obs := proc (ma: array(string), pos:posint)
+
+  description 'Returns the number of time each residue type is
+  observed at a given position of the alignment.  Indels are not
+  counted but unknow residue type are.';
+
+  obs := CreateArray (1..23, 0);
+  
+  for i to length (ma) do
+    c := ma[i, pos];
+    j := AToInt (c);
+    if j > 0 then
+      obs[j] := obs[j] + 1
+    elif c = ' ' then
+      obs[22] := obs[22] + 1
+    elif c = '_' or c = '-' then
+      obs[23] := obs[23] + 1
+    fi
+  od;
+
+  obs
+end:
+
+# \subsubsection{Utilities to analyse helices at the sequence level}
+
+AllHlxFeatures  := proc (s:string, lo:posint)
+
+  description 'Looks at all possible helix windows and reports the ones
+  that show features of helices. ';
+  
+  n := length (s);
+  hlx := [];
+  win := CreateArray (1..n, 0);
+  
+  for len from min (n, 18) to 7 by -1 do
+    for pos to n - len + 1 do
+      # is this space occupied?
+      for i from pos to 1 by -1 while win[i] = 0 do od;
+      if i = 0 or i + win[i] < pos + len then
+        f := HlxFeatures (s[pos..pos+len-1]);
+        if f <> [] then
+          win[pos] := len;
+          hlx := append (hlx, H(lo + pos - 1, len, f))
+        fi
+      fi
+    od
+  od;
+  hlx
+end:
+
+HlxFeatures := proc (seq:string)
+  
+  features := [];
+  n := length (seq);
+  hlx := HlxFold (seq);
+  
+  regions := HlxRegions (hlx, (x,y) -> if x = y then x else false fi);
+  xs := sort (regions, x -> -x[2]);
+  for i to length (xs) while xs[i,2] >= 3 do 
+    features := append (features, sprintf ('%d%s',xs[i,2], xs[i,1]))
+  od;
+  
+  regions := HlxRegions (hlx, Amphiphilic);
+  if length (regions) = 2 and regions[1,2]/n > 0.3 and regions[2,2]/n > 0.3 then
+    features := append (features, 'Amphiphilic')
+  fi;
+
+  regions := HlxRegions (hlx, Functional);
+  if length (regions) = 2 and regions[1,2] >= 3 and regions[2,2] >= 3 then
+    features := append (features, 'Functional')
+  fi;
+
+  features
+end:
+
+# The wheel is such that there are two regions and no hydrophobic
+# residue mixes with hydrophilic ones.
+
+Amphiphilic := proc (x,y)
+  if SearchString (x, 'CHQSTPG') <> -1 then
+    y
+  elif SearchString (y, 'CHQSTPG') <> -1 then
+    x
+  elif (SearchString (x, 'KREND') <> -1 and SearchString (y, 'KREND') <> -1) or
+       (SearchString (x, 'FAMILYVW') <> -1 and SearchString (y, 'FAMILYVW') <> -1) then
+    x
+  else
+    false
+  fi
+end:
+
+# The wheel is such that all functional and structural residues are
+# clustered in one region.
+
+Functional := proc (x,y)
+  
+  func_x := SearchString (x, 'CHQSTPG') <> -1;
+  func_y := SearchString (y, 'CHQSTPG') <> -1;
+  
+  if (func_x and not func_y) or (not func_x and func_y) then
+    false
+  else
+    x
+  fi
+end:
+
+HlxFold := proc (s:string)
+
+  description 'Residues are shuffled such that two residues adjacent
+  on the helical wheel are neighbors in the new sequence.';
+  
+  n := length (s);
+  hlx := CreateString (n);
+  
+  t := [1, 12, 5, 16, 9, 2, 13, 6, 17, 10, 3, 14, 7, 18, 11, 4, 15, 8];
+  
+  pos := 1;
+  for i to 18 while pos <= n do
+    if t[i] <= n then
+      hlx [pos] := s[t[i]];
+      pos := pos + 1
+    fi
+  od;
+  hlx
+end:
+
+HlxRegions := proc (s:string, eq:procedure)
+
+  description 'Breaks the the sequence s into regions.  The breaking
+  into regions is driven by the procedure eq given as an argument.
+  For example (x,y) -> if x = y then x else false fi would break
+  the sequence whenever two characters are different.';
+  
+  regions := [];
+  
+  n := length (s);
+  i := 1;
+  while i <= n 
+  do
+    curr := s[i];
+    for j from i+1 to n do
+      new := eq (curr, s[j]);
+      if new = false then break fi;
+      curr := new
+    od;
+        
+    regions := append (regions, [curr, j - i]);
+    i := j
+  od;
+  
+  m := length (regions);
+  if m > 1 and eq (regions [1,1], regions [m,1]) <> false then
+    regions[1,2] := regions[1,2] + regions[m,2];
+    regions := regions [1..-2]
+  fi;
+  
+  regions
+end:
+
+# To do:
+#
+# support for newline characters
+# different breaking points
+
+writeln := proc (s_in:string)
+
+  description 'Wraps and indents lines';
+  
+  indent := 0;
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Indent') <> -1 and 
+        type (op (2, args[i]), integer) then
+        indent := op (2, args[i])
+      elif printlevel > 1 then
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    elif printlevel > 1 then
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  prefix := CreateString (indent);
+  w := Set ('screenwidth'=80); Set ('screenwidth'=w);
+  len := w - indent;
+  s := s_in;
+  
+  while length (s) > len do
+
+    for i from len to 1 by -1 while SearchString (s[i], '\n\t ') = -1 do  od;
+    
+    if i > 1 then
+      printf ('%s\n', prefix . s[1..i-1]);
+      s := s[i+1..-1]
+    else
+      for i from len to length (s) while SearchString (s[i], '\n\t ') = -1 do  od;
+      printf ('%s\n', prefix . s[1..i-1]);
+      for j from i+1 to length (s) while SearchString (s[j], '\n\t ') <> -1 do od;
+      s := s[j..-1]
+    fi;
+      
+  od;
+  
+  if length (s) > 0 then
+    printf ('%s\n', prefix . s)
+  fi;
+  
+  NULL
+end:
+
+writeln_solution := proc (s:list(structure))
+
+  description 'Prints a solution so that it can be read back by
+  darwin. Option argument Var = string.';
+  
+  indent := 0;
+  n := length (s);
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Indent') <> -1 and 
+        type (op (2, args[i]), posint) then
+        indent := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- --
+  
+  prefix := CreateString (indent);
+  
+  printf (prefix.'[\n');
+  
+  for i to n do
+
+    printf (prefix.'  %s(%d, %d', op(0,s[i]), s[i,1], s[i,2]);
+
+    if length (s[i]) > 2 then
+      if type (s[i,3], string) then
+        printf (',''%s''',  s[i,3])
+      else
+        printf (',%a', s[i,3])
+      fi
+    fi;
+    printf (')');
+    
+    if i < n then
+      printf (',\n')
+    else
+      printf ('\n')
+    fi
+  od;
+  
+  printf (prefix.']\n');
+  NULL
+end:
+
+writeln_solutions := proc (s:list(list))
+
+  description 'Prints a solution so that it can be read back by
+  darwin. Option argument Var = string.';
+  
+  indent := 0;
+  n := length (s);
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Indent') <> -1 and 
+        type (op (2, args[i]), posint) then
+        indent := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- --
+  
+  prefix := CreateString (indent);
+  
+  printf (prefix.'[\n');
+  
+  for i to n do
+
+    out := sprintf ('[%.4f, [', s[i,1]);
+    
+    m := length (s[i,2]);
+    for j to m do
+      out := out.sprintf ('%s(%d, %d', op(0,s[i,2,j]), s[i,2,j,1], s[i,2,j,2]);
+      if length (s[i,2,j]) > 2 then
+        if type (s[i,2,j,3], string) then
+          out := out.sprintf (',''%s''',  s[i,2,j,3])
+        elif type (s[i,2,j,3], integer) then
+          out := out.sprintf (',%d', s[i,2,j,3])
+        fi
+      fi;
+      out := out.')';
+      if j < m then
+        out := out.','
+      fi
+    od;
+    out := out.']]';
+    if i < n then
+      out := out.','
+    fi;
+  
+    writeln (out, 'Indent'=indent+2)
+  od;
+  
+  printf (prefix.']\n');
+  NULL
+end:
+
+print_solution := proc (s:list(structure))
+
+  description 'Prints a solution so that it can be read back by
+  darwin. Option argument Var = string.';
+  
+  var_name := 'pred';
+  n := length (s);
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Var') <> -1 and 
+        type (op (2, args[i]), string) then
+        var_name := op (2, args[i])
+      else
+        print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc('.procname.') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- --
+  
+  printf ('%s :=\n[\n', var_name);
+  
+  for i to n do
+
+    printf ('  %s(%d, %d', op(0,s[i]), s[i,1], s[i,2]);
+
+    if length (s[i]) > 2 then
+      if type (s[i,3], string) then
+        printf (',''%s''',  s[i,3])
+      else
+        printf (',%a', s[i,3])
+      fi
+    fi;
+    printf (')');
+    
+    if i < n then
+      printf (',\n')
+    else
+      printf ('\n')
+    fi
+  od;
+  
+  printf (']:\n');
+  NULL
+end:
+
+#ignore on
+NULL:

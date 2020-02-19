@@ -1,0 +1,173 @@
+# Purpose: Predict gene structure(s) from a set of NucPepMatches
+# Author:  Lukas Knecht
+# Created: 22 Nov 1995
+#
+Region := proc()
+  description
+  'Structure to hold a gene region.
+- Selectors:
+  Nr: set, Start: posint, End: posint, StartFrame: posint, EndFrame: posint,
+  FloatStart: boolean, FloatEnd: boolean, Sim: numeric, BestNr: posint,
+  MinShifts: integer, MaxShifts: integer
+- Format:
+  Region(Nr,Start,End,StartFrame,EndFrame,FloatStart,FloatEnd,Sim,BestNr,
+	 MinShifts,MaxShifts).';
+  if type([args], [set, posint, posint, integer, integer, boolean, boolean,
+		   numeric, posint, integer, integer]) then
+    return(noeval(Region(args)))
+  fi;
+  error ('Invalid Region format')
+end:
+
+Region_select := proc (r, sel, val)
+  i := SearchArray(sel, ['Nr', 'Start', 'End', 'StartFrame', 'EndFrame', 
+			 'FloatStart', 'FloatEnd', 'Sim', 'BestNr', 
+			 'MinShifts', 'MaxShifts']);
+  if i = 0 then
+    error('Invalid selector', sel)
+  fi;
+  if nargs = 3 then r[i] := val else r[i] fi
+end:
+
+AddRegion := proc(regions: list, nr: integer, first: posint, last: posint,
+		  firstFrame: integer, lastFrame: integer,
+		  firstFloat: boolean, lastFloat: boolean,
+		  simil: numeric, shifts: integer)
+  for i to length(regions) do
+    r := regions[i];
+    if last >= r[Start] and first <= r[End] and
+      (firstFloat and first > r[Start] or
+       r[FloatStart] and first < r[Start] or
+       r[StartFrame] = firstFrame and first = r[Start]) and
+      (lastFloat and last < r[End] or
+       r[FloatEnd] and last > r[End] or
+       r[EndFrame] = lastFrame and last = r[End]) then
+      break
+    fi
+  od;
+  if i <= length(regions) then
+    r[Nr] := r[Nr] union {nr};
+    if first < r[Start] then r[Start] := first; r[StartFrame] := firstFrame fi;
+    if last > r[End] then r[End] := last; r[EndFrame] := lastFrame fi;
+    if not firstFloat then r[FloatStart] := false fi;
+    if not lastFloat then r[FloatEnd] := false fi;
+    if simil > r[Sim] then r[Sim] := simil; r[BestNr] := nr fi;
+    r[MinShifts] := min(r[MinShifts], shifts);
+    r[MaxShifts] := max(r[MaxShifts], shifts);
+    regions
+  else
+    append(regions, Region({nr}, first, last, firstFrame, lastFrame, 
+			   firstFloat, lastFloat, simil, nr, shifts, shifts))
+  fi
+end:
+
+PG_update := proc(dp: list, i: posint, j: posint, framei: posint,
+		  framej: posint, simil: numeric, k: posint, best)
+  s := simil; res := best;
+  if dp[i, framei] <> false then s := s + dp[i, framei, 2] fi;
+  if s > 0 then
+    if dp[j, framej] = false or s > dp[j, framej, 2] then
+      dp[j, framej] := [k, s, framej]
+    fi;
+    if best = false or s > best[2] then res := dp[j, framej] fi
+  fi;
+  res
+end:
+
+PredictGenes := proc(ms: list(NucPepMatch))
+  global exons, introns;
+  description
+  'Predict the best disjoint genes implied by ms. All matches in ms must
+  refer to the same nucleotide sequence. Returns
+  genes: list([cds: list(posint..posint), simil: numeric, nr: set]),
+  exons: list(Region),
+  introns: list(Region).';
+  exons := introns := [];
+  seq1 := GetPosition(NucDB, ms[1,NucOffset])[1];
+  len := 0;
+  ms2 := sort(ms, m->m[PamNumber]);
+  for i to length(ms2) do
+    start := pos := frame := endframe := ms2[i,NucOffset] - seq1;
+    firstexon := true; shifts := simil := 0;
+    for r in NucPepRegions(ms2[i]) do
+      if r[1] = INTRON then
+	exons := AddRegion(exons, i, start + 1, pos, mod(frame, 3) + 1, 
+			   mod(endframe, 3) + 1, firstexon, false, 
+			   simil, shifts);
+	shifts := simil := 0; firstexon := false;
+	introns := AddRegion(introns, i, pos + 1, pos + r[3], 0, 0,
+			     false, false, r[2], 0);
+	frame := endframe := endframe + r[3];
+	start := pos + r[3]
+      else
+	simil := simil + r[2];
+	if r[1] <> ALIGN then
+	  endframe := endframe + r[3];
+	  if mod(r[3], 3) <> 0 then shifts := shifts + 1 fi
+	fi
+      fi;
+      pos := pos + r[3]
+    od;
+    exons := AddRegion(exons, i, start + 1, pos, mod(frame, 3) + 1,
+		       mod(endframe, 3) + 1, firstexon, true, simil, shifts);
+    len := max(len, pos)
+  od;
+  pieces := sort([op(exons), op(introns)], p->p[End]);
+  res := [];
+  do
+    dp := CreateArray(1..len + 1, false);
+    best := false;
+    for k to length(pieces) do
+      p := pieces[k];
+      if p <> false then
+	i := p[Start]; if dp[i] = false then dp[i] := CreateArray(1..3, false) fi;
+	j := p[End] + 1; if dp[j] = false then dp[j] := CreateArray(1..3,false) fi;
+	if p[StartFrame] = 0 then
+	  # intron
+	  for f to 3 do
+	    best := PG_update(dp, i, j, f, mod(f + j - i - 1, 3) + 1,
+			      p[Sim], k, best)
+	  od
+	else
+	  # exon
+	  best := PG_update(dp, i, j, p[StartFrame], p[EndFrame],
+			    p[Sim], k, best)
+	fi
+      fi
+    od;
+    if best = false then break fi;
+    bestPieces := NULL;
+    bestSimil := best[2];
+    while best <> false do
+      p := pieces[best[1]];
+      if p[StartFrame] <> 0 then
+	bestPieces := p, bestPieces; pieces[best[1]] := false;
+	best := dp[p[Start], p[StartFrame]]
+      else
+	best := dp[p[Start], mod(best[3] - (p[End] - p[Start] + 1) - 1, 3) + 1]
+      fi
+    od;
+    cds := []; nr := {};
+    for p in [bestPieces] do
+      nr := nr union {p[BestNr]};
+      start := pos := ms2[p[BestNr],NucOffset] - seq1;
+      for r in NucPepRegions(ms2[p[BestNr]]) while pos <= p[End] do
+	if r[1] = INTRON or r[1] <> ALIGN and mod(r[3], 3) <> 0 then
+	  if start + 1 >= p[Start] and start < pos then
+	    cds := append(cds, start + 1 .. pos)
+	  fi;
+	  start := pos + r[3];
+	  if r[1] = PEPGAP then start := start - 3 fi
+	fi;
+	pos := pos + r[3]
+      od;
+      if start + 1 >= p[Start] and start < pos then
+	cds := append(cds, start + 1 .. pos)
+      fi
+    od;
+    res := append(res, [cds, bestSimil, nr])
+  od;
+  res,
+  sort(exons, x->10000*x[Start]+length(x[Nr])),
+  sort(introns, x->10000*x[Start]+length(x[Nr]))
+end:

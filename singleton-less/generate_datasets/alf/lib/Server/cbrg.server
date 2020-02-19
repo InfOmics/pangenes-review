@@ -1,0 +1,243 @@
+#Set(quiet):
+printlevel := 3:
+#
+# cbrg.server
+#
+# Darwin program which monitors, interprets, executes and replies
+# to e-mail requests
+#
+#					Gaston H. Gonnet (Oct 1992)
+#
+#################################################################
+#								#
+# File description/definition/location				#
+#								#
+#								#
+requests := '/usr/spool/mail/cbrg':				#
+#	The file 'requests' is normally the mailbox where the	#
+#	incoming requests are recieved.  In unix this is, in	#
+#	general, in /usr/spool/mail/<userid>			#
+#								#
+log := 'requests.log':						#
+#	A file to store all requests for future reference	#
+#								#
+#	Start server with the command				#
+#		darwin -q <cbrg.server &			#
+#								#
+#################################################################
+
+####################################
+# SendHelp(msg [,topic] ) function #
+####################################
+SendHelp := proc( msg:string, topic:string )
+description 'reply a mail message with the given help information';
+if nargs=1 then t := 'general'
+elif topic='All' or topic='all' then t := 'all'
+elif SearchString('general',topic) >= 0 then t := 'general'
+elif SearchString('news',topic) >= 0 then t := 'news'
+else t := CommandAlias(topic) fi;
+
+OpenWriting ( 'reply.Help' );
+printf('%s',msg);
+OpenAppending ( log );
+CallSystem( 'Mail -f reply.Help <' . t . '/help' );
+CallSystem( 'rm reply.Help' );
+NULL
+end:
+
+###########################
+# CommandAlias( command ) #
+###########################
+CommandAlias := proc( command:string )
+description 'return the command name from a potential alias';
+if   SearchString('MassDynSearch',command) >= 0    then 'MassDynSearch'
+elif SearchString('DNAMass',command) >= 0 then 'MassSearch'
+elif SearchString('NuclPep',command) >= 0 then 'NuclPepSearch'
+elif SearchString('NucPep',command) >= 0  then 'NuclPepSearch'
+elif SearchString('PepNuc',command) >= 0  then 'PepNuclSearch'
+elif SearchString('PepPep',command) >= 0  then 'PepPepSearch'
+elif SearchString('AllAllDB',command) >= 0  then 'AllAllDB'
+elif SearchString('AllAll',command) >= 0  then 'AllAll'
+elif SearchString('darwin',command) >= 0  then 'darwin'
+elif SearchString('TreeGen',command) >= 0  then 'TreeGen'
+elif SearchString('PredictGen',command) >= 0  then 'PredictGenes'
+elif SearchString('InternalNews',command) >= 0  then 'InternalNews'
+elif SearchString('Mass',command) >= 0  then 'MassSearch'
+elif SearchString('MultAlign',command) >= 0  then 'MultAlign'
+elif SearchString('Domains',command) >= 0  then 'Domains'
+elif SearchString('TestNewFunction1',command) >= 0  then 'TestNewFunction1'
+elif SearchString('TestNewFunction',command) >= 0  then 'TestNewFunction'
+else 'unrecognized' fi
+end:
+
+process_alive := proc (pid: string)
+  t := TimedCallSystem( 'ps -p' . pid . ' 2>/dev/null', 60 )[2];
+  p := CaseSearchString (pid, t);
+  evalb (p >= 0)
+end:
+
+write_string := proc (t: string)
+  for i to length (t) do
+    if t[i] = '\n' then printf ('\\n')
+    elif t[i] = '''' then printf ('''''')
+    elif t[i] = '\\' then printf ('\\\\')
+    else printf ('%c',t[i]) fi
+  od
+end:
+
+start_subserver := proc (fn: string)
+  for i to 3 do
+    sn := ReadRawFile (fn . '/' . fn . '.pid');
+    if length(sn) >= 1 and process_alive (sn) then break fi;
+    if i > 1 then sleep (80) fi;
+    lprint (fn, 'server is not alive, starting at', date ());
+    CallSystem ('(cd ' . fn . '; darwin -q <' . fn .  '.run >' .
+	    fn . '.out) &' );
+    sleep (5)
+  od;
+  if i < 4 then lprint (fn, 'server started successfully') fi
+end:
+
+www_request := proc (req: string)
+  p := CaseSearchString ('\n', req);
+  if p < 0 then
+    printf ('Invalid WWW request: %s\n', req)
+  else
+    addr := req[4..p];
+    body := req[p+2..-1];
+    cmd := sscanf (body[1..min(length(body),400)], '%s');
+    if length (cmd) = 1 then
+      cmd := CommandAlias (cmd[1])
+    else
+      cmd := 'unrecognized'
+    fi;
+    printf ('\nWWW %s request from %s %s\n%s\n\n', cmd, addr, date (), body);
+    if cmd <> 'unrecognized' then
+      OpenAppending (cmd . '/ParExecAction');
+      printf ('RunAlso WWW: msg:=''From %s\\n\\n', addr);
+      write_string (body);
+      printf('\\n\\n'':\n');
+      OpenAppending (log);
+      start_subserver (cmd)
+    fi
+  fi;
+  lprint ()
+end:
+
+OpenWriting('cbrg.server.pid');
+lprint(getpid());
+alive := true:
+OpenAppending(log);
+lprint ();
+lprint ('Server restarted at', date ());
+for step while alive do
+print('new loop');  
+  # every two minutes check the ServerAction file and the incoming mail
+  sleep (120);
+  
+  work := '/tmp/cbrg.server.' . step;
+  
+  # test whetder there is a server action file
+  t := ReadRawFile ('ServerAction');
+  if length (t) > 0 then
+    CallSystem ('mv ServerAction '.work);
+    # wait a prudent amount for any process still writing to the file
+    sleep(10);
+    t := ReadRawFile (work);
+    p := 0;
+    while p < length (t) do
+      e := CaseSearchString ('\n#END\n', p+t);
+      if e < 0 then e := length (t) - p fi;
+      body := t[p+1..p+e];
+      if length (body) >= 7 and body[1..7] = 'KillAll' then
+	lprint ('Server killed by KillAll command');
+	alive := false;
+	break
+      elif length (body) >= 3 and body[1..3] = 'WWW' then
+	www_request (body)
+      fi;
+      p := p + e + 6
+    od;
+    CallSystem ('rm '.work)
+  fi;
+
+  if not alive then break fi;
+  
+  if mod (step, 100) = 0 then lprint (step, 'iterations at', date()) fi;
+
+  # test whether there is a request file
+  t := ReadRawFile (requests);
+  if length(t) < 1 then next fi;
+
+  # copy the incoming file to a safe place
+  if CallSystem ('mv ' . requests . ' ' . work) <> 0 then
+    CallSystem ('rm '.work);
+    printf('step %d, requests file could not be moved\n', step);
+    next
+  fi;
+
+  # wait a prudent amount for any process still writing to the file
+  sleep(10);
+  t := ReadRawFile (work);
+  printf ('\n%s', t);
+  lprint ();  # forces flushing of internal buffers
+  if length(t) < 100 then
+    CallSystem ('rm '.work);
+    printf ('step %d, requests contains: %s, too short\n', step, t);
+    next
+  fi;
+  
+  # Process each of the mail messages in t
+  do
+    if length(t) < 100 then break fi;
+    it := CaseSearchString ('\n\nFrom ', t);
+    if it > 0 then this := t[1..it+2];  t := it+2+t
+    else this := t; t := '' fi;
+    
+    # identify header
+    # (the header is separated from the body by a blank like)
+    ib := CaseSearchString( '\n\n', this );
+    if ib < 0 then
+      printf ('Format error: missing blank line in e-mail\n');
+      next
+    fi;
+    
+    # beware of mail loops
+    if this[1..9] = 'From cbrg' or this[1..9] = 'From root' then next fi;
+    
+    body := ib+2+this;
+    command := sscanf(body,'%s');
+    if length(command) < 1 then SendHelp(this);  next fi;
+    command := command[1];
+    
+    if SearchString('info',command) >= 0 or
+      SearchString('help',command) >= 0 then
+      command := sscanf(body,'%s%s');
+      if length(command)=1 then SendHelp(this)
+      else SendHelp(this,command[2]) fi;
+      next
+    fi;
+    
+    fn := CommandAlias(command);
+    if fn='unrecognized' then 
+      if SearchString('postmaster', this[1..100]) < 0 and
+	SearchString('daemon', this[1..100]) < 0 then
+	SendHelp(this,'unrecognized') fi;
+      next
+    fi;
+    
+    # write in ParExecAction of the corresponding server
+    OpenAppending( fn . '/ParExecAction' );
+    printf('RunAlso msg:=''');
+    write_string (this);
+    printf(''':\n');
+    OpenAppending( log );
+    
+    # make sure that function server is alive, otherwise start one
+    start_subserver (fn)  
+  od;
+  
+  CallSystem( 'rm ' . work )
+  
+od:
+done

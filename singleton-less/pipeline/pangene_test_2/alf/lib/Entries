@@ -1,0 +1,407 @@
+#
+# Entry( ... ) return an entry
+#
+#		Gaston H. Gonnet (Mar 1991)
+#		redone OO GhG (Jan 1992)
+#		redone functional GhG (Nov 2001)
+#
+Entry := proc( a ) option polymorphic;
+
+if not type(DB,database) then error('DB must be assigned a database')
+
+elif nargs <> 1 then
+     res := [];
+     for z in args do res := append(res,Entry(z)) od;
+     return(op(res))
+
+elif type(a,integer) then
+     if a < 1 or a > DB[TotEntries] then
+	  error(a,'is an entry number out of range') fi;
+     z := DB[ string, DB['entry',a]+1 .. DB['entry',a+1] ];
+     while length(z) > 8 and z[-4..-1] <> '</E>' do z := z-1 od;
+     return( z )
+
+elif type(a,list) then return( Entry(op(a)) )
+
+elif type(a,string) then
+     if length(a)>10 and a[1..3]='<E>' and a[-4..-1]='</E>' then return(a) fi;
+     z := GetOffset(a);
+     if z>=0 and z<DB[TotChars] then
+	z := GetEntryNumber(z);
+	# GetEntryNumber returns 0 for a non-DB entry
+	if z=0 then return() else return( Entry(z) ) fi
+	fi;
+     z := SearchTag('E',a);
+     if z <> '' then return( -3+z+4 ) fi
+     fi;
+
+error(a,'is an incorrect argument for Entry')
+end:
+
+
+#
+# Entry_print - since an entry is a string, this has to be called
+#  specially from print.
+#
+# Print an entry in a nicer ascii format
+#
+Entry_print := proc( e:string ) option internal;
+if not type(e,Entry) then error(e,'is not a DB Entry') fi;
+for t in ['ID','AC','DE','OS','OC','KW','RES','SEQ'] do
+    et := SearchTag(t,e);
+    if et <> '' then printf( '%-4s %s\n', t, et ) fi od;
+end:
+Entry_type := proc( e ) option internal;
+    type(e,string) and length(e) > 7 and e[1..3] = '<E>' and
+    SearchString('</E>', e[-7..-1])>-1
+end:
+
+#
+# PatEntry( ... ) Place holder for entries to the Pat index
+#			of the DB database
+#
+#		Gaston H. Gonnet (Mar 1991)
+#
+PatEntry := proc( a ) option polymorphic;
+
+if not type(DB,database) then error('DB must be assigned a database') fi;
+if nargs <> 1 then
+    res := copy([args]);
+    for i to nargs do res[i] := op(PatEntry(res[i])) od;
+
+    # attempt to compact PatEntry
+    res := eval(res);
+    if length(res) <= 1 then return( noeval(PatEntry(op(res))) ) fi;
+    res := sort( res, x -> If(type(x,range),x[1],x) );
+    j := 1;
+    for i from 2 to length(res) do
+	aa := res[j];  bb := res[i];
+	if type(aa,integer) then
+	    if type(bb,integer) then
+		 # both entries are single entries
+		 if aa+1 = bb then res[j] := aa..bb
+		 elif bb > aa then j := j+1;  res[j] := bb fi
+	    else
+		 # integer followed by range
+		 if aa+1 >= bb[1] then res[j] := aa..bb[2]
+		 else j := j+1;  res[j] := bb fi
+		 fi
+	else if type(bb,integer) then
+		 # range followed by integer
+		 if aa[2] >= bb-1 then res[j] := aa[1] .. max(aa[2],bb)
+		 else j := j+1;  res[j] := bb fi
+	    else
+		 # range followed by range
+		 if aa[2]+1 >= bb[1] then res[j] := aa[1] .. max(aa[2],bb[2])
+		 else j := j+1;  res[j] := bb fi
+		 fi
+	    fi
+	od;
+    res := res[1..j];
+    return( noeval(PatEntry(op(res))) )
+    fi;
+
+if type(a,posint) then
+    if a > DB[TotAA] then error('entry out of range') fi;
+    return( noeval(PatEntry(a)) )
+
+elif type(a,posint..integer) then
+    if a[1] <> a[2]+1 then
+	 if a[1] > a[2] or a[2] > DB[TotAA] then
+		error('range entry out of bouds') fi;
+	 return( noeval(PatEntry(a)) )
+    else return( noeval(PatEntry()) )
+	 fi
+
+elif type(a,string) then return( SearchSeqDb(a) )
+
+elif type(a,list) then return( PatEntry(op(a)) )
+
+else error(a,'is an incorrect argument') fi
+end:
+
+PatEntry_Entry := proc(e) option internal;
+    res := [];
+    for m in e do
+	if type(m,posint) then res := append(res,GetEntryNumber(DB[Pat,m]))
+	elif type(m,posint..posint) then
+	     for j from m[1] to m[2] do
+		res := append(res,GetEntryNumber(DB[Pat,j])) od
+	else error(e,m,'invalid PatEntry entry') fi
+       od;
+Entry(op(res))
+end:
+
+PatEntry_print := proc() option internal;
+    for z in [PatEntry_Sequence(args)] do lprint(z) od end:
+PatEntry_Sequence := proc(e) option internal;
+    res := [];
+    for m in e do
+	if type(m,posint) then res := append(res,DB[Pat,m]+DB[string])
+	elif type(m,posint..posint) then
+	     for j from m[1] to m[2] do
+		res := append(res,DB[Pat,j]+DB[string]) od
+	else error(e,m,'invalid PatEntry entry')
+             fi
+       od;
+    for i to length(res) do
+	z := SearchString('<',res[i]);
+	if z <= 0 then res[i] := Sequence(res[i])
+	else res[i] := res[i,1..z] fi
+	od;
+op(res)
+end:
+PatEntry_string := op(PatEntry_Sequence):
+PatEntry_Match := proc() option internal;
+    s := [PatEntry_Sequence(args)];
+    if length(s)<>2 then error('two offsets/entries are needed for a Match') fi;
+    Match(s[1],s[2])
+end:
+PatEntry_type := structure({posint,posint..posint},noeval(PatEntry)):
+
+
+
+
+#################################################
+#						#
+# string( r )					#
+#						#
+#   Convert its argument(s) to a single string	#
+#						#
+#################################################
+string := proc( a ) option polymorphic;
+  description 'Converts argument to a string.  Multiple arguments are concatenated';
+
+if nargs=0 then ''
+elif nargs > 1 then
+     r := '';
+     for i to nargs do r := r . (string(args[i])) od;
+     r
+elif type(a,integer) then sprintf( '%.0f', a )
+elif type(a,numeric) then
+     if assigned(NumberFormat) and type(NumberFormat,string) then
+	  sprintf( NumberFormat, a )
+     else sprintf( '%.8g', a ) fi
+elif type(a,string) then a
+else sprintf( '%a', a ) fi
+end:
+string_Sequence := proc(z) option internal;
+if length(z) > 10 and z[1] = '<' then
+     t := SearchTag('SEQ',z);
+     if t='' then error(z,'cannot locate a <SEQ>..</SEQ> field') fi;
+     return(t)
+
+     # Allow 'X' as a valid AA, DNA or RNA
+else for i to length(z) do if AToInt(z[i]) < 1 then break fi od;
+     if i > length(z) then return(z)
+     elif length(z)-i >= 5 and z[i..i+5]='</SEQ>' then return(z[1..i-1]) fi;
+
+     # purely RNA (if it is DNA, it comes out above)
+     for i to length(z) do
+	 if not member(z[i],{'A','C','G','U','X'}) then break fi od;
+     if i > length(z) then return(z)
+     elif length(z)-i >= 5 and z[i..i+5]='</SEQ>' then return(z[1..i-1]) fi;
+     error(z,'is not a valid sequence (neither AA nor RNA)')
+     fi
+end:
+
+
+#################################################################
+# Sequence: peptide or nucleotide sequences			#
+#     (just the amino acids or the bases, excluding the rest)	#
+#								#
+#				Gaston H. Gonnet (Dec 1991)	#
+#			redone  Gaston H. Gonnet (Nov 2001)	#
+#			redone  Gaston H. Gonnet (Jan 2003)	#
+#
+#     fixed so that it doesn't break on the base U or unknown base X
+#     Markus Friberg (May 2003)
+#								#
+#################################################################
+Sequence := proc( a ) option polymorphic;
+
+if nargs <> 1 then seq( procname(args[i]), i=1..nargs )
+elif type(a,list) then seq( procname(a[i]), i=1..length(a) )
+elif type(a,string) then
+     if length(a) > 10 and a[1] = '<' then SearchTag('SEQ',a)
+     else for i to length(a) do
+              if (AToInt(a[i]) < 1 or AToInt(a[i]) > 20) and
+		 not member(t[i], ['U', 'X']) then
+                   error(a,a[i],'is not a valid sequence') fi od;
+          a
+          fi
+elif type(a,posint) then # assume it is an offset
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     t := a+DB[string];
+     for i while (AToInt(t[i]) >= 1 and AToInt(t[i]) <= 20) or
+	 member(t[i], ['U', 'X']) do od;
+     t[1..i-1]
+else Sequence(Entry(a))
+     fi
+end:
+
+
+
+
+
+
+
+
+Match_Entry := proc( m ) option internal;
+  [Entry( GetEntryNumber(m[Offset1]), GetEntryNumber(m[Offset2]) )] end:
+Match_Sequence := proc( m ) option internal;
+if m[Length1]=0 and m[Length2]=0 then
+     s1 := m[Offset1]+DB[string];
+     for i1 to length(s1) do
+	  t := AToInt(s1[i1]);
+	  if t<1 or t>20 then break fi od;
+     s2 := m[Offset2]+DB[string];
+     for i2 to length(s2) do
+	  t := AToInt(s2[i2]);
+	  if t<1 or t>20 then break fi od;
+     s1[1..i1-1], s2[1..i2-1]
+else s1 := m[Offset1]+DB[string];
+     s2 := m[Offset2]+DB[string];
+     s1[1..m[Length1]], s2[1..m[Length2]]
+     fi
+end:
+
+
+# Purpose: ID: data structure for database ID
+# Author:  Lukas Knecht -- new version GhG
+# Created:  8 Mar 1995  -- 24 Nov 2001
+#
+ID := proc(id:{string,list}) option polymorphic;
+  if not type(DB,database) then error('DB must be assigned a database')
+  elif nargs <> 1 then
+	r := [];
+	for z in {args} do r := append(r,op(ID(z))) od;
+	return( noeval(ID(op(r))) )
+
+  elif type(id,list) then return( ID(op(id)) )
+
+  elif length(id) > 42 then #id longer than 42 is assumed to be a sequence
+	if id[1]='<' then
+	     z := SearchTag('ID',id);
+	     if z <> '' then return( noeval(ID(z)) ) fi
+	     fi;
+	z := GetOffset(id);
+	if z >= 0 and z < DB[TotChars] then
+	    return( noeval( ID( SearchTag('ID',Entry(GetEntryNumber(z))))) ) fi;
+	error(id,'is not a valid ID')
+	
+  else noeval(ID(id)) fi
+end:
+
+Match_ID := proc(m) option internal; ID(Match_Entry(m)) end:
+PatEntry_ID := proc() option internal; ID(PatEntry_Entry(args)) end:
+
+ID_Entry := proc(id) option internal;
+     res := [];
+     for z in id do res := append(res,SearchID(z)) od;
+     op(res)
+end:
+ID_Sequence := proc() option internal; Sequence(ID_Entry(args)) end:
+
+
+
+# Purpose: AC: data structure for database AC Accession number
+# Author:  Lukas Knecht -- new version GhG
+# Created:  8 Mar 1995  -- 24 Nov 2001
+#
+AC := proc(ac:{string,list}) option polymorphic;
+  if not type(DB,database) then error('DB must be assigned a database')
+  elif nargs <> 1 then
+	r := [];
+	for z in {args} do r := append(r,op(AC(z))) od;
+	return( noeval(AC(op(r))) )
+
+  elif type(ac,list) then return( AC(op(ac)) )
+
+  elif length(ac) > 15 then
+	# check for an entire entry
+	if ac[1..3]='<E>' and ac[-4..-1]='</E>' then
+	     z := SearchTag('AC',ac);
+	     if z <> '' then return( noeval(AC(z)) ) fi
+	     fi;
+	# longer than 15, if all valid aa's it is assumed to be a sequence
+	for i to length(ac) while AToInt(ac[i]) > 0 do od;
+	if i <= length(ac) then return( noeval(AC(ac)) ) fi;
+	z := GetOffset(ac);
+	if z >= 0 and z < DB[TotChars] then
+	    return( noeval( AC( SearchTag('AC',Entry(GetEntryNumber(z))))) ) fi;
+	error(ac,'is not a valid AC')
+	
+  else noeval(AC(ac)) fi
+end:
+
+Match_AC := proc(m) option internal; AC(Match_Entry(m)) end:
+PatEntry_AC := proc() option internal; AC(PatEntry_Entry(args)) end:
+
+AC_Entry := proc(ac) option internal;
+     res := [];
+     for z in ac do res := append(res,SearchAC(z)) od;
+     op(res)
+end:
+AC_Sequence := proc() option internal; Sequence(AC_Entry(args)) end:
+
+
+
+#############
+# Iterators #
+#############
+
+Entries := noeval(Entries):
+Entries_iterator := proc( a0 )
+global DB;
+option internal;
+a := op(args[1]);
+if length(a0)=0 then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     Entries_iterator( Entries(DB) )
+elif length(a0) > 1 then Entries_iterator( Entries([args]) )
+elif type(a,database) then
+     oldDB := DB;  DB := a;
+     for i to a[TotEntries] do
+	 DB := a;  t := Entry(i);  DB := oldDB;
+	 iterate(t)
+	 od
+elif type(a,list(integer)) then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     for i in z do
+	 if i < 1 or i > DB[TotEntries] then
+	      error(i,'is an invalid range for an entry in',DB ) fi;
+	 iterate(Entry(i))
+	 od
+elif type(a,list) then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     for z in a do iterate(Entry(z)) od
+else error(a,'is an invalid argument to iterate on Entries') fi;
+end:
+
+Sequences := noeval(Sequences):
+Sequences_iterator := proc( a0 )
+global DB; option internal;
+a := op(args[1]);
+if length(a0)=0 then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     Sequences_iterator( Sequences(DB) )
+elif length(a0) > 1 then Sequences_iterator( Sequences([args]) )
+elif type(a,database) then
+     oldDB := DB;  DB := a;
+     for i to a[TotEntries] do
+	 DB := a;  t := Sequence(Entry(i));  DB := oldDB;
+	 iterate(t)
+	 od
+elif type(a,list(integer)) then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     for i in z do
+	 if i < 1 or i > DB[TotEntries] then
+	      error(i,'is an invalid range for an entry in',DB ) fi;
+	 iterate(Sequence(Entry(i)))
+	 od
+elif type(a,list) then
+     if not type(DB,database) then error('DB must be assigned a database') fi;
+     for z in a do iterate(Sequence(z)) od
+else error(a,'is an invalid argument to iterate on Sequences') fi;
+end:

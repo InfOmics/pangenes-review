@@ -1,0 +1,167 @@
+GetAllDistMatrix := proc(; (t=BestDimlessTree):Tree)
+    global BestDimlessTree;
+    if t = BestDimlessTree and not assigned(BestDimlessTree) then
+        error('Default tree of life not assigned!')
+    fi;
+    
+    return(Tree_matrix(t));
+end:
+
+GenRandomTree := proc(D_all, nSpecies;(minDist=5):nonnegative, 
+                      (maxDist=300):nonnegative)
+    n := length(D_all);
+    do
+        iL := {};
+        while length(iL) <> nSpecies do iL := iL union {Rand(1..n)} od;
+    
+        D := CreateArray(1..nSpecies, 1..nSpecies, 0);
+        for i to nSpecies do for j from i+1 to nSpecies do
+            D[i,j] := D[j,i] := D_all[iL[i],iL[j]]
+        od od;
+        alpha := Rand(0.5..2.0);
+        D := alpha*D;
+    
+        LenOk := true;
+        for i to nSpecies do for j from i+1 to nSpecies do
+            if D[i,j] > maxDist or D[i,j] < minDist then 
+                LenOk := false; break
+            fi;
+        od od;
+    
+        if LenOk then break fi:
+    od:
+    V := CreateArray(1..nSpecies, 1..nSpecies, 1); 
+    for i to nSpecies do V[i,i] := 0 od;
+    T := LeastSquaresTree(D, V, [seq('S'.i, i=1..nSpecies)]);
+    T := RemoveXtra(T):
+end:
+
+RemoveXtra := proc(tree:Tree)
+    if type(tree,Leaf) then
+        return(Leaf(tree[Label], abs(tree[Height]))):
+    else
+        lt := RemoveXtra(tree[Left]):
+        rt := RemoveXtra(tree[Right]):
+        return(Tree(lt, abs(tree[Height]), rt)):
+    fi:
+end:
+
+module external GetUltrametricTree, AddHeterogeniousRates, GetRates;
+
+GetUltrametricTree := proc(tree:Tree)
+    t := copy(tree):
+    r := table():
+    r[[]] := 1:
+
+    dl := FindDeepestLeaf(t):
+    for l in Leaves(t) do l['Height'] := dl od:
+
+    #print(t):
+
+    GetUltrametricTree_R(t):
+    #print(t):
+    ExtractRates(tree, t, r, []):
+    [t, r]
+end:
+
+GetUltrametricTree_R := proc(tree:Tree) option internal:
+    leftb := tree['Left', 'Height'] - tree['Height']:
+    rightb := tree['Right', 'Height'] - tree['Height']:
+    if type(tree['Left'], Leaf) then
+        lheight := leftb:
+    else
+        lheight := GetUltrametricTree_R(tree['Left']) + leftb:
+    fi:
+    if type(tree['Right'], Leaf) then
+        rheight := rightb:
+    else
+        rheight := GetUltrametricTree_R(tree['Right']) + rightb:
+    fi:
+    
+    mheight := (lheight + rheight) / 2:
+    
+#    lfac := (tree['Height'] + mheight) / (tree['Height'] + lheight):
+#    rfac := (tree['Height'] + mheight) / (tree['Height'] + rheight):
+    lfac := mheight / lheight:
+    rfac := mheight / rheight:
+    #printf('lfac: %g, rfac: %g\n', lfac, rfac):
+    ScaleTreeHeight_(tree['Left'], lfac, tree['Height']):
+    ScaleTreeHeight_(tree['Right'], rfac, tree['Height']):
+
+    mheight
+end:
+
+foo := proc(t)
+    if type(t, Leaf) then
+        printf('L %2.20f\n', t['Height']):
+    else
+        printf('%2.20f\n', t['Height']):
+        foo(t['Left']): foo(t['Right']):
+    fi:
+end:
+
+RebalanceTree := proc(t:Tree) option internal:
+    lh := FindDeepestLeaf(t['Left']) - t['Height']:
+    rh := FindDeepestLeaf(t['Right']) - t['Height']:
+
+    mh := (lh + rh) / 2:
+
+    lfac := mh / lh:
+    rfac := mh / rh:
+    ScaleTreeHeight_(t['Left'], lfac, t['Height']):
+    ScaleTreeHeight_(t['Right'], rfac, t['Height']):
+end:
+
+FindDeepestLeaf := proc(t:Tree) option internal:
+    if type(t, Leaf) then return(t[Height]): fi:
+
+    lh := FindDeepestLeaf(t['Left']):
+    rh := FindDeepestLeaf(t['Right']):
+    return(max(lh, rh)):
+end:
+
+ScaleTreeHeight_ := proc(tree:Tree, factor:float, offset:nonnegative) option internal;
+    tree[Height] := (tree[Height] - offset) * factor + offset:
+    if not type(tree, Leaf) then
+        ScaleTreeHeight_(tree[Left], factor, offset):
+        ScaleTreeHeight_(tree[Right], factor, offset):
+    fi:
+end:
+
+AddHeterogeniousRates := proc(t:Tree; (remTrunk=true):boolean)
+    newTree := AddDeviation(t, remTrunk):
+    r := table():
+    
+    ExtractRates(t, newTree, r, []):
+    
+    [newTree, r]
+end:
+
+GetRates := proc(t:Tree, rT:Tree)
+    r := table():
+    ExtractRates(t, rT, r, []):
+    r
+end:
+
+ExtractRates := proc(t:Tree, newTree:Tree, rates:table, key:list) option internal:
+    oldlh := t['Left', 'Height'] - t['Height']:
+    #printf('t[left]: %g, t: %g\n', t['Left', 'Height'], t['Height']):
+    newlh := newTree['Left', 'Height'] - newTree['Height']:
+    newlk := append(copy(key), 'Left'):
+    #printf('newlk: %a, oldlh: %g, newlh: %g\n', newlk, oldlh, newlh):
+    rates[newlk] := oldlh / newlh:
+    if not type(t['Left'], Leaf) then
+        ExtractRates(t['Left'], newTree['Left'], rates, newlk):
+    fi:
+
+    oldrh := t['Right', 'Height'] - t['Height']:
+    newrh := newTree['Right', 'Height'] - newTree['Height']:
+    newrk := append(copy(key), 'Right'):
+    #printf('newrk: %a, oldrh: %g, newrh: %g\n', newrk, oldrh, newrh):
+    rates[newrk] := oldrh / newrh:
+    if not type(t['Right'], Leaf) then
+        ExtractRates(t['Right'], newTree['Right'], rates, newrk):
+    fi:
+end:
+
+end: #module

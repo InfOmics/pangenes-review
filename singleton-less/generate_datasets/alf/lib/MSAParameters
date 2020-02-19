@@ -1,0 +1,534 @@
+
+
+DataMatrix := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a datastructure to keep a DataMatrix.
+
+A datamatrix can be:
+   - an AllAll (array of matches)
+   - a matrix of PAM distances or other metrics
+   - a matrix of Scores
+
+The data structure keeps all three kinds of data types. 
+If any of them is not specified, then the field is 0.
+
+If an AllAll is given, then both score and pam matrices are extracted automatically.
+If only scores are given or PAM distances, the other two fields are 0.
+
+Selectors:
+     TYPE:    string, describes the type of data used
+	      DISTANCE:  array of (PAM or other positive) distances
+	      SCORE:     array of scores (or other similar measures)
+	    
+	      The type is used for example for the calculation of TSP. If the
+	      data has a distance flavor, then shorter distances are better.
+	      But if the data is a score, then a higher score is better.
+
+	      If no type is specified, then PAM is assumed (a distance measure)
+	      
+     TSP:     returns optimal path in the form
+              [a, b, c, .. , a] (the last element is repeated)
+	      
+	      if possible (i.e. if pam data is available) use this to calculate the TSP order 
+	 
+	      The result is saved in the data structure. So it will only compute the
+	      best order if the field is 0, otherwise the last result is returned.
+     
+     RAW:     matrix
+              returns the original data, i.e an AllALl matrix
+    
+     DATA:    matrix
+              returns the distance or score matrix or 0 if none is there
+
+     VAR:     calculates variances of PAM distances of AllAll
+              if no AllALl is given, it returns the data matrix
+		
+     SEQ:     associated sequences (optional)
+
+Constructors:
+   
+     d := DataMatrix();
+     d := DataMatrix("SCORE", AllAll);
+     d := DataMatrix("PAM", some_distance_matrix);
+		';  
+
+  if nargs = 0 then 
+    return (copy(noeval(DataMatrix(0, 0, 0, 0, 0, 0)))); 
+  elif nargs = 1  then
+    dam := copy(noeval(DataMatrix('PAM', args, 0, 0,0, 0)));
+    dam := CheckData(dam);
+    return (dam); 
+  elif nargs = 2 and type ([args], [string, array]) then
+    # the first one should specify the type, the second one is the data
+    dam := DataMatrix(); 
+    dam['type'] := args[1]; 
+    dam['raw'] := args[2];
+    dam := CheckData(dam);
+    return(dam); 
+  elif nargs = 6  then
+    return(copy(noeval(DataMatrix(args))));
+  else
+    print(DataMatrix);
+    error ('Invalid DataMatrix format');
+  fi:
+end:
+
+CheckData := proc() option polymorphic; end:
+
+IsAllAll := proc(Data: array);
+   if type(Data, array(array)) = true and length(Data[1]) > 1 and type(Data[1,2], Match) = true then
+     return(true);
+   else
+     return(false);
+   fi;
+end:
+ 
+	  
+DataMatrix_CheckData := proc();
+  dam := noeval(DataMatrix(args));
+  Raw := dam['raw'];
+  dam['tsp'] := 0:
+ 
+  n := length(Raw);
+  if IsAllAll(Raw) then # it is an allall type  
+    Data := CreateArray(1..n, 1..n);
+    if dam['type'] = 'SCORE' then # it is score data
+      for i to n-1 do
+	for j from i+1 to n do
+	  Data[i, j] := Raw[i, j, Sim];
+	  Data[j, i] := Data[i, j];
+	od:
+      od:
+      dam['var'] := copy(Data):
+    else
+      Var := CreateArray(1..n, 1..n);
+      for i to n-1 do
+	for j from i+1 to n do
+	  Data[i, j] := Raw[i, j, PamNumber];
+	  Data[j, i] := Data[i, j];  
+	  Var[i,j] := Var[j,i] := Raw[i, j, PamVariance]; 
+	od:
+      od:
+      dam['var'] := Var;
+    fi;
+   dam['data'] := Data:
+ else  # it is not an allall
+   dam['data'] := Raw;
+   dam['var']:= copy(Raw);
+ fi;
+ return(dam);
+end:
+
+DataMatrix_type := noeval(structure(anything, DataMatrix)):
+
+
+DataMatrix_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('TYPE', sel) > -1 or sel = 'T' then 
+    types := ['PAM', 'SCORE', 'ALLALL']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid DataMatrix type ',v,'. Legal types are ',types);
+        lprint('The type is now set to PAM');
+        i :=2;
+      fi;
+      old := u[1]; 
+      u[1] := i;
+      if i <> old and  u['raw'] <> 0 and IsAllAll(u['raw']) then # type has changed
+        dam := CheckData(u);
+        for i to length(u) do u[i] := dam[i]: od: 
+      fi;
+    else 
+      if u[1] <= 0 then u[1] := 1; fi;
+      types[u[1]]; 
+    fi; 
+
+  elif SearchString('RAW', sel)  > -1 or sel = 'R' then 
+    if nargs=3 then 
+      if type(val, array(array(numeric))) = true or IsAllAll(val) or val = 0 then
+	u[2] := val;
+        dam := CheckData(u);
+        for i to length(u) do u[i] := dam[i]: od:
+      else
+        error('Illegal DataMatrix. It should be a matrix of numbers or Matches');
+      fi;
+    else u[2] fi; 
+  
+   elif SearchString('DATA', sel)  > -1 or sel = 'D' then
+     if nargs=3 then 
+      if type(val, array(array(numeric))) = true or val = 0 then
+	u[3] := val; 
+      else
+        error('Illegal data matrix. It should be a matrix of numbers');
+      fi;
+    else u[3] fi; 
+    
+  elif SearchString('VAR', sel) > -1 or sel = 'V' then 
+    if nargs=3 then 
+      if type(val, array(array(numeric))) = true or val = 0 then
+	u[4] := val; 
+      else
+        error('Illegal variance matrix. It should be a matrix of numbers');
+      fi;
+    else 
+      if u[4] = 0 then
+	Dist := u['raw'];
+	if IsAllAll(Dist) = true then
+	  n := length(Dist);
+	  Var := CreateArray(1..n,1..n,0);
+	  for i to n-1 do for j from i+1 to n do
+	      Var[i,j] := Var[j,i] := Dist[i, j, PamVariance]; 
+	  od; od; 
+	else
+	  Var := copy(Dist);
+	fi;
+	u[4] := Var;
+      fi; 
+      return(u[4]);
+    fi;
+  
+  elif SearchString('TSP', sel) > -1 or sel = 'T' then 
+    if nargs=3 then  
+      if type(val, array(integer)) = true or val = 0 then
+	u[5] := val;
+      else
+	error('Illegal TSP order. It should be a list of integers');
+      fi;
+    else 
+      if type(u[5], list) = true then return(u[5]); fi;
+      if u['type'] = 'PAM' then
+	Bestorder := ComputeCubicTSP(u['Data']);
+	Bestorder := append(Bestorder, Bestorder[1]);
+	u[5] := Bestorder;
+      else
+	Data := u['data'];
+	n := length(Data);
+	Data1 := CreateArray(1..n,1..n,0);
+	for i to n-1 do for j from i+1 to n do
+	  Data1[i,j] := Data1[j,i] := 100000 - Data[i, j]; 
+	od; od; 
+	Bestorder := ComputeCubicTSP(Data1);
+	Bestorder := append(Bestorder, Bestorder[1]);
+	u[5] := Bestorder;
+      fi;
+      return(u[5]);
+    fi;   
+  elif SearchString('SEQ', sel) > -1 or sel = 'S' then 
+    if nargs=3 then 
+      if type(val, array(string)) = true or val = 0 then
+	u[6] := val; 
+      else
+        error('Illegal sequence array.  It should be a list of strings');
+      fi;
+    else 
+      return(u[6]);
+    fi;
+  else 
+    lprint('Invalid DataMatrix selector ',sel);
+    print(DataMatrix);
+  fi;
+end:
+  
+DataMatrix_print := proc();
+  dam :=  noeval(DataMatrix(args));
+  lprint('DataMatrix:');
+  lprint(); 
+  printf('Type of raw data: ');
+  if IsAllAll(dam['raw']) = true then lprint('ALLALL') else lprint('NUMERIC MATRIX'); fi;
+  lprint();
+  lprint('Type of data:     ', dam['type']);lprint();
+  lprint('Data:'); print(dam['data']);lprint();
+  lprint('Variance:'); print(dam[4]);lprint();
+  lprint('TSP:'); print(dam[5]);
+end:
+
+
+# -------------------
+
+History := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a datastructure to keep a history of what happened
+
+Selectors:
+        Show:   Prints the whole history
+ 
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(History(copy([]))))); 
+  elif nargs = 1  then
+    return (copy(noeval(History(args))));
+  else
+    print(History);
+    error ('Invalid History format');
+  fi:
+end:
+
+History_type := noeval(structure(anything, History)):
+
+
+History_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('SHOW', sel) > -1 or sel = 'S' then 
+    print(u);
+    
+  else 
+    lprint('Invalid History selector ',sel);
+    print(History);
+  fi;
+end:
+  
+History_print := proc();
+  hist :=  noeval(args);
+  lprint('History:');
+  for i to length(hist) do
+    print(hist[i]);
+  od;   
+end:
+
+History_plus := proc(a, b)
+option internal;
+  if type(a, History) then
+    c := a[1];
+    if type(b, History) then
+      c := append(c, b[1]);
+    elif type(b, list(list)) then
+      c := append(c, op(b));
+    else
+     c := append(c, b);
+    fi;
+    return(History(c));
+  else
+    error('First argument must be a History data structure');
+  fi;
+end:
+
+
+
+
+
+
+# ******************** MSA METHODS DATA STRUCTURE ***************
+  
+MSAMethod := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a datastructure for MSA construction
+
+Selectors:
+  	Method: String
+	        "PROB", "CLUSTAL", "MSA", "REPEATED" or any combination with
+		"GAP", e.g. "PROB GAP"
+		Default: "PROB GAP"
+        Gap:    GapHeuristics()
+	        If GAP is used in Method, the GapHeuristics data structure is used
+
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(MSAMethod('PROB GAP', GapHeuristic())))); 
+  elif nargs = 1 and type(args[1], string) = true then
+    sel := uppercase(args[1]);
+    gh := GapHeuristic(sel):
+     return (copy(noeval(MSAMethod('PROB GAP', gh))));  
+  elif nargs = 2  then
+    return (copy(noeval(MSAMethod(args))));
+  else
+    print(MSAMethod);
+    error ('Invalid MSAMethod format');
+  fi:
+end:
+
+CreateMSAMethods := proc()
+  description 'Creates a list of several default MSA methods';
+  MM := copy([MSAMethod(), MSAMethod('LARGE')]);
+  return(MM);
+end:
+
+
+  
+MSAMethod_type := noeval(structure(anything, MSAMethod)):
+
+
+MSAMethod_rawprint := proc();  
+  tt :=  noeval(MSAMethod(args));
+  printf('MSAMethod(''%s'', ',tt[1]);
+  printf('%a)', tt[2]);
+ 
+end:
+
+MSAMethod_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('METHOD', sel) > -1 or sel = 'M' then 
+    if nargs=3 then u[1] := val;
+    else u[1]; fi; 
+  elif SearchString('GAP', sel) > -1 or sel = 'GH' then
+    if nargs=3 then 
+      u[2] := val; 
+    else u[2] fi; 
+  else 
+    lprint('Invalid MSAMethod selector ',sel);
+    print(MSAMethod);
+  fi;
+end:
+  
+MSAMethod_print := proc();
+  tt :=  noeval(MSAMethod(args));   
+  lprint('Parameters for MSA Method:');
+  lprint('--------------------------');
+  lprint('Method            ',tt['method']);
+  lprint('GapHeuristic:     ');print(tt['gh']);
+  lprint();
+end:
+
+
+# **************************** MSA STATISTICS DATA STRUCTURE *********************
+# Adrian changed 'TreeType' to 'Tree' without knowing if this has consequences.
+# To defend myself, a 'grep' in the lib directory showd that MSAStatistics is
+# never used anywhere.  May 31, 2005
+
+MSAStatistics := proc()
+ option polymorphic;
+  description
+  'Data structure that keeps statistical data about MSA constructions and methods
+ 
+Selectors:
+        Type:         Tree
+	              Information on the Tree that was used
+        Construction: TreeConstruction
+	              Information about the TreeConstruction type that was used	 
+	Method:	      MSAMethod
+		      Type of MSA Method that was used
+	Real:         Integer
+                      Number of best msa constructions
+	Total:        Integer
+	              Total number of msas construced     
+        Score:        Stat()
+	              Average Score of msa
+        Deltascore:   Stat()
+	              Difference of real score minus calculated score
+	Name:         string
+	              Name/Title of these statistics
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(MSAStatistics(Tree, TreeConstruction(), MSAMethod(), 0, 0, Stat(),Stat(), 0)))); 
+  elif nargs = 8  then
+    return (copy(noeval(MSAStatistics(args))));
+  else
+    print(TreeStatistics);
+    error ('Invalid MSAStatistics format');
+  fi:
+end:
+
+MSAStatistics_type := noeval(structure(anything, MSAStatistics)):
+
+Stat_rawprint := proc();
+  s :=  noeval(Stat(args));
+  printf('Stat(');
+  if s[2] > 1e+300 then s[2] := 1e+100; fi;
+  if s[length(s)] = '' then s[length(s)] := 0; fi;
+  for i to length(s)-1 do  
+    printf('%a,',s[i]);
+  od;
+  lprint(s[length(s)],')');
+end:
+
+MSAStatistics_rawprint := proc();  
+  ts :=  noeval(MSAStatistics(args));   
+  lprint('MSAStatistics(');
+  for i to 3 do  
+    rawprint(ts[i]);lprint(',');
+  od;
+  for i from 4 to 5 do  
+    lprint(ts[i]);lprint(',');
+  od;
+  for i from 6 to length(ts)-1 do  
+     rawprint(ts[i]);lprint(',');
+  od;
+  lprint(''''.ts[length(ts)].''')');
+end:
+
+
+MSAStatistics_select := proc( u, select, val );
+  sel := uppercase(select); 
+  print(sel);
+ if SearchString(sel, 'TREETYPE') > -1 then
+    if nargs=3 then 
+      u[1] := val; 
+    else u[1] fi; 
+  elif SearchString(sel, 'TREECONSTRUCTION') > -1 or sel = 'C' then
+    if nargs=3 then
+      u[2] := val;
+    else u[2] fi;  
+  elif SearchString(sel, 'MSAMETHOD') > -1 or sel = 'M' then
+    if nargs=3 then
+      u[3] := val;
+    else u[3] fi;  
+  elif SearchString(sel, 'BEST') > -1 or sel = 'B' then
+    if nargs=3 then
+      u[4] := val;
+    else u[4] fi;  
+   elif SearchString(sel, 'TOTAL') > -1 then
+    if nargs=3 then
+      u[5] := val;
+    else u[5] fi;  
+  elif SearchString(sel, 'SCORE') > -1  then
+    if nargs=3 then
+      u[6] := val;
+    else u[6] fi; 
+  elif SearchString(sel, 'DELTASCORE') > -1 or SearchString(sel, 'DIFFSCORE') > -1  then
+    if nargs=3 then
+      u[7] := val;
+    else u[7] fi;  
+   elif SearchString(sel, 'NAME') > -1  then
+    if nargs=3 then
+      u[8] := val;
+    else u[8] fi;  
+  else 
+    lprint('Invalid MSAStatistics selector ',sel);
+    print(MSAStatistics);
+  fi;
+end:
+  
+MSAStatistics_print := proc();
+  ts :=  noeval(MSAStatistics(args));
+  tt := ts['Treetype'];
+  tc := ts['treeconstruction'];
+  
+  lprint('Parameters:');
+  lprint('###########');
+  print(tt);
+  print(tc);
+  lprint('Results:');
+  lprint('########');
+  lprint('Total number of msas:             ',ts['total']);
+  lprint('Number of best constructions:     ',ts['best']);
+
+  if ts['best'] > 0 then
+    lprint('Percentage of best constructions  :',ts['best']/ts['total']*100);
+  fi; 
+  lprint(); 
+  lprint('Score:'); 
+  lprint('------');
+  print(ts['score']);
+  lprint(); 
+  lprint('Real score - score'); 
+  lprint('------------------');
+  print(ts['deltascore']);
+  lprint(); 
+  lprint();
+end:

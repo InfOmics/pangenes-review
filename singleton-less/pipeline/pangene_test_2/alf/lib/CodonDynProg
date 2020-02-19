@@ -1,0 +1,203 @@
+###############################################
+# Dynamic programming on codon sequences.     #
+#                      Adrian Schneider, 2004 #
+###############################################
+
+
+##################################################################
+# Global dynamic programming of two codon sequences.             #
+# If BToption is set as 'noBT', no backtracking is performed and #
+# just the score is returned.                                    #
+# Otherwise, the score plus the two aligned strings (with gaps   #
+# included) are returned.                                        #
+##################################################################
+CodonDynProgGlobal := proc( seq1:string, seq2:string, dm:CodonMatrix, BToption:string)
+local i;
+if mod(length(seq1),3)<>0 or  mod(length(seq2),3)<>0 then error('sequence length must be a multiple of 3') fi;
+dim1:=length(seq1)/3+1;
+dim2:=length(seq2)/3+1;
+
+noBT:=false;
+if nargs=4 then
+	if lowercase(args[4])='nobt' then noBT:=true fi;
+fi;
+
+# make int of dm
+sim:=round(10000*dm[Sim]);
+FixedDel:=round(10000*dm[FixedDel]);
+IncDel:=round(10000*dm[IncDel]);
+
+
+Mid:=CreateArray(1..dim1,1..dim2,0):
+Hdel:=CreateArray(1..dim1,1..dim2,0):
+Vdel:=CreateArray(1..dim1,1..dim2,0):
+c1:=[0,seq(CodonToCInt(seq1[i*3-5..i*3-3]),i=2..dim1)];
+c2:=[0,seq(CodonToCInt(seq2[i*3-5..i*3-3]),i=2..dim2)];
+
+# Setting up the borders of the matrix
+Hdel[1]:=[-DBL_MAX,seq(FixedDel+(i-2)*IncDel,i=2..dim2)];
+Mid[1]:=[0,seq(FixedDel+(i-2)*IncDel,i=2..dim2)];
+Vdel[1]:=[seq(-DBL_MAX,i=1..dim2)];
+for i from 2 to dim1 do
+	Vdel[i,1]:=Mid[i,1]:=FixedDel+(i-2)*IncDel;
+	Hdel[i,1]:=-DBL_MAX;
+od;
+
+
+# The DynProg body
+for i from 2 to dim1 do
+    Vdel[i]:=zip(max(Vdel[i-1]+IncDel,Mid[i-1]+FixedDel));
+    simi := sim[c1[i]];
+    Hdeli := Hdel[i];
+    Vdeli := Vdel[i];
+    Midi := Mid[i];
+    Midi1 := Mid[i-1];
+    for j from 2 to dim2 do
+    Hdeli[j]:=max(Hdeli[j-1]+IncDel,Midi[j-1]+FixedDel);
+    Midi[j]:=max(Vdeli[j],Hdeli[j],Midi1[j-1]+simi[c2[j]]);
+    od;
+od: 
+
+#print(c1,c2);
+#print(Mid); print(Hdel); print(Vdel);
+
+if noBT=false then
+# The backtracking
+p1:=length(seq1)-2;
+p2:=length(seq2)-2;
+i:=dim1;
+j:=dim2;
+s1:=''; s2:='';
+while i>1 or j>1 do
+	#printf('%d,%d: Mid=%.1f  Vdel:=%.1f  Hdel=%.1f\n',i,j,Mid[i,j],Vdel[i,j],Hdel[i,j]);
+	if Mid[i,j]=Vdel[i,j] then  # UP
+		s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+		s2:='___'.s2;
+		i:=i-1;
+		# follow continued deletion
+		while Vdel[i+1,j]=Vdel[i,j]+IncDel do
+			s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+			s2:='___'.s2;
+			i:=i-1;
+		od;
+	elif Mid[i,j]=Hdel[i,j] then  # LEFT
+		s1:='___'.s1;
+		s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+		j:=j-1;
+		# follow continued deletion
+		while Hdel[i,j+1]=Hdel[i,j]+IncDel do
+			s1:='___'.s1;
+			s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+			j:=j-1;
+		od;
+	else # MATCH
+		s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+		s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+		i:=i-1; j:=j-1;
+	fi;
+od;
+[Mid[dim1,dim2]/10000,s1,s2];
+else Mid[dim1,dim2]/10000;
+fi;
+end:
+
+##################################################################
+# Local dynamic programming of two codon sequences.              #
+# If BToption is set as 'noBT', no backtracking is performed and #
+# just the score is returned.                                    #
+# Otherwise, the score and the two aligned substrings (with      #
+# gaps included) plus the index ranges of the highest scoring    #
+# substrings are returned.                                       #
+##################################################################
+CodonDynProgLocal := proc( seq1:string, seq2:string, dm:CodonMatrix, BToption:string)
+local i;
+if mod(length(seq1),3)<>0 or  mod(length(seq2),3)<>0 then error('sequence length must be a multiple of 3') fi;
+dim1:=length(seq1)/3+1;
+dim2:=length(seq2)/3+1;
+
+noBT:=false;
+if nargs=4 then
+	if lowercase(args[4])='nobt' then noBT:=true fi;
+fi;
+
+# make int of dm
+sim:=round(10000*dm[Sim]);
+FixedDel:=round(10000*dm[FixedDel]);
+IncDel:=round(10000*dm[IncDel]);
+
+Mid:=CreateArray(1..dim1,1..dim2,0):
+Hdel:=CreateArray(1..dim1,1..dim2,0):
+Vdel:=CreateArray(1..dim1,1..dim2,0):
+c1:=[0,seq(CodonToCInt(seq1[i*3-5..i*3-3]),i=2..dim1)];
+c2:=[0,seq(CodonToCInt(seq2[i*3-5..i*3-3]),i=2..dim2)];
+
+# Setting up the borders of the matrix
+Hdel[1]:=[-DBL_MAX,seq(0,i=2..dim2)];
+Mid[1]:=[seq(0,i=1..dim2)];
+Vdel[1]:=[seq(-DBL_MAX,i=1..dim2)];
+for i from 2 to dim1 do
+	Vdel[i,1]:=Mid[i,1]:=0;
+	Hdel[i,1]:=-DBL_MAX;
+od;
+
+maxv:=-DBL_MAX;
+maxi:=maxj:=0;
+
+# The DynProg body
+for i from 2 to dim1 do
+    Vdel[i]:=zip(max(Vdel[i-1]+IncDel,Mid[i-1]+FixedDel));
+    simi := sim[c1[i]];
+    Hdeli := Hdel[i];
+    Vdeli := Vdel[i];
+    Midi := Mid[i];
+    Midi1 := Mid[i-1];
+    for j from 2 to dim2 do
+        Hdeli[j]:=max(Hdeli[j-1]+IncDel,Midi[j-1]+FixedDel);
+        Midi[j]:=max(Vdeli[j],Hdeli[j],Midi1[j-1]+simi[c2[j]],0);
+        if Midi[j]>maxv then maxv:=Midi[j]; maxi:=i; maxj:=j; fi;
+    od;
+od: 
+
+if noBT=false then
+# The backtracking
+i:=maxi;
+j:=maxj;
+p1:=3*i-5;
+p2:=3*j-5;
+lasti:=p1+2;
+lastj:=p2+2;
+s1:=''; s2:='';
+while Mid[i,j]>0 do
+	#printf('%d,%d: Mid=%.1f  Vdel:=%.1f  Hdel=%.1f\n',i,j,Mid[i,j],Vdel[i,j],Hdel[i,j]);
+	if Mid[i,j]=Vdel[i,j] then  # UP
+		s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+		s2:='___'.s2;
+		i:=i-1; 
+		# follow continued deletion
+		while Vdel[i+1,j]=Vdel[i,j]+IncDel do
+			s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+			s2:='___'.s2;
+			i:=i-1;
+		od;
+	elif Mid[i,j]=Hdel[i,j] then  # LEFT
+		s1:='___'.s1;
+		s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+		j:=j-1;
+		# follow continued deletion
+		while Hdel[i,j+1]=Hdel[i,j]+IncDel do
+			s1:='___'.s1;
+			s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+			j:=j-1;
+		od;
+	else # MATCH
+		s1:=seq1[p1..p1+2].s1; p1:=p1-3;
+		s2:=seq2[p2..p2+2].s2; p2:=p2-3;
+		i:=i-1; j:=j-1;
+	fi;
+od;
+# Return [Sim, Seq1, Seq2, OptSubSeqRange1,OptSubSeqRange2]
+[maxv/10000,s1,s2,p1+3..lasti,p2+3..lastj];
+else
+maxv/10000;
+fi;
+end:

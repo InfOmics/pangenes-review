@@ -1,0 +1,483 @@
+
+#
+#	Probabilistic Finite Automatoon
+#
+#	This is a way of capture the essence of a text or series of
+#	fields.  The main idea is to produce a DFA with random choices
+#	of transitions (each one with its own probability) that will
+#	mimic as close as possible the given input.
+#
+#
+#	For an alpabet consisting of (0,1) and 3 states this could be:
+#
+#	state 1:
+#		on 0 (prob 1/2)	-> 1 (prob 1/3*1/2)
+#				-> 2 (prob 1/2*1/2)
+#				-> 3 (prob 1/6*1/2)
+#
+#		on 1 (prob 1/2)	-> 1 (prob 0, i.e. never)
+#				-> 2 (prob 1*1/2, i.e. always)
+#				-> 3 (prob 0, never)
+#
+#	state 2:
+#		on 0 (prob 1/4)	-> 1 (prob 1/10*1/4)
+#				-> 2 (prob 1/2)
+#				-> 3 (prob 2/5)
+#
+#		on 1 (prob 3/4) -> 1 (prob 1/2*3/4)
+#	etc.
+#
+#	The initial state is state 1.  There is no final state.
+#
+#	Let m be the number of active characters (input characters
+#	possibly filtered through a character mapping)
+#
+#	Let n be the number of states.  The size of the automaton is m*n^2
+#
+#	For a given string s, Paths(s) is the set of all sequences of
+#	states (always starting from state 1) which produce s.
+#
+#	Each of the sequences has a probability, which is the product
+#	of all the probabilities of the individual transitions.
+#
+#	In the above example, for the s='001' and the path=1,2,2,1
+#	the probability is 1/2*1/2 * 1/2 * 1/2*3/4 = 3/64
+#
+#	path(s) will be any of the paths which achieves a maximum
+#	probability.  This can be found with dynamic programming with
+#	an algorithm similar to Viterbi's
+#
+#				Gaston H. Gonnet (September 2009)
+#
+ProbabilisticFA := proc(
+	NumberStates:posint,
+	CharMapping:list(posint),
+	ActiveCharSize:posint,
+	LogCountS:list(numeric),
+	LogCountSTS:list(list(list(numeric))),
+	other:table
+)
+option polymorphic;
+if nargs=5 or nargs=6 then
+    if length(CharMapping)=256 then return( procname(NumberStates,
+	 CharMapping[1..255],ActiveCharSize,LogCountS,LogCountSTS))
+    elif length(CharMapping) <> 255 then error('length(CharMapping) <> 255' )
+    elif length(LogCountS) = NumberStates and
+	 length(LogCountSTS) = NumberStates and
+	 length(LogCountSTS[1]) = ActiveCharSize and
+	 length(LogCountSTS[1,1]) = NumberStates then
+	     return( noeval(procname(args,If(nargs=5,table(),NULL))))
+    else error('invalid dimensions') fi
+elif nargs=2 then
+     cm := {op(CharMapping)};
+     m := length(cm);
+     n := NumberStates;
+     if m <> cm[-1] then error( CharMapping,
+	'CharMapping should consist of contiguous indices') fi;
+     S := CreateArray(1..n);
+     STS := CreateArray(1..n,1..m,1..n);
+     for i1 to n do
+	 for i2 to m do
+	     for i3 to n do STS[i1,i2,i3] := -3+Rand()/10 od;
+	 od;
+	 S[i1] := ln( sum( sum( exp(STS[i1,i2,i3]), i3=1..n), i2=1..m ))
+     od;
+     return( noeval(procname(n,CharMapping,m,S,STS,table())))
+else error('invalid number of arguments') fi
+end:
+
+ProbabilisticFA_type := { noeval(ProbabilisticFA(posint,list(posint),posint,
+	list(numeric),list(list(list)))),
+    noeval(ProbabilisticFA(posint,list(posint),posint,list(numeric),
+	list(list(list)),table)) }:
+
+ProbabilisticFA_select := proc( pfa:ProbabilisticFA, sel:string, val )
+if nargs=2 then pfa['other',sel]
+elif nargs=3 then pfa['other',sel] := val
+else error('invalid number of arguments') fi
+end:
+
+
+ProbabilisticFA_print := proc( p:ProbabilisticFA )
+n := p[NumberStates];  m := p[ActiveCharSize];
+STS := p[LogCountSTS];
+cm := p[CharMapping];
+printf( 'ProbabilisticFA: %d states, alphabet size: %d, %d transitions\n', n, m,
+    sum( sum( sum( If( STS[i1,i2,i3] >= 0, 1, 0), i3=1..n), i2=1..m), i1=1..n) );
+printf( ' LogCountS: %a\n', p[LogCountS] );
+M := 3*n;
+best := [];
+for i1 to n do for i3 to n do
+    t := sum(exp(STS[i1,i2,i3]),i2=1..m);
+    if t < 1 then next fi;
+    best := append(best,[t,i1,i3]);
+    if length(best) > 2*M then best := sort(best)[-M..-1] fi
+od od;
+if length(best) > M then best := sort(best)[-M..-1] fi;
+best := sort( best, x -> n*x[2]+x[3] );
+backmap := CreateString(m);
+for i to 64 do backmap[cm[i]] := IntToAscii(i) od;
+for i from 255 by -1 to 65 do backmap[cm[i]] := IntToAscii(i) od;
+backmap[cm[AsciiToInt(' ')]] := ' ';
+printf( 'backmap: %a\n', backmap);
+for i to length(best) do
+    i1 := best[i,2];  i3 := best[i,3];
+    printf( '%2d--', i1 );
+    bestc := [];
+    for i2 to m do if STS[i1,i2,i3] >= 0 then
+	bestc := append( bestc, [STS[i1,i2,i3], backmap[i2]] )
+    fi od;
+    bestc := sort(bestc);
+    if length(bestc) > 9 then bestc := bestc[-8..-1] fi;
+    for j from length(bestc) by -1 to 1 do printf( '%s', bestc[j,2] ) od;
+    printf( '-->%2d', i3 );
+    to 9-length(bestc) do printf( ' ' ) od;
+    printf( If( mod(i,4)=0, '\n', '  ' ));
+od:
+if mod(i,4) <> 1 then printf( '\n' ) fi
+end:
+
+
+ProbabilisticFA_Graph := proc( p:ProbabilisticFA )
+n := p[NumberStates];  m := p[ActiveCharSize];
+STS := p[LogCountSTS];
+M := 3*n;
+best := [];
+for i1 to n do for i3 to n do
+    t := sum(exp(STS[i1,i2,i3]),i2=1..m);
+    if t < 1 then next fi;
+    best := append(best,[t,i1,i3]);
+    if length(best) > 2*M then best := sort(best)[-M..-1] fi
+od od;
+M := min(M,length(best));
+best := sort(best)[-M..-1];
+best := sort( best, x -> n*x[2]+x[3] );
+edges := Edges();
+for i to M do
+    i1 := best[i,2];  i3 := best[i,3];
+    if i1=i3 then next fi;
+    t := sprintf( '%d-', i1 );
+    bestc := [];
+    for i2 to m do if STS[i1,i2,i3] >= 0 then
+	bestc := append( bestc, [STS[i1,i2,i3],
+		IntToAscii(SearchArray(i2,p[CharMapping]))] )
+    fi od;
+    bestc := sort(bestc);
+    if length(bestc) > 8 then bestc := bestc[-8..-1] fi;
+    for j from length(bestc) by -1 to 1 do t := t.bestc[j,2] od;
+    t := sprintf( '%s->%d', t, i3 );
+    edges := append(edges,Edge(t,i1,i3))
+od:
+Graph( edges, Nodes(seq(i,i=1..n)) );
+end:
+
+#####################################################################
+# RandomGeneratorPFA: structure to generate random seqs efficiently #
+#####################################################################
+RandomGeneratorPFA := proc( S:list, cumul:list(list), i2i3:list(list) )
+option polymorphic;
+if nargs <> 3 or length(S) <> length(cumul) or length(S) <> length(i2i3)
+then error('invalid arguments') fi;
+noeval(procname(args)) end:
+
+SparsePFA_RandomGeneratorPFA := ProbabilisticFA_RandomGeneratorPFA :=
+	proc( pfa:{ProbabilisticFA,SparsePFA} )
+spfa := SparsePFA(pfa);
+n := spfa[NumberStates];
+m := pfa['ActiveCharSize'];
+S := spfa[LogCountS];
+ST := spfa[LogCountSTS];
+cumul := CreateArray(1..n,[]);
+i2i3 := CreateArray(1..n,[]);
+for i1 to n do
+    t := [];
+    for i2 to m do
+	STi1i2 := ST[i1,i2];
+	for i3 by 2 to length(STi1i2) do
+	    t := append( t, exp(STi1i2[i3+1]) );
+	    i2i3[i1] := append(i2i3[i1], [i2,STi1i2[i3]] );
+	od;
+    od;
+    for i from 2 to length(t) do t[i] := t[i]+t[i-1] od;
+    cumul[i1] := t;
+od;
+RandomGeneratorPFA( zip(exp(S)), cumul, i2i3 )
+end:
+CompleteClass( RandomGeneratorPFA );
+
+##########################################################
+# generate a random string as if the PFA was a generator #
+##########################################################
+# if the second argument is a posint, it indicates the length
+# of the sequence to be generated, if it is a list it is used
+# to store the CharMapping codes of the string
+SparsePFA_Rand := ProbabilisticFA_Rand :=
+	proc( spfa:{SparsePFA,ProbabilisticFA}, len:{posint,list} )
+n := spfa[NumberStates];
+cm := spfa[CharMapping];
+m := max(cm);
+
+if nargs=2 and type(len,list) then
+     r := len;
+     backmap := [seq(i,i=1..m)];
+else backmap := CreateString(m);
+     for i to 64 do backmap[cm[i]] := IntToAscii(i) od;
+     for i from 255 by -1 to 65 do backmap[cm[i]] := IntToAscii(i) od;
+     backmap[cm[AsciiToInt(' ')]] := ' ';
+     r := CreateString( If( nargs=2, len, Rand(30..100)) );
+fi;
+
+i1 := 1;
+rg := remember( SparsePFA_RandomGeneratorPFA( spfa ));
+S := rg['S'];  cumul := rg['cumul'];  i2i3 := rg['i2i3'];
+for i to length(r) do
+    k := SearchOrderedArray( Rand()*S[i1], cumul[i1] ) + 1;
+    if k <= length(cumul[i1]) then
+	 t := i2i3[i1,k];
+         r[i] := backmap[t[1]];  i1 := t[2]
+    # there may be a residual probability for default transitions
+    else r[i] := backmap[Rand(1..m)];  i1 := Rand(1..n) fi;
+od;
+r
+end:
+
+
+ProbabilisticFA_lprint := proc( pfa:ProbabilisticFA )
+n := pfa[NumberStates];
+m := pfa[ActiveCharSize];
+STS := pfa[LogCountSTS];
+ST := CreateArray(1..n,1..m,[]);
+for i1 to n do for i2 to m do
+    r := [];
+    for i3 to n do if STS[i1,i2,i3] >= 0 then
+	r := append( r, i3, round(exp(STS[i1,i2,i3])) )
+    fi od;
+    if r <> [] then ST[i1,i2] := r fi;
+od od;
+lprint( noeval( CompressedPFA(n,pfa[CharMapping],ST,pfa['other']) ));
+end:
+
+
+###########################################################
+# compute the entropy of a PFA, that is the average score #
+# for the distribution that reaches the steady state      #
+###########################################################
+ProbabilisticFA_entropy := proc( pfa:{ProbabilisticFA,SparsePFA} )
+if type(pfa,SparsePFA) then return(procname(ProbabilisticFA(pfa))) fi;
+n := pfa[NumberStates];
+m := pfa[ActiveCharSize];
+STS := pfa[LogCountSTS];
+S := pfa[LogCountS];
+
+# compute the steady state state probabilities
+SS := CreateArray(1..n,1..n);
+for i1 to n do
+    for i3 to n-1 do SS[i3,i1] := sum( exp(STS[i1,i2,i3]-S[i1]), i2=1..m ) od;
+    SS[i1,i1] := SS[i1,i1]-1;
+od;
+for i3 to n do SS[n,i3] := 1 od;
+ss := GaussElim( SS, [seq(0,n-1),1] );
+H := 0;
+for i1 to n do
+    for i2 to m do
+	pr := sum( exp(STS[i1,i2,i3]-S[i1]), i3=1..n );
+	H := H - ss[i1]*pr*ln(pr)
+    od;
+od;
+pfa['Entropy'] := H
+end:
+
+
+###################################################
+# compute the average score for a random sequence #
+# of symbols with a given frequency vector        #
+###################################################
+ProbabilisticFA_RandomScore := proc( pfa:{ProbabilisticFA,SparsePFA},
+	f:list(nonnegative) )
+if type(pfa,SparsePFA) then return(procname(ProbabilisticFA(pfa),f)) fi;
+n := pfa[NumberStates];
+m := pfa[ActiveCharSize];
+if length(f) <> m then error(f,'should be of dimension',m)
+elif |sum(f)-1| > m*DBL_EPSILON then error(f,'does not add to 1') fi;
+STS := pfa[LogCountSTS];
+S := pfa[LogCountS];
+
+# compute the steady state state probabilities
+SS := CreateArray(1..n,1..n);
+for i1 to n do
+    for i2 to m do
+	STSi1i2 := STS[i1,i2];
+	fac := f[i2] / sum( exp(STSi1i2[i3]-S[i1]), i3=1..n );
+	for i3 to n do SS[i3,i1] := SS[i3,i1] + exp(STSi1i2[i3]-S[i1])*fac od;
+    od;
+    SS[i1,i1] := SS[i1,i1]-1;
+od;
+for i3 to n do SS[n,i3] := 1 od;
+ss := GaussElim( SS, [seq(0,n-1),1] );
+H := 0;
+for i1 to n do
+    for i2 to m do
+	STSi1i2 := STS[i1,i2];
+	fac := f[i2] / sum( exp(STSi1i2[i3]-S[i1]), i3=1..n );
+	pr := sum( (STSi1i2[i3]-S[i1])*exp(STSi1i2[i3]-S[i1]), i3=1..n );
+	H := H + ss[i1]*fac*pr
+    od;
+od;
+H
+end:
+
+
+#########################################
+# Compute the optimal score of a string #
+#########################################
+ProbabilisticFA_plus := proc( pfa, b )
+global Backtracking;
+if op(0, pfa) = ProbabilisticFA then 
+     if type(b,string) then
+	  cm := pfa[CharMapping];
+	  li := [ seq( cm[AsciiToInt(b[i])], i=1..length(b) )];
+     elif type(b,list(posint)) then
+	  if max(b) > pfa[ActiveCharSize] or min(b) = 0 then
+	       error('invalid range of encoded characters') fi;
+	  li := b
+     else error('invalid arguments') fi;
+     Backtracking := false;
+     r := Viterbi( li, pfa[LogCountSTS], pfa[LogCountS] );
+     r[2]
+elif type(b,ProbabilisticFA) then procname(b,pfa)
+else error('invalid arguments') fi;
+end:
+
+
+#####################################
+# Compute a distance between 2 PFAs #
+#####################################
+ProbabiblisticFA_distance := proc(
+	a:{SparsePFA,ProbabilisticFA},
+	b:{SparsePFA,ProbabilisticFA} )
+global Backtracking;
+SS := 1000;
+if a['CharMapping'] <> b['CharMapping'] then
+    error('different CharMapping, not implemented yet') fi;
+m := a['ActiveCharSize'];
+ia := CreateArray(1..SS,'-');
+Backtracking := false;
+
+SparsePFA_Rand( a, ia );
+r := Viterbi(ia,a)[2] - Viterbi(ia,b)[2];
+SparsePFA_Rand( b, ia );
+( r + Viterbi(ia,b)[2] - Viterbi(ia,a)[2] ) / (2*SS)
+end:
+
+CompleteClass( ProbabilisticFA );
+
+##########################################################
+# CompressedPFA expands immediately to a ProbabilisticFA #
+##########################################################
+CompressedPFA := proc( n:posint, cm:list(posint), ST:list(list(list)),
+	other0:table )
+if nargs = 3 then other := table()
+elif nargs = 4 then other := other0
+else error('invalid arguments') fi;
+m := max(cm);
+S := CreateArray(1..n);
+STS := copy(ST);
+assert( length(ST) = n );
+for i1 to n do
+    t0 := t1 := 0;
+    assert( length(ST[i1]) = m );
+    for i2 to m do
+	assert( mod( length(ST[i1,i2]), 2 ) = 0 );
+	for i3 to length(ST[i1,i2]) by 2 do
+	    STS[i1,i2,i3+1] := ln(ST[i1,i2,i3+1]);
+	    t0 := t0 + 1;
+	    t1 := t1 + ST[i1,i2,i3+1];
+	od
+    od;
+    S[i1] := ln( t1 + exp(-10)*(n*m-t0) )
+od;
+SparsePFA(n,cm,S,STS,-10,other)
+end:
+
+####################################################################
+# Extend a ProbabilisticFA with one additional symbol for Viterbi2 #
+####################################################################
+ExtendProbabilisticFA := proc( pfa:ProbabilisticFA )
+n := pfa[NumberStates];
+m := pfa[ActiveCharSize];
+STS0 := pfa[LogCountSTS];
+STS := CreateArray(1..n,[]);
+zero := CreateArray(1..n);
+bad := CreateArray(1..n,-100);
+for i1 to n do STS[i1] := [ op(STS0[i1]), If( i1=1, zero, bad ) ] od;
+ProbabilisticFA( op(1..2,pfa), m+1, pfa[LogCountS], STS, table() );
+end:
+
+##########################################################
+# Viterbi2 - run Viterbi for an arbitrary starting state #
+##########################################################
+Viterbi2 := proc( s:string, pfa:ProbabilisticFA )
+global Backtracking;
+pfae := remember(ExtendProbabilisticFA(pfa));
+cm := pfa[CharMapping];
+m := max(cm);
+si := [ m+1, seq( cm[AsciiToInt(s[i])], i=1..length(s) )];
+Backtracking := true;
+r := Viterbi( si, pfae[LogCountSTS], pfae[LogCountS] );
+[ r[1], r[2]+pfa[LogCountS,1] ]
+end:
+
+
+#######################################################
+# SparsePFA - a compressed version of ProbabilisticFA #
+#######################################################
+SparsePFA := proc( 
+	NumberStates:posint,
+	CharMapping:list(posint),
+	LogCountS:list(numeric),
+	LogCountSTS:list(list(list(numeric))),
+	Default:numeric,
+	other:table )
+option polymorphic;
+if nargs <> 6 then error('invalid arguments')
+else noeval(procname(args)) fi
+end:
+
+ProbabilisticFA_SparsePFA := proc( pfa:ProbabilisticFA )
+n := pfa[NumberStates];
+m := pfa[ActiveCharSize];
+ST := CreateArray(1..n,1..m,[]);
+def := 0;
+for i1 to n while def=0 do for i2 to m while def=0 do for i3 to n do
+	if type(-pfa[LogCountSTS,i1,i2,i3],posint) then
+	    def := pfa[LogCountSTS,i1,i2,i3];  break fi
+od od od;
+for i1 to n do for i2 to m do for i3 to n do
+	v := pfa[LogCountSTS,i1,i2,i3];
+	if v <> def then ST[i1,i2] := append(ST[i1,i2],i3,v) fi
+od od od;
+SparsePFA(n,pfa[CharMapping],pfa[LogCountS],ST,def,copy(pfa['other']))
+end:
+
+SparsePFA_ProbabilisticFA := proc( spfa:SparsePFA )
+n := spfa[NumberStates];
+m := max(spfa[CharMapping]);
+STS := CreateArray(1..n,1..m,1..n,spfa[Default]):
+for i1 to n do for i2 to m do
+    t := spfa[LogCountSTS,i1,i2];
+    for i by 2 to length(t) do STS[i1,i2,t[i]] := t[i+1] od;
+od od;
+ProbabilisticFA(n,spfa[CharMapping],m,spfa[LogCountS],STS,copy(spfa['other']))
+end:
+
+SparsePFA_select := proc( spfa:SparsePFA, sel:string, val )
+if nargs=2 and sel = 'ActiveCharSize' then max(spfa[CharMapping])
+elif nargs=2 then spfa['other',sel]
+elif nargs=3 then spfa['other',sel] := val
+else error('invalid selector') fi
+end:
+
+CompleteClass( SparsePFA );
+Inherit(SparsePFA,ProbabilisticFA);
+
+

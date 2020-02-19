@@ -1,0 +1,183 @@
+#
+# BFGSMinimize
+# 
+# The Broyden-Fletcher-Goldfarb-Shanno (BFGS) method is a 
+# Quasi-Newton method. It uses a simple hill-climbing 
+# optimization technique to find the (local) minimum of a
+# given (multidimensional) function.
+# Instead of using a known gradient and Hesse matrix at a
+# certain point x, the gradient is estimated with finite 
+# differences; an estimation of the Hessian is then updated
+# at every iteration by analyzing the calculated gradient.
+# 			Stefan Zoller, April 2010
+
+module external BFGSMinimize;
+
+# helper function to calculate a^T*b
+atb := proc(a, b)
+  return([seq([x],x=a)] * [b]);
+end:
+
+# helper function to calculate the gradient at a certain point
+gradient := proc(objf:procedure, p:list, d:numeric)
+  phi := (1+sqrt(5))/2;
+  dim := length(p);
+  g := CreateArray(1..dim);
+  ha := hb := CreateArray(1..dim, d);
+  for i to dim do
+    xa := copy(p);
+    xb := copy(p);
+    xa[i] := p[i] + ha[i];
+    ya := objf(xa);
+    xb[i] := p[i] - hb[i];
+    yb := objf(xb);
+    j := 0:
+    while ((ya = DBL_MAX) or (yb = DBL_MAX)) and (j<20) do
+      ha[i] := ha[i]/phi;
+      xa[i] := p[i] + ha[i];
+      hb[i] := hb[i]/phi;
+      xb[i] := p[i] - hb[i];
+      ya := objf(xa);
+      yb := objf(xb);
+      j := j+1:
+    od:
+    g[i] := (ya - yb)/(ha[i]+hb[i]);
+  od:
+  return(g);
+end:
+    
+# Basically MinimizeBrent by Gaston Gonnet, but without the exceptions...
+Brent := proc( f:procedure, iniguess:numeric, incr:numeric,
+      relateps:numeric )
+
+  phi := 1.6180339887498948482;
+  x0 := iniguess;
+  fx0 := f(x0,args[5..nargs]);
+  x1 := iniguess+incr;
+  fx1 := f(x1,args[5..nargs]);
+  if fx0 < fx1 then
+	t := x0;  x0 := x1;  x1 := t;  t := fx0;  fx0 := fx1;  fx1 := t
+      fi;
+
+  # exponential search
+  to 100 do
+    x2 := x1 + (x1-x0)*phi;
+    fx2 := f(x2,args[5..nargs]);
+    if fx2 < fx1 then
+      x0 := x1;  fx0 := fx1;  x1 := x2;  fx1 := fx2
+    else break fi
+  od;
+  if fx2 < fx1 then 
+    error(x2, fx2,'apparently unbounded minimum' )
+  fi;
+  
+  #
+  #   invariant: (x2-x1) = (x1-x0)*phi and fx1 <= fx0 and fx1 <= fx2
+  #
+  for iter to 200 while |x2-x0| > relateps*(|x0|+|x2|) do
+    x3 := x2 - (x2-x1)/phi;
+    fx3 := f(x3,args[5..nargs]);
+    if fx3 < fx1 then
+      x0 := x1;  fx0 := fx1;  x1 := x3;  fx1 := fx3
+    else
+      x2 := x0;  fx2 := fx0;  x0 := x3;  fx0 := fx3
+    fi
+  od;
+  
+  if iter > 200 then error(x1,fx1,'could not achieve relative error') fi;
+  [x1,fx1]
+end:
+  
+# Generates the objective function for Brent
+genfunc := proc(objfunc:procedure, x:list, p_new:list)
+  f := assemble(
+	procedure(expseq(q),expseq(),expseq(),expseq(),expseq(),
+	  structure(return, structure(
+	    disassemble(eval(objfunc)), plus(
+	      disassemble(eval(x)), 
+		times(Param(1), disassemble(eval(p_new))
+	      )
+	    )
+	  )
+       )));
+  return(f);
+end:
+
+# Main function
+BFGSMinimize := proc(objfunc:procedure, optparams:list, epsini:numeric, epsfinal:numeric)
+  
+  # init variables:
+  if epsini <= 0 or epsfinal <= 0 or epsini < epsfinal then
+     error('accuracy parameters set incorrectly') fi;
+  dim := length(optparams);
+  h := epsfinal;
+  epsilon := epsfinal;
+  x := optparams;
+  func := objfunc(x);
+  maxloop := 1000;
+  g := CreateArray(1..dim);
+  B := Identity(dim);
+  a := epsini;
+  phi := (1+sqrt(5))/2;
+  
+  # estimate first gradient and direction
+  g := gradient(objfunc, x, h);
+
+  # loop with i until convergence
+  for i to maxloop do
+    # 1) obtain direction p[i] = -B[i]*g(x[i])
+    p_new := -B*g;
+    
+    # 2) perform a line search to find acceptable stepsize a[i] in direction p[i]
+    tfunc := genfunc(objfunc, x, p_new);
+    aarr := Brent(tfunc, a, a/100, DBL_EPSILON);
+    a := aarr[1];
+    
+    # 3) set s[i] = a[i]p[i]
+    s := a*p_new;
+    if sqrt(s*s) > DBL_EPSILON then
+      h := min(h, sqrt(s*s)/2);
+    fi:
+    
+    # 4) update x[i+1] = x[i] + s[i]
+    x_new := x + s;
+    func_new := objfunc(x_new);
+    
+    # 5) y[i] = g(x[i+1])-g(x[i])
+    g_new := gradient(objfunc, x_new, h);
+    y := g_new - g;
+    
+    # 6) update inverse Hessian B by applying the Sherman–Morrison formula
+    # B[i+1] = B[i] + ((s[i]^T*y[i]+y[i]^T*B[i]*y[i])*(s[i]*s[i]^T))/(s[i]^T*y[i])^2
+    #               - (B[i]*y[i]*s[i]^T+s[i]*y[i]^T*B[i])/(s[i]^T*y[i])
+    div1 := (s*y)^2;
+    if abs(div1) < DBL_EPSILON then
+      div1 := DBL_EPSILON;
+    fi;
+            
+    div2 := (s*y);
+    if abs(div2) < DBL_EPSILON then
+      div2 := DBL_EPSILON;
+    fi;
+    
+    B := B + ((s*y+y*B*y)*(atb(s, s)))/div1 - (atb(B*y, s)+atb(s,y)*B)/div2;
+
+    # 7) check for convergence
+    if sqrt((x-x_new)*(x-x_new)) < epsilon then
+      return([x_new, func_new]);
+    fi;
+    
+    x := x_new;
+    g := g_new;
+    func := func_new;
+    p := p_new;
+    
+  # i += 1; end loop
+  od:
+  if printlevel >= 1 then
+    printf( 'Warning: %d iterations without convergence, (alternatively use DisconMinimize)\n',
+	          maxloop ) fi;
+  return([x_new, func_new]);
+end:
+
+end: # module

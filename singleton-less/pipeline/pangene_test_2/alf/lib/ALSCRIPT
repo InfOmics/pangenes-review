@@ -1,0 +1,495 @@
+#                             -*- Mode: Darwin -*- 
+# ALSCRIPT -- interface to Geoff Barton's ALSCRIPT program
+# Author          : Marcel TURCOTTE
+# Created On      : Tue Oct  8 12:00:43 1996
+# Last Modified By: Darwin Account
+# Last Modified On: Wed May 14 15:52:20 1997
+
+if not assigned (MapVector) then
+  ReadLibrary ('Local/MBA_Toolkit')
+fi:
+
+#ignore off
+# \section{ALSCRIPT}
+# {\tt ALSCRIPT} understands the following system options:
+# {\tt Set (plotdevice=pslandscape);}
+# {\tt Set (plotdevice=psportrait);}
+# {\tt Set (plotoutput='temp.ps');}
+# The program has no formal parameter, here is the list of the optional parameters:
+# \begin{verbatim}
+# ALSCRIPT ('Ali' = ali, 
+#           'AliNums' = ali_numbers,
+#           'ExpSi' = exper_si, 
+# 	    'ExpSec' = exper_sec, 
+#           'Topo' = topo,
+# 	    'ExpNums' = pdb_numbers,
+# 	    'PredSec' = [sec], 
+# 	    'PredSi' = si, 
+# 	    'VParse' = vp, 
+# 	    'HParse' = hp, 
+# 	    'Target' = target,
+#           'Len' = posint,
+#           'From' = ilo,
+#           'To' = ihi,
+#           'Id' = id,
+# 	    'Info' = [[string,string]]);
+# \end{verbatim}
+
+ALSCRIPT := proc ()
+
+  # -- processing optional arguments --
+  
+  for i to nargs do
+
+    if type (args[i], string = anything) then
+
+      if (SearchString ('Ali', op(1, args[i])) <> -1 and 
+	  type (op (2, args[i]), MultiAlign)) then
+	ali := op (2, args[i])
+      
+      elif (SearchString ('AliNums', op(1, args[i])) <> -1 and 
+	    type (op (2, args[i]), array(integer))) then
+	ali_nums := op (2, args[i])
+      
+      elif SearchString ('ExpSi', op(1, args[i])) <> -1 and type (op (2, args[i]), string) then
+	exp_si := op (2, args[i])
+      
+      elif SearchString ('ExpSec', op(1, args[i])) <> -1 and type (op (2, args[i]), string) then
+	exp_sec := op (2, args[i])
+      
+      elif SearchString ('Topo', op(1, args[i])) <> -1 and type (op (2, args[i]), array(array(anything))) then
+	topo := op (2, args[i])
+      
+      elif SearchString ('ExpNums', op(1, args[i])) <> -1 and type (op (2, args[i]), array(integer)) then
+	exp_nums := op (2, args[i])
+      
+      elif SearchString ('PredSec', op(1, args[i])) <> -1 and type (op (2, args[i]), array (string)) then
+	pred_sec := op (2, args[i])
+      
+      elif SearchString ('PredSi', op(1, args[i])) <> -1 and type (op (2, args[i]), string) then
+	pred_si := op (2, args[i])
+      
+      elif SearchString ('VParse', op(1, args[i])) <> -1 then
+	vparse := op (2, args[i])
+      
+      elif SearchString ('HParse', op(1, args[i])) <> -1 then
+	hparse := op (2, args[i])
+      
+      elif SearchString ('Target', op(1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+	target := op (2, args[i])
+      
+      elif SearchString ('Len', op(1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+	len := op (2, args[i])
+      
+      elif SearchString ('From', op(1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+	pos_from := op (2, args[i])
+      
+      elif SearchString ('To', op(1, args[i])) <> -1 and type (op (2, args[i]), posint) then
+	pos_to := op (2, args[i])
+      
+      elif SearchString ('Id', op(1, args[i])) <> -1 and type (op (2, args[i]), string) then
+	id := op (2, args[i])
+      
+      elif SearchString ('Info', op(1, args[i])) <> -1 and type (op (2, args[i]), list(array(string,2))) then
+	info := op (2, args[i])
+      
+      else
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  
+  od;
+
+  # -- create a block sequence file --
+  
+  fali := TempName (Dir = '', Prefix = 'alscript');
+
+  gcstate := Set (printgc=false); state := Set (quiet=false); OpenWriting (fali);
+
+  # each of the following blocks can be moved up and down,
+  # changing the visual display, but should cause problem
+  # since each block register its position. The only restriction
+  # is that info must remain the last block.
+  
+  lines := [];
+  line := 1;
+  
+  if assigned (ali_nums) and assigned (ali) then
+
+    if not assigned (len) then
+      len := length (ali_nums)
+    fi;
+    
+    ali_nums_at := line;
+    printf ('>\n');
+    lines := append (lines, CreateString (len, ' '));
+    line := line + 1
+  
+  fi;
+  
+  if assigned (ali) then
+    
+    len_ali := length (ali['MA', 1]);
+
+    if not assigned (len) then
+      len := len_ali;
+    fi;
+    
+    ali_from := line;
+    nb_seq := length (ali['MA']);
+    
+    for seq to nb_seq do
+      if type (ali['Reference', seq], string) then
+	printf ('>%d:%s\n', seq, ali['Reference', seq])
+      elif type (ali['Reference', seq], integer) then
+	printf ('>%d\n', ali['Reference', seq])
+      else
+	printf ('>%d\n', seq)
+      fi;	
+      lines := append (lines, ali['MA', seq]);
+      line := line + 1
+    od;
+    ali_to := line - 1;
+  fi;
+  
+  if assigned (vparse) and assigned (ali) then
+
+    vparse_at := line;
+
+    printf ('>VParse\n');
+
+    s := CreateString (length (vparse[1]), ' ');
+    for i to length (vparse) do
+      for pos to length (vparse[i]) do
+	for j to vparse[i,pos] do
+	  s[pos+j-1] := '*'
+	od
+      od
+    od;
+    
+    lines := append (lines, s);
+    line := line + 1
+  fi;
+  
+  if assigned (pred_si) then
+
+    if not assigned (len) then
+      len := length (pred_is)
+    fi;
+    
+    printf ('>\n');
+    lines := append (lines, CreateString (length (pred_si), ' '));
+    line := line + 1;
+    
+    pred_si_at := line;
+
+    printf ('>PredSi\n');
+    lines := append (lines, pred_si);
+    line := line + 1
+  fi;
+  
+  if assigned (exp_si) then
+
+    if not assigned (len) then
+      len := length (exp_si)
+    fi;
+    
+    printf ('>\n');
+    lines := append (lines, CreateString (length (exp_si), ' '));
+    line := line + 1;
+    
+    exp_si_at := line;
+
+    printf ('>ExpSi\n');
+    lines := append (lines, exp_si);
+    line := line + 1
+  fi;
+  
+  if assigned (pred_sec) then
+
+    if not assigned (len) then
+      len := length (pred_sec[1])
+    fi;
+    
+    printf ('>\n');
+    lines := append (lines, CreateString (length (pred_sec[1]), ' '));
+    line := line + 1;
+    
+    pred_sec_from := line;
+
+    nb_pred_sec := length (pred_sec);
+  
+    for i to nb_pred_sec do
+      printf ('>PredSec\n');
+      lines := append (lines, pred_sec[i]);
+      line := line + 1
+    od;
+  
+    pred_sec_to := line - 1;
+  fi;
+  
+  if assigned (exp_nums) and (assigned (exp_si) or assigned (exp_sec)) then
+
+    exp_nums_at := line;
+    lines := append (lines, CreateString (length (exp_nums), ' '));
+    printf ('>ExpNums\n');
+    line := line + 1
+  
+  fi;
+  
+  if assigned (topo) and assigned (len) then
+
+    topo_at := line;
+
+    printf ('>ExpSec\n');
+    lines := append (lines, CreateString (len, ' '));
+    line := line + 1;
+
+    printf ('>\n');
+    lines := append (lines, CreateString (len, ' '));
+    line := line + 1
+  fi;
+  
+  if assigned (exp_sec) then
+
+    if not assigned (len) then
+      len := length (exp_sec)
+    fi;
+    
+    exp_sec_at := line;
+
+    printf ('>ExpSec\n');
+    lines := append (lines, exp_sec);
+    line := line + 1
+  fi;
+  
+  if assigned (info) and assigned (len) then
+
+    info_at := line;
+
+    for i to length (info) do
+      printf ('>%s\n',info[i,1]);
+      lines := append (lines, info[i,2]);
+      line := line + 1
+    od;
+
+  fi;
+
+  if assigned (len) then
+    date_line := line;
+
+    if assigned (id) then
+      printf ('>%s\n', id)
+    else
+      printf ('>\n')
+    fi;
+    
+    lines := append (lines, CreateString (len));
+    line := line + 1
+  fi;
+  
+  # -- body next --
+
+  if not assigned (pos_from) then
+    pos_from := 1
+  fi;
+
+  if not assigned (pos_to) then
+    pos_to := len
+  fi;
+  
+  len := pos_to - pos_from + 1;
+  
+  printf ('*\n');
+
+  for j from pos_from to pos_to do
+    for i to length (lines) do
+      printf ('%s', lines[i,j])
+    od;
+    printf ('\n')
+  od;
+  
+  printf ('*\n');
+
+  # -- restore output to the terminal --
+  
+  OpenWriting (terminal); Set (quiet=state); Set (printgc=gcstate);
+  
+  # -- It's show time! --
+
+  fscript := TempName (Dir = '', Prefix = 'alscript');
+  
+  gcstate := Set (printgc=false); state := Set (quiet=false); OpenWriting (fscript);
+
+  printf ('#\n');
+  printf ('# This output has been automatically generated by Darwin.\n');
+  printf ('#\n');
+  
+  printf ('#\n');
+  printf ('# Step 1\n');
+  printf ('#\n');
+
+  printf ('BLOCK_FILE %s\n', fali);
+  printf ('OUTPUT_FILE %s\n', Set(plotoutput));
+  printf ('MAX_SIDE 10.25\n');
+  printf ('MIN_SIDE 7.5\n');
+  if SearchString ('landscape', Set(plotdevice)) <> -1 then
+    printf ('LANDSCAPE\n')
+  else
+    printf ('PORTRAIT\n')
+  fi;
+  if assigned (ali_nums) then
+    printf ('NO_NUMBERS\n')
+  fi;
+  printf ('POINTSIZE 6\n');
+  printf ('DEFINE_FONT 0 Courier DEFAULT\n');
+  printf ('DEFINE_FONT 1 Courier-Bold DEFAULT\n');
+  printf ('DEFINE_FONT 2 Symbol REL 1.0\n');
+  printf ('DEFINE_COLOR 1 1.000 0.000 0.000 # Red\n');
+  printf ('DEFINE_COLOR 2 0.000 1.000 0.000 # Green\n');
+  printf ('DEFINE_COLOR 3 0.000 0.000 1.000 # Blue\n');
+  printf ('DEFINE_COLOR 4 1.000 0.647 0.000 # Orange\n');
+  printf ('DEFINE_COLOR 5 1.000 0.000 1.000 # Magenta\n');
+  printf ('DEFINE_COLOR 6 1.000 1.000 0.000 # Yellow\n');
+  printf ('DEFINE_COLOR 7 0.647 0.165 0.165 # Brown\n');
+  printf ('DEFINE_COLOR 8 0.627 0.125 0.941 # Purple\n');
+  printf ('DEFINE_COLOR 9 0.000 0.000 0.000 # Black\n');
+  printf ('SETUP\n');
+
+  printf ('#\n');
+  printf ('# Step 2\n');
+  printf ('#\n');
+
+  if assigned (ali) then
+    printf ('CCOL_CHARS FAMILYVW 1 %d %d %d 1\n', ali_from, len, ali_to);
+    printf ('CCOL_CHARS KREND 1 %d %d %d 3\n', ali_from, len, ali_to)
+  fi;
+  
+  if assigned (ali_nums) then
+
+    for i from pos_from to pos_to do
+      if ali_nums[i] <> -1 and mod (ali_nums[i], 10) = 0 then
+	printf ('TEXT %d %d "%d"\n', i - pos_from + 1, ali_nums_at, ali_nums[i])
+      fi
+    od
+  fi;
+  
+  if assigned (target) and assigned (ali) then
+    printf ('FONT_REGION 1 %d %d %d 1\n', ali_from + target - 1, len, ali_from + target - 1)
+  fi;
+  
+  if assigned (exp_si) then
+    printf ('CCOL_CHARS Ii 1 %d %d %d 1\n', exp_si_at, len, exp_si_at);
+    printf ('CCOL_CHARS Ss 1 %d %d %d 3\n', exp_si_at, len, exp_si_at)
+  fi;
+  
+  if assigned (pred_si) then
+    printf ('CCOL_CHARS Ii 1 %d %d %d 1\n', pred_si_at, len, pred_si_at);
+    printf ('CCOL_CHARS Ss 1 %d %d %d 3\n', pred_si_at, len, pred_si_at)
+  fi;
+  
+  if assigned (pred_sec) then
+
+    printf ('SURROUND_CHARS Hh 1 %d %d %d\n', pred_sec_from, len, pred_sec_to);
+    printf ('SCOL_CHARS Hh 1 %d %d %d 5\n', pred_sec_from, len, pred_sec_to);
+
+    printf ('SURROUND_CHARS Ee 1 %d %d %d\n', pred_sec_from, len, pred_sec_to);
+    printf ('SCOL_CHARS Ee 1 %d %d %d 2\n', pred_sec_from, len, pred_sec_to);
+
+    printf ('SURROUND_CHARS T 1 %d %d %d\n', pred_sec_from, len, pred_sec_to);
+    printf ('SCOL_CHARS T 1 %d %d %d 8\n', pred_sec_from, len, pred_sec_to);
+
+  fi;
+  
+  if assigned (exp_sec) then
+
+    len_exp_sec := length (exp_sec);
+
+    printf ('SURROUND_CHARS Hh 1 %d %d %d\n', exp_sec_at, len, exp_sec_at);
+    printf ('SCOL_CHARS Hh 1 %d %d %d 5\n', exp_sec_at, len, exp_sec_at);
+
+    printf ('SURROUND_CHARS Ee 1 %d %d %d\n', exp_sec_at, len, exp_sec_at);
+    printf ('SCOL_CHARS Ee 1 %d %d %d 2\n', exp_sec_at, len, exp_sec_at);
+
+    printf ('SURROUND_CHARS T 1 %d %d %d\n', exp_sec_at, len, exp_sec_at);
+    printf ('SCOL_CHARS T 1 %d %d %d 8\n', exp_sec_at, len, exp_sec_at);
+
+  fi;
+
+  if assigned (topo) then
+
+    printf ('FONT_REGION 1 %d %d %d 2\n', topo_at + 1, len, topo_at + 1);
+
+    for s in topo do
+      for i to length (s) do
+	e := s[i];
+	if op(0, e) = 'H' then
+	  printf ('COLOR_TEXT_REGION %d %d %d %d 5\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1, topo_at);
+	  printf ('HELIX %d %d %d\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1);
+	  printf ('TEXT %d %d "%s"\n', e[1] - pos_from + 1, topo_at + 1, sprintf ('a%d', e[4]));
+	elif op(0, e) = 'E' then
+	  printf ('COLOR_TEXT_REGION %d %d %d %d 2\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1, topo_at);
+	  printf ('STRAND %d %d %d\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1);
+	  str := sprintf ('b%d', e[4]);
+	  xs := e[3];
+	  for j to length (xs) do
+	    str := str . sprintf ('%s%d', xs[j,2], xs[j,1])
+	  od;
+	  printf ('TEXT %d %d "%s"\n', e[1] - pos_from + 1, topo_at + 1, str);
+	elif op(0, e) = 'G' then
+	  printf ('COLOR_TEXT_REGION %d %d %d %d 8\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1, topo_at);
+	  printf ('HELIX %d %d %d\n', e[1] - pos_from + 1, topo_at, e[2] - pos_from + 1);
+	  printf ('TEXT %d %d "%s"\n', e[1] - pos_from + 1, topo_at + 1, sprintf ('%d', e[4]));
+	fi
+      od
+    od
+  
+  fi;
+
+  if assigned (exp_nums) and (assigned (exp_si) or assigned (exp_sec)) then
+
+    for i from pos_from to pos_to do
+      if exp_nums[i] <> -1 and mod (exp_nums[i], 10) = 0 then
+	printf ('TEXT %d %d "%d"\n', i - pos_from + 1, exp_nums_at, exp_nums[i])
+      fi
+    od
+  fi;
+  
+  if assigned (vparse) and assigned (ali) then
+    printf ('SCOL_CHARS * 1 %d %d %d 4\n', vparse_at, len, vparse_at)
+  fi;
+  
+  if assigned (hparse) and assigned (ali) then
+
+    for i to length (hparse) do
+      for seq to length (hparse[i]) do
+	for pos from pos_from to pos_to do
+	  if hparse[i,seq,pos] <> 0 then
+	    printf ('COLOUR_REGION %d %d %d %d 4\n', pos - pos_from + 1, ali_from + seq - 1, pos + hparse[i,seq,pos] - pos_from, ali_from + seq - 1)
+	  fi
+	od
+      od
+    od
+  fi;
+
+  if assigned (date_line) then
+    printf ('TEXT %d %d "%s"\n', 1, date_line, date ())
+  fi;
+
+  # -- restore output to the terminal --
+  
+  OpenWriting (terminal); Set (quiet=state); Set (printgc=gcstate);
+
+  CallSystem ('alscript '.fscript);
+  
+  # -- after the show we need to clean up a bit --
+  
+  CallSystem ('/bin/rm -f '.fali.' '.fscript);
+  
+  NULL
+end:
+
+NULL:

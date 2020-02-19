@@ -1,0 +1,809 @@
+rawprint := proc()
+  option polymorphic;
+  error(args,'is an invalid argument for rawprint')
+end:
+
+TreeConstruction := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a gap heuristic data structure
+
+Selectors:
+        Algorithm: Type string
+	           Method of tree construction. 
+	           PROB: probabilistic model (MinSquareTree)
+		   TSP:  TSP method
+		   PHYLIP: an algorithm from the phylip package
+
+		   default: PROB
+
+	Method:    Type string
+	           If method is TSP, then type describes what kind of TSP method to use.
+	           The type describes which leaves to connect in the connection step.
+		   Possible values are:
+		   - LINEAR:    smallest "swapping" error (order n)
+		   
+		   The next three methods calculate ALL errors per step(order n^2). 
+	           - MINSQUARE: chose leaves with minimum sum of square of errors
+		   - AVERAGE:   smallest average error
+		   - MINMAX:    minimal maximal error
+		   
+		   - TREE:      minimal tree fitting index of subtree
+		                constructs a MinSquareTree of each subtree
+		   - DOUBLETSP: use TSP again to find *another* circular
+		                order and connect the leaves that were swapped.
+				Is of order n^3 of course in each step
+				... so about n^4 in total
+
+		   Phylip package:
+		   - NEIGHBOR
+ 		   - KITSCH
+	           - FITCH
+
+		   default: LINEAR
+
+	
+	Relative:  Type boolean
+	           true if relative error should be considered.
+	           false if absolute error should be used.
+		   default: true
+	Simultan:  Type real
+	           values < 0 mean only do one connection at a time
+		   Otherwise it is the maximal relative error up to
+		   which connections are made.
+		   range: -1, 0.0 - 1.0
+		   default: 0.1
+	Dynamic:   Type real
+	           values < 0 mean do NOT use dynamic programming.
+	           Otherwise it is the maximal relative error up to which
+		   connections are made.
+		   range: -1, 0.0 - 1.0
+		   default: 0.2
+	AdjustEps: type boolean
+	           true if the maximal error (param. dynamic) should be adjusted, if
+		   the smallest error is larger than the error specified, or if all
+		   errors are smaller than the error specified.
+		   fals if errors should not be changed.
+		   Default: true
+	Maxbranch: Type real
+	           Maximum number relative to n (nr of leaves) up to which connections
+		   should be kept, rounded to the next bigger integer. 
+		   Only used if Dynamic is > 0.
+		   range: -1, 0.0 - 1.0
+		   default: 4
+	Minbranch: Type real
+	           Used if Dynamic > 0. 
+	           Determines how many connections should be considered in one step
+		   in ANY case, even if the error is too large. 
+		   Values between 0.0 and 1.0 are relative to n (nr of leaves).
+		   Values > 1 are absolut values
+		   There is always at least ONE connection.
+		   range: 0.0 - 1.0, positive integer
+		   default value: 1
+	Limit:     Type real
+	           Max. number of trees to keep in memory, if Dynamic is > 0
+	           -1 means no limit. 
+	           The number is relative to n, the number of leaves.
+		   range: -1, positive integer
+		   default: 3
+	Data:      anything
+	           could be an array of statistics or any other information
+	MSAScores: boolean
+	           true: uses the scores calculated form the MSA to reconstruct tree
+		   false: uses scores from the allall to reconstruct the tree
+		   default: false
+	Scoring:   String
+		   Scoring of trees.
+		   Can be PAM, SCORE, ERROR, INDEX, COMBINED
+	           PAM: tree w. smallest PAM distance is best tree 
+		   SCORE: tree w. largest SCORE is best tree
+	           ERROR: tree w. smalles turn-error is best tree
+	           INDEX: tree w. smalles fitting index is best tree
+		   MSA:  tree w. best associated msa is best tree
+		   
+		   default: PAM
+	Datatype:  String
+		   Data used for tree construction.
+		   Can be PAM, SCORE
+	           PAM: use PAM distances instead of scores
+		   SCORE: use scores and not PAM distances
+		   default: PAM
+
+';
+  if nargs=0 then 
+    return (copy(noeval(TreeConstruction(1, 1, true, 0.1, 0.2,true, 4, 1, 3, 0, false, 1, 1)))); 
+  elif nargs = 13  then
+    return (copy(noeval(TreeConstruction(args))));
+  else
+    print(TreeConstruction);
+    error ('Invalid TreeConstruction format');
+  fi:
+end:
+
+TreeConstruction_type := noeval(structure(anything, TreeConstruction)):
+
+TreeConstruction_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('ALGO', sel) > -1 or sel = 'ALG' then 
+    types := ['PROB', 'TSP', 'PHYLIP']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid TreeConstruction algorithm ',v,'. Legal types are ',types);
+        lprint('The type is now set to TSP');
+        i :=2;
+      fi;
+      u[1] := i;
+    else types[u[1]]; fi;  
+  elif SearchString('METHOD', sel) > -1 or sel = 'MET' then 
+    types := ['LINEAR', 'MINSQUARE', 'AVERAGE', 'MINMAX', 'TREE', 'DOUBLETSP', 'NEIGHBOR', 'KITSCH', 'FITCH']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid TreeConstruction method ',v,'. Legal types are ',types);
+        lprint('The type is now set to',types[1]);
+        i :=1;
+      fi;
+      u[2] := i;
+    else types[u[2]]; fi;  
+  elif SearchString('RELATIVE', sel) > -1 or sel = 'REL' then
+    if nargs=3 then 
+      if type(val, boolean) = false then
+	error('RELATIVE cannot be ',val,' it must be true or false');
+      fi;
+      u[3] := val;
+    else u[3] fi;
+  elif SearchString('SIMULTAN', sel) > -1 or sel = 'SIM' then
+    if nargs=3 then
+      if val > 1 then
+	error('SIMULTAN cannot be ',val,'. Possible values are -1 and 0.0 - 1.0');
+      fi;
+      u[4] := val;
+    else u[4] fi;   
+  elif SearchString('DYNAMIC', sel) > -1 or sel = 'DYN' then
+    if nargs=3 then 
+      if val > 1 then
+	error('SIMULTAN cannot be ',val,'. Possible values are -1 and 0.0 - 1.0');
+      fi;
+      u[5] := val;
+    else u[5] fi;  
+  elif SearchString('ADJUSTEPS', sel) > -1 or sel = 'ADJ' or sel = 'EPS' then
+    if nargs=3 then 
+      if type(val, boolean) = false then
+	error('ADJUSTEPS cannot be ',val,' it must be true or false');
+      fi;
+      u[6] := val;
+    else u[6] fi; 
+   elif SearchString('MAXBRANCH', sel) > -1 or sel = 'MAXB' then
+    if nargs=3 then 
+      if val <-1 then
+	error('MAXBRANCH cannot be ',val,'. Possible values are -1 and 0.0 - n');
+      fi;
+      u[7] := val;
+    else u[7] fi;
+   elif SearchString('MINBRANCH', sel) > -1 or sel = 'MINB' then
+    if nargs=3 then 
+      if val > 0.0 and val < 1.0 then
+	lprint('You set the MINBRANCH parameter relative to n. If n is large');
+	lprint('this could be a problem because of exponential growth!');
+      elif val > 1 then
+	lprint('In each connection step there will be at least',val,'connections,');
+	lprint('this could be a problem because of exponential growth if');
+	lprint('n is large!');
+      fi;
+      u[8] := val;
+    else u[8] fi;
+  elif SearchString('LIMIT', sel) > -1 or sel = 'LIM' then
+    if nargs=3 then 
+      if val = 0 then
+	error('LIMIT cannot be ',val,' it must be < 0 or > 1');
+      fi;
+      u[9] := val; 
+    else u[9] fi;  
+  elif SearchString('DATATYPE', sel) > -1 or sel = 'DT' then
+    types := ['PAM','SCORE']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid TreeConstruction data ',v,'. Legal types are ',types);
+        lprint('The type is now set to ',types[1]);
+        i :=1;
+      fi;
+      u[13] := i;
+    else types[u[13]]; fi;
+  elif SearchString('DATA', sel) > -1 or sel = 'D' then
+    if nargs=3 then 
+      u[10] := val; 
+    else u[10] fi;  
+  elif SearchString('MSASCORE', sel) > -1 or sel = 'M' then
+    if nargs=3 then 
+      u[11] := val; 
+    else u[11] fi;  
+  elif SearchString('SCORING', sel) > -1 or sel = 'S' then
+    types := ['PAM','SCORE','ERROR','INDEX', 'COMBINED', 'MSA']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid TreeConstruction scoring ',v,'. Legal types are ',types);
+        lprint('The type is now set to ',types[1]);
+        i :=1;
+      fi;
+      u[12] := i;
+    else types[u[12]]; fi; 
+
+  else 
+    lprint('Invalid TreeConstruction selector ',sel);
+    print(TreeConstruction);
+  fi;
+end:
+
+
+
+TreeConstruction_rawprint := proc();  
+  tc :=  noeval(TreeConstruction(args));   
+  lprint(tc);
+end:
+
+TreeConstruction_print := proc();
+  tc :=  noeval(TreeConstruction(args));   
+  lprint('Parameters for tree construction data structure:');
+  lprint('-----------------------------------------------');
+  lprint('Algorithm:',tc['alg'], '\t\tMethod:   ',tc['method']);
+  lprint('Relative: ',tc['rel'], '\tSimultan: ',tc['sim']);
+  lprint('Dynamic:  ',tc['dyn'], '\tAdjusteps:',tc['adj']);
+  lprint('Minbranch:',tc['minb'],'\t\tMaxbranch:',tc['maxb']);
+  lprint('Limit:    ',tc['limit'],'\t\tMSAScore:    ',tc['MSASCORE']); 
+  lprint('Scoring:  ',tc['Scoring']);
+  lprint();
+  lprint('Data:     ',tc['data']);
+  lprint();
+end:
+
+CreateTreeConstruction := proc(type: string)
+  description 'Creates a reasonalbe TreeConstruction data structure for the given type.
+  type may be one of the following:
+  
+  prob, phylip, linear, dynamic';
+  
+  tc := TreeConstruction();
+  TYPE := uppercase(type);
+  if TYPE = 'PROB' then
+    tc['algo'] := 'prob';
+  elif TYPE = 'phylip' then
+    tc['algo'] := 'phylip';
+    tc['method'] := 'fitch';
+  elif TYPE = 'LINEAR' then
+    tc['algo'] := 'TSP';
+    tc['dynamic'] := 0;
+  elif TYPE = 'DYNAMIC' then
+    tc['algo'] := 'TSP';
+    tc['dynamic'] := 0.05;
+  fi;
+  return(tc);
+end:
+
+CreateTreeConstructions := proc()
+  description 'Creates a selection of tree construction algorithms.
+  If an optional argument specifies the number of different algorithms.
+  
+  SMALL:  4 different methods 
+  MEDIUM: 14 methods
+  LARGE:  40 methods';
+  
+  if nargs > 0 then what := args[1]; else what := ''; fi;
+   
+  limit := 5; # limit * n
+  if what = 'SMALL' then
+    Dynamic := [-1,  0.05];
+    Simultan := [-1];
+    Maxbranch := [4];
+    Algorithms := ['PROB','PHYLIP','TSP'];    
+    Methods := CreateArray(1..length(Algorithms));
+    Methods[1]:= ['LINEAR'];
+    Methods[2] := ['NEIGHBOR'];
+    Methods[3] := ['LINEAR'];
+    Score := CreateArray(1..length(Algorithms));
+    Score[1] := ['PAM'];
+    Score[2] := ['PAM'];
+    Score[3] := ['SCORE'];
+    MSAscore := [true];
+ 
+  elif what = 'MEDIUM' then
+    Dynamic := [-1, 0.05, 0.1];
+    Simultan := [-1, 0.03];
+    Maxbranch := [4];
+    Algorithms := ['PROB','PHYLIP','TSP'];
+    Methods := CreateArray(1..length(Algorithms));
+    Methods[1]:= ['LINEAR'];
+    Methods[2] := ['NEIGHBOR'];
+    Methods[3] := ['LINEAR'];
+    Score := CreateArray(1..length(Algorithms));
+    Score[1] := ['PAM'];
+    Score[2] := ['PAM'];
+    Score[3] := ['PAM', 'SCORE'];
+    MSAscore := [true];
+ 
+  elif what = 'LARGE' then
+    Dynamic := [-1, 0.05, 0.1];
+    Simultan := [-1, 0.02, 0.05];
+    Maxbranch := [4];
+    Algorithms := ['PROB','PHYLIP','TSP'];
+    Methods := CreateArray(1..length(Algorithms));
+    Methods[1]:= ['LINEAR'];
+    Methods[2] := ['NEIGHBOR', 'KITSCH', 'FITCH'];
+    Methods[3] := ['LINEAR'];
+    Score := CreateArray(1..length(Algorithms));
+    Score[1] := ['PAM'];
+    Score[2] := ['PAM'];
+    Score[3] := ['PAM', 'SCORE', 'ERROR', 'INDEX', 'MSA'];
+    MSAscore := [true];
+  fi;
+  
+  Adjust := [false];
+  Relative := [true];
+  
+  nrconst := length(Simultan)*length(Dynamic)*length(Maxbranch)*length(Methods[3])*length(Adjust)*length(Relative)*length(MSAscore)*length(Score[3]);
+  
+  nrconst := nrconst + length(Methods[2])*length(MSAscore)*length(Score[2])
+	     + length(Methods[1])*length(MSAscore)*length(Score[1]);
+  
+  
+  Constructions := CreateArray(1..nrconst);
+  
+  i := 0;
+  
+  for alg from 1 to 2 do
+    for met in Methods[alg] do		 
+      for mscore in MSAscore do
+	for p in Score[alg]  do
+	  i := i + 1;	
+	  tc := TreeConstruction();
+	  tc['algorithm'] := Algorithms[alg];
+	  tc['method'] := met;	
+	  tc['MSAscore'] := mscore; 
+	  tc['SCORING'] := p;
+	  Constructions[i] := copy(tc);
+	od;
+      od;
+    od;
+  od;
+  
+  alg := 3:
+  for dyn in Dynamic do
+    for sim in Simultan do	
+      for mab in Maxbranch do
+	for met in Methods[alg] do		
+	  for adj in Adjust do
+	    for rel in Relative do 
+	      for mscore in MSAscore do
+		for p in Score[alg]  do
+		  i := i + 1;	
+		  tc := TreeConstruction();
+		  tc['algorithm'] := Algorithms[alg];
+		  tc['method'] := met;	
+		  tc['Dynamic']:= dyn;	
+		  tc['maxbranch'] := mab;
+		  tc['limit'] := limit;
+		  tc['adjusteps'] := adj;
+		  tc['relative'] := rel;
+		  tc['Algorithm'] := 'TSP';
+		  tc['Simultan'] := sim; 
+		  tc['MSAscore'] := mscore; 
+		  tc['SCORING'] := p;
+		  Constructions[i] := copy(tc);
+		od;
+	      od;
+	    od;
+	  od;
+	od;
+      od;
+    od;
+  od:
+  return(Constructions);
+end:
+
+
+# **************************** TREE STATISTICS DATA STRUCTURE *********************
+
+TreeStatistics := proc()
+ option polymorphic;
+  description
+  'Data structure that keeps statistical data about tree constructions and methods
+ 
+Selectors:
+        Type:         Tree
+	              Information on the Tree that was used
+        Construction: TreeConstruction
+	              Information about the TreeConstruction type that was used	 
+	Real:         Integer
+                      Number of exact tree constructions (in position 1)
+	Prob:         Integer
+	              Number of trees that were the same as the tree calculated
+		      by the probabililistic model
+	Total:        Integer
+	              Total number of trees construced     
+	Time:         Stat()
+                      Construction time
+	Position:     Stat()
+                      Position of the real tree in the list of constructed trees
+		      1 is optimal
+	Error:        Stat()
+                      Average error for each connection step
+	Number:       Stat()
+                      Average number of trees at the end of construction 
+        Index:        Stat()
+	              Tree fitting index
+        Deltaindex:   Stat()
+	              Difference of tree fitting index of real tree and constructed tree
+	Topology:     Stat()
+	              Average topology distance of trees
+	Name:         string
+	              Name/Title of these statistics
+        Found:        Integer
+	              How often was the tree found (anywhere)
+        Notfound:     Integer
+	Goodindex:    Integer
+	              If tree was not found: 
+		      how often was index larger than that of real tree (-> good measure)
+	Goodpam:      Integer
+	              If tree was not found: 
+		      how often was total pam distance larger than that of real tree (-> good measure)
+	Goodscore:    Integer
+	              If tree was not found: 
+		      how often was score smaller than that of real tree (-> good measure)
+        Goodmsa:      Integer
+	              If tree was not found: 
+		      how often was score of the msa smaller than that of real tree 
+		      (-> good measure)
+        Msa:          Numeric
+	              Difference in Score of real msa minus score of calculated msa of constructed
+		      tree
+			      
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(TreeStatistics(Tree, TreeConstruction(), 0, 0, 0, Stat(),Stat(), Stat(), Stat(),Stat(), Stat(),Stat(), 0, 0, 0, 0, 0, 0, Stat(), Stat(), Stat(), 0)))); 
+  elif nargs = 22  then
+    return (copy(noeval(TreeStatistics(args))));
+  else
+    print(TreeStatistics);
+    error ('Invalid TreeStatistics format');
+  fi:
+end:
+
+TreeStatistics_type := noeval(structure(anything, TreeStatistics)):
+
+TreeStatistics_rawprint := proc();  
+  ts :=  noeval(TreeStatistics(args));   
+  lprint('TreeStatistics(');
+  for i to length(ts)-1 do
+    if type(ts[i], Stat) = true then
+      s := ts[i]:
+      if s[length(s)] = '' then s[length(s)] := 0; fi;
+      for j to length(s) do
+        if s[j] >1e+100 then s[j] :=1e+100; 
+	elif  s[j] < -1e+100 then s[j] :=-1e+100; fi;
+      od;
+    fi;
+    lprint(ts[i],',');
+  od; 
+  if type(ts[i], Stat) = true then
+    s := ts[i]:
+    if s[length(s)] = '' then s[length(s)] := 0; fi;
+    for j to length(s) do
+      if s[j] >1e+100 then s[j] :=1e+100; 
+      elif  s[j] < -1e+100 then s[j] :=-1e+100; fi;
+    od;
+  fi;
+  lprint(ts[i],')');
+end:
+
+
+TreeStatistics_select := proc( u, select, val );
+ sel := uppercase(select); 
+ if SearchString(sel, 'TREETYPE') > -1 then
+    if nargs=3 then 
+      u[1] := val; 
+    else u[1] fi; 
+  elif SearchString(sel, 'TREECONSTRUCTION') > -1 or sel = 'C' then
+    if nargs=3 then
+      u[2] := val;
+    else u[2] fi;  
+  elif SearchString(sel, 'REAL') > -1 or sel = 'R' then
+    if nargs=3 then
+      u[3] := val;
+    else u[3] fi;  
+   elif SearchString(sel, 'PROBABILISTIC') > -1 or sel = 'P' then
+    if nargs=3 then
+      u[4] := val;
+    else u[4] fi;  
+   elif SearchString(sel, 'TOTAL') > -1 then
+    if nargs=3 then
+      u[5] := val;
+    else u[5] fi;  
+   elif SearchString(sel, 'TIME') > -1  then
+    if nargs=3 then
+      u[6] := val;
+    else u[6] fi;  
+   elif SearchString(sel, 'POSITION') > -1 then
+    if nargs=3 then
+      u[7] := val;
+    else u[7] fi;  
+   elif SearchString(sel, 'ERROR') > -1  then
+    if nargs=3 then
+      u[8] := val;
+    else u[8] fi;  
+   elif SearchString(sel, 'NUMBER') > -1  then
+    if nargs=3 then
+      u[9] := val;
+    else u[9] fi;  
+  elif SearchString(sel, 'INDEX') > -1  then
+    if nargs=3 then
+      u[10] := val;
+    else u[10] fi; 
+  elif SearchString(sel, 'DELTAINDEX') > -1  then
+    if nargs=3 then
+      u[11] := val;
+    else u[11] fi;  
+    elif SearchString(sel, 'TOPOLOGY') > -1  then
+    if nargs=3 then
+      u[12] := val;
+    else u[12] fi; 
+   elif SearchString(sel, 'NAME') > -1  then
+    if nargs=3 then
+      u[13] := val;
+    else u[13] fi;  
+  elif SearchString(sel, 'FOUND') > -1  then
+    if nargs=3 then
+      u[14] := val;
+    else u[14] fi; 
+   elif SearchString(sel, 'NOTFOUND') > -1  then
+    if nargs=3 then
+      u[15] := val;
+    else u[15] fi;  
+   elif sel =  'GOODINDEX'  then
+    if nargs=3 then
+      u[16] := val;
+    else u[16] fi;  
+   elif sel = 'GOODPAM'   then
+    if nargs=3 then
+      u[17] := val;
+    else u[17] fi;  
+   elif sel = 'GOODSCORE'  then
+    if nargs=3 then
+      u[18] := val;
+    else u[18] fi;  
+  elif SearchString(sel, 'PAM') > -1  then
+    if nargs=3 then
+      u[19] := val;
+    else u[19] fi;   
+  elif SearchString(sel, 'SCORE') > -1  then
+    if nargs=3 then
+      u[20] := val;
+    else u[20] fi;  
+  elif SearchString(sel, 'MSA') > -1  then
+    if nargs=3 then
+      u[21] := val;
+    else u[21] fi; 
+  elif sel = 'GOODMSA'  then
+    if nargs=3 then
+      u[22] := val;
+    else u[22] fi; 
+  else 
+    lprint('Invalid TreeStatistics selector ',sel);
+    print(Tree);
+  fi;
+end:
+  
+TreeStatistics_print := proc();
+  ts :=  noeval(TreeStatistics(args));
+  tt := ts['Treetype'];
+  tc := ts['treeconstruction'];
+  
+  lprint('Parameters:');
+  lprint('###########');
+  print(tt);
+  print(tc);
+  lprint('Results:');
+  lprint('########');
+  lprint('Total number of trees:            ',ts['total']);
+  lprint('Number of exact constructions:    ',ts['real']);
+  lprint('Number of trees = prob trees:     ',ts['prob']);
+  
+  if ts['real'] > 0 then
+    lprint('Percentage of exact constructions (pos 1)  :',ts['real']/ts['total']*100);
+  fi; 
+  if ts['position',Number] > 0 then
+    lprint('Percentage of exact constructions (any pos):',ts['position', Number]/ts['total']*100);
+  fi;
+  if ts['prob'] > 0 then
+    lprint('Percentage of trees = prob trees: ',ts['prob']/ts['total']*100);
+  fi;
+  lprint();
+  lprint('Position of real tree in list of constructed trees:');
+  lprint('---------------------------------------------------');
+  print(ts['position']);
+  lprint();
+  lprint('Topology distance of real tree and constructed trees:');
+  lprint('-----------------------------------------------------');
+  print(ts['topology']);
+  lprint();
+  lprint('Error for each connection step:'); 
+  lprint('-------------------------------');
+  print(ts['error']);
+  lprint();
+  lprint('Number of trees at end of construction:'); 
+  lprint('---------------------------------------');
+  print(ts['number']);
+  lprint(); 
+  lprint('Tree fitting index:'); 
+  lprint('-------------------');
+  print(ts['index']);
+  lprint(); 
+  lprint('Tree fitting index of real tree - constructed tree:'); 
+  lprint('---------------------------------------------------');
+  print(ts['deltaindex']);
+  lprint(); 
+  lprint('Average construction time in seconds:'); 
+  lprint('-------------------------------------');
+  print(ts['time']);
+  lprint();
+end:
+
+CreateTreeStatistics := proc(Constructions: array(TreeConstruction), Trees: array(Tree))
+  description 'Creates an array of TreeStatistics of TreeConstruction and Tree';
+  nrtrees := length(Trees);
+  nrconst := length(Constructions);
+
+  # for each type of construction and tree generate statistics
+  Statistics := CreateArray(1..nrtrees, 1..nrconst):
+ 
+  for i to nrtrees do
+    tnr := Trees[i,1];
+    for j to nrconst do
+      ts := TreeStatistics();
+      ts['type'] := Trees[i];
+      ts['construction'] := Constructions[j];
+      ts['name'] := 'stats.t'.tnr.'.c'.j.'.txt';
+      Statistics[i, j] := copy(ts);
+    od;
+  od:
+  return(Statistics);
+end:
+
+
+EvolTree := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a EvolTree data structure
+
+Selectors:
+        Tree:   Tree
+        TC:     TreeConstruction type (how was the tree constructed)
+	Data:   DataMatrix
+	Index:  Tree fitting index
+	PAM:    Total pam length of tree
+	Score:  Score of tree
+	Order:  TSP order
+	
+Other selectors not contained directly in data structure
+	n:      number of leaves
+        leaves: returns a list of leafnames of tree
+	
+Constructors:
+        EvolTree(Tree)
+	EvolTree(Tree, TC)
+	EvolTree(Tree, TC, Data, Index, PAM, Score, Order)
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(EvolTree(0,0,0,0,0,0,0)))); 
+  elif nargs = 1 and type(args[1], Tree) then
+    return (copy(EvolTree(args[1], 0,0,0,0,0,0)));
+  elif nargs = 2 and type(args[1], Tree) and type(args[2], TreeConstruction) then
+    return (copy(noeval(EvolTree(args[1], args[2], 0,0,0,0))));
+  elif nargs = 7  then
+    return (copy(noeval(EvolTree(args))));
+  else
+    print(EvolTree);
+    error ('Invalid EvolTree format');
+  fi:
+end:
+
+EvolTree_type := noeval(structure(anything, EvolTree)):
+
+
+EvolTree_rawprint := proc();  
+ 
+end:
+
+EvolTree_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('TREE', sel) > -1 or sel = 'T' then 
+    if nargs=3 then  
+      u[1] := val; 
+    else u[1] fi;
+  elif SearchString('TREECONSTRUCTION', sel) > -1 or sel = 'TC' then
+    if nargs=3 then 
+      u[2] := val; 
+    else u[2] fi; 
+  elif SearchString('DATA', sel) > -1 or sel = 'D' then
+    if nargs=3 then
+      u[3] := val;
+    else u[3] fi;  
+  elif SearchString('INDEX', sel) > -1  or sel = 'I' then
+    if nargs=3 then
+      u[4] := val;
+    else u[4] fi;   
+  elif SearchString('PAM', sel) > -1  or sel = 'P' then
+    if nargs=3 then
+      u[5] := val;
+    else u[5] fi;  
+  elif SearchString('SCORE', sel) > -1  or sel = 'S' then
+    if nargs=3 then
+      u[6] := val;
+    else u[6] fi;
+  elif SearchString('ORDER', sel) > -1  or sel = 'O' then
+    if nargs=3 then
+      u[5] := val;
+    else u[5] fi;
+  elif SearchString('LEAVES', sel) > -1 or sel = 'N' then
+    return(GetLabels(u[1]));
+  else 
+    lprint('Invalid EvolTree selector ',sel);
+    print(EvolTree);
+  fi;
+end:
+
+
+EvolTree_print := proc() printf( '%s\n', EvolTree_string(args)) end:
+
+EvolTree_string := proc();
+  tt :=  noeval(EvolTree(args));
+  res := copy('');
+  res := res.sprintf('Parameters of EvolTree:\n');
+  res := res.sprintf('-----------------------\n');
+  res := res.sprintf('Tree:   %a\n',tt['tree']);
+  res := res.sprintf('Score:  %3.2f\n',tt['score']);
+  res := res.sprintf('PAM:    %3.2f\n',tt['pam']);
+  res := res.sprintf('Index:  %3.2f\n',tt['index']);
+ 
+  res := res.sprintf('Number of leaves:  %d\n\n',tt['n']);
+  return(res);
+end:
+
+# todo
+# decide: allall data structure with extraction for score, Pam etc
+# datamatrix -> scorematrix
+#               distmatrix
+#               allallmatrix

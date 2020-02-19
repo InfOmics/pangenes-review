@@ -1,0 +1,352 @@
+#
+#   Orthologues - find the orthologues sequences between the sequences
+#		  of two or more species.
+#
+#					Gaston H. Gonnet (Dec 17, 2001)
+#			rewritten	Gaston H. Gonnet (Apr 07, 2005)
+
+
+
+module external Orthologues;
+local BestMatch,N,genomes,ns;
+
+Pair := proc( Score:numeric, Entry:posint, PamDist:positive )
+    option NoIndexing;
+if nargs = 3 then noeval(procname(round(Score),Entry,PamDist))
+else error(args,'invalid arguments') fi
+end:
+CompleteClass(Pair):
+
+
+
+Orthologues := proc( ;
+	species:{list(string),set(string)},
+	SampleSeq:string,
+	'MinScore'=((MinScore=300):positive),
+	'ScoreTol'=((ScoreTol=0.95):positive),
+	'LengthTol'=((LengthTol=0.7):positive) ) -> list(OrthologousGroup);
+external BestMatch, N, genomes, ns;
+
+if not assigned(DM) then CreateDayMatrices() fi;
+if assigned(SampleSeq) then
+     if assigned(species) then 
+	 error('either species or SampleSeq can be specified') fi;
+
+     if type([LowScore],[numeric]) and LowScore >= 0
+     then lows := LowScore else lows := 300 fi;
+
+     ms := AlignOneAll( SampleSeq, DB, DM, lows );
+     es := {seq( op(Entry(i)), i=ms )};
+
+     species := [];
+     Seqs := [];
+     for e in {seq( op(Entry(i)), i=ms )} do
+         spe := SearchTag('OS',e);
+         i := SearchArray(spe,species);
+         if i > 0 then Seqs[i] := append( Seqs[i], Sequence(e) )
+         else species := append(species,spe);
+              Seqs := append( Seqs, [Sequence(e)] )
+              fi
+         od;
+     N := length(species);
+
+elif assigned(species) then
+     N := length(species);
+     Seqs := CreateArray(1..N):
+     for i1 to N do Seqs[i1] := zip(Sequence(Species_Entry(species[i1]))) od
+
+else error(args,'either species or SampleSeq should be specified') fi;
+
+genomes := species := [op(species)];
+ns := CreateArray(1..N);
+for i to N do ns[i] := length(Seqs[i]) od;
+BestMatch := CreateArray(1..N,1..N);
+Aligns := CreateArray(1..N,1..N,[]);
+for i to N do for j from i+1 to N do
+    BestMatch[i,j] := CreateArray(1..ns[i],[]);
+    BestMatch[j,i] := CreateArray(1..ns[j],[]);
+od od;
+
+# build the stable pairs between each species
+st := time()+300;
+for j1 to N do
+    l1 := length(Seqs[j1]);
+
+    for j2 from j1+1 to N do
+	l2 := length(Seqs[j2]);
+	
+	for i1 to l1 do for i2 to l2 do
+	    t := DynProgScore(Seqs[j1,i1],Seqs[j2,i2],DM,JustScore)[1];
+	    if 1.3*t > MinScore then
+		al := Align(Seqs[j1,i1],Seqs[j2,i2],DMS);
+		if al[Score] > MinScore and max(al[Length1],al[Length2]) >=
+		   LengthTol * min(length(Seqs[j1,i1]),length(Seqs[j2,i2])) then
+		    BestMatch[j1,j2,l1] := append( BestMatch[j1,j2,l1],
+			Pair(al[Score],l2,al[PamDistance]) );
+		    BestMatch[j2,j1,l2] := append( BestMatch[j2,j1,l2],
+			Pair(al[Score],l1,al[PamDistance]) );
+		    Aligns[j1,j2] := append(Aligns[j1,j2],[al,l1,l2])
+		fi
+	    fi;
+	od od;
+	if printlevel > 1 and time() > st then
+	    printf( 'comparing seqs in %s vs seqs in %s\n', species[j1],
+		species[j2] );
+	    st := time()+300
+	fi
+    od;
+od;
+
+om := OrthologousMatrix( MinScore, ScoreTol, LengthTol );
+r := [];
+for og in sort( om, x -> sum( If(z=0,1,0), z=x )) do
+    sps := sqs := inds := [];
+    for j1 to N do if og[j1] <> 0 then
+	sps := append(sps,species[j1]);
+	sqs := append(sqs,Seqs[j1,og[j1]]);
+	inds := append(inds,j1)
+    fi od;
+    n := length(sps);
+    aa := CreateArray(1..n,1..n);
+    for i1 to n do
+	j1 := inds[i1];
+	for i2 from i1+1 to n do
+	    j2 := inds[i2];
+	    for z in Aligns[j1,j2] while z[2]<>og[j1] or z[3]<>og[j2] do od;
+	    aa[i1,i2] := aa[i2,i1] := z[1]
+	od
+    od;
+    r := append(r,OrthologousGroup(sps,sqs,aa))
+od;
+
+r
+end:
+
+
+####################################
+# Orthologous matrix using cliques #
+####################################
+OrthologousMatrix := proc( MinScore:positive, ScoreTol:positive,
+        LengthTol:positive )
+global CliqueIterFactor;
+
+# Boundary scores for stable pairs
+MinSco := CreateArray(1..N,1..N):
+for X to N do for Y to N do if X <> Y then
+    MinSco[X,Y] := CreateArray(1..ns[X]);
+    for x1 to ns[X] do if BestMatch[X,Y,x1] <> [] then
+        MinSco[X,Y,x1] := ScoreTol * max( seq(p[Score],p=BestMatch[X,Y,x1]) )
+    fi od
+fi od od:
+
+#
+#    ------------------                     ------------------
+#    |                |         a1          |                |
+#    |    ====== x1   | ------------------- |    ====== y2   |
+#    |       \ .      |                     |    . /         |
+#    |X       \   .   |                     |Y.   /          |
+#    ----------\-----.-                    .-----/------------
+#               \       .               .       /
+#                \       a4.         .b3       /
+#               a3\           .   .           /b4
+#                  \           . .           /
+#                ---\-------.-------.-------/------
+#                |   \   .             .   /      |
+#                |   ====== z3         ====== z4  |
+#                |                                |
+#                |Z                               |
+#                ----------------------------------
+#
+#        X, Y and Z are genome numbers
+#        x1, y2, z3 and z4 are entry numbers
+#        a1, a3, a4, b3, b4 are alignments (Pair structure)
+#
+
+#	When we have the conditions:
+#		d(x1,z3) < d(x1,z4)
+#		d(y2,z4) < d(y2,z3) which added together imply
+#	d(x1,z3) + d(y2,z4) < d(x1,z4) + d(y2,z3)
+#
+#	the only possible quartet is
+#
+#            x1                               y2
+#              \                             /
+#               \p                         s/
+#                \                         /
+#                 \            r          /
+#                  o---------------------o
+#                 /                       \
+#                /                         \
+#               /q                         t\
+#              /                             \
+#            z3                               z4
+#
+#  eqns := { a1[PamDist]=p+r+s, a3[PamDist]=p+q, a4[PamDist]=p+r+t,
+#	b3[PamDist]=q+r+s, b4[PamDist]=s+t };
+#  sol := solve(eqns,{p,q,r,s,t});
+#
+#  These five lengths, p,q,r,s and t must be non-negative
+#  (given the above conditions, r cannot be negative)
+
+# counters for everything to gain confidence on the process
+DistTol := 1/ScoreTol;
+VPairs := CreateArray(1..N,1..N):
+for X to N do for Y from X+1 to N do
+    VPairs[X,Y] := CreateArray(1..ns[X],[]);
+    VPairs[Y,X] := CreateArray(1..ns[Y],[]);
+    for x1 to ns[X] do for a1 in BestMatch[X,Y,x1] do
+        y2 := a1[Entry];
+        if a1[Score] < max(MinSco[X,Y,x1],MinSco[Y,X,y2]) then next
+        elif not member( x1, {seq(i[Entry],i=BestMatch[Y,X,y2])} ) then
+             next fi;
+        bad := false;
+        for Z to N while not bad do if Z <> X and Z <> Y then
+            for a3 in BestMatch[X,Z,x1] while not bad do
+                z3 := a3[Entry];
+                if a3[Score] < max(MinSco[X,Z,x1],MinSco[Z,X,z3]) or
+		   not member( x1, {seq(i[Entry],i=BestMatch[Z,X,z3])} ) then
+		     next fi;
+                for b4 in BestMatch[Y,Z,y2] do
+                    z4 := b4[Entry];
+                    if z4=z3 then next
+                    elif b4[Score] < max(MinSco[Y,Z,y2],MinSco[Z,Y,z4]) or
+		       not member( y2, {seq(i[Entry],i=BestMatch[Z,Y,z4])}) then
+                         next fi;
+                    for a4 in BestMatch[X,Z,x1] while a4[Entry] <> z4 do od;
+                    if a4[Entry] <> z4 then next fi;
+                    if a4[PamDist] < DistTol*a3[PamDist] then next fi;
+                    for b3 in BestMatch[Y,Z,y2] while b3[Entry] <> z3 do od;
+                    if b3[Entry] <> z3 then next fi;
+                    if b3[PamDist] < DistTol*b4[PamDist] then next fi;
+		    p := (a3[PamDist]-b3[PamDist]+a1[PamDist])/2;
+		    if p<0 then next fi;
+		    q := (b3[PamDist]+a3[PamDist]-a1[PamDist])/2;
+		    if q<0 then next fi;
+		    s := (b4[PamDist]+a1[PamDist]-a4[PamDist])/2;
+		    if s<0 then next fi;
+		    t := (-a1[PamDist]+a4[PamDist]+b4[PamDist])/2;
+		    if t<0 then next fi;
+                    bad := true;
+		    break;
+                od;
+            od
+        fi od;
+        if not bad then
+            VPairs[X,Y,x1] := append(VPairs[X,Y,x1],y2);
+            VPairs[Y,X,y2] := append(VPairs[Y,X,y2],x1);
+        fi;
+    od od;
+    for x1 to ns[X] do VPairs[X,Y,x1] := {op(VPairs[X,Y,x1])} od;
+    for y2 to ns[Y] do VPairs[Y,X,y2] := {op(VPairs[Y,X,y2])} od;
+od od:
+
+
+ EdgeCost := proc( s:set(posint) )
+   if length(s) <> 2 then error(s,'invalid arguments') fi;
+   n1 := cli[s[1]];  n2 := cli[s[2]];
+   for bm in BestMatch[n1[1],n2[1],n1[2]] do
+       if bm[Entry]=n2[2] then return( bm[Score] ) fi od;
+   error(s,n1,n2,'match not found')
+ end:
+
+# find the cliques of Verified Pairs which become the Orthologous groups
+Orthologous := []:
+Used := CreateArray(1..N):
+for i to N do Used[i] := CreateArray(1..ns[i],false) od:
+
+do
+  VerifiedPairs := [];
+  ls := 0;
+  for X to N do for Y from X+1 to N do
+    for x1 to ns[X] do if not Used[X,x1] then
+        for a1 in BestMatch[X,Y,x1] do if a1[Score] > ls then
+            y2 := a1[Entry];
+            if not Used[Y,y2] and member(y2,VPairs[X,Y,x1]) then
+                VerifiedPairs := append( VerifiedPairs, [a1[Score],X,x1,Y,y2] );
+                if length(VerifiedPairs) > 10000 then
+                    VerifiedPairs := sort(VerifiedPairs)[-5000..-1];
+                    ls := VerifiedPairs[1,1];
+                    fi
+                fi
+            fi od
+        fi od
+    od od:
+  if length(VerifiedPairs)=0 then break fi;
+
+  VerifiedPairs := sort(VerifiedPairs);
+  for iz from length(VerifiedPairs) by -1 to 1 do
+
+    z := VerifiedPairs[iz];
+    g1 := z[2];  i1 := z[3];  g2 := z[4];  i2 := z[5];
+    if Used[g1,i1] or Used[g2,i2] then next fi;
+    if not member(i2,VPairs[g1,g2,i1]) or not member(i1,VPairs[g2,g1,i2]) then
+        error('should not happen') fi;
+
+    # candidate clique
+    cli := { [g1,i1], [g2,i2] };
+    for g3 to N do if g3 <> g1 and g3 <> g2 then
+        cli := cli union { seq( If(Used[g3,w],NULL,[g3,w]),
+                w = VPairs[g1,g3,i1] intersect VPairs[g2,g3,i2] ) }
+        fi od;
+
+    # Make graph to find cliques
+    edg := []:
+    for j1 to length(cli) do for j2 from j1+1 to length(cli) do
+        g1 := cli[j1,1];  i1 := cli[j1,2];
+        g2 := cli[j2,1];  i2 := cli[j2,2];
+        if g1=g2 then next fi;
+        if member(i2,VPairs[g1,g2,i1]) then edg := append(edg,{j1,j2}) fi
+        od od;
+
+    if length(edg) = length(cli)*(length(cli)-1)/2 then
+    else do  gr := Graph( {seq(i,i=1..length(cli))}, {op(edg)} );
+             if length(cli) > 100 then
+                  CliqueIterFactor := 5/length(cli);
+             else CliqueIterFactor := 1 fi;
+             cligr := traperror(Clique(gr));
+             if cligr='too many edges in complement graph' or
+                cligr='stack overflow, stack too small or infinite recursion' then
+                  # clique is too large, the edge set has to be thinned
+                  # remove the lower 20% Score edges
+                  edg := sort( edg, EdgeCost );
+                  edg := edg[ round(length(edg)*0.2) .. -1 ]:
+                  next
+             elif cligr=lasterror then error(cligr) fi;
+             cli := { seq( cli[i], i=cligr ) };
+             break;
+         od
+    fi;
+
+    if length(cli) < 2 then next fi;
+
+    row := CreateArray(1..N);
+    for z in cli do
+        row[z[1]] := z[2];
+        Used[z[1],z[2]] := true;
+        od;
+    Orthologous := append(Orthologous,row):
+    od
+  od:
+
+Orthologous
+end:
+
+
+end: # end module
+
+OrthologousGroup := proc( Species:list(string), Seqs:list(string),
+    AllAll:matrix({0,Alignment}) )
+n := length(Species);
+if nargs <> 3 or length(Seqs) <> n or not type(AllAll,array(anything,n,n))
+    then error('invalid arguments') fi;
+noeval(procname(args))
+end:
+
+OrthologousGroup_select := proc( og:OrthologousGroup, sel )
+if nargs=3 then error('cannot assign to an OrthologousGroup')
+elif lowercase(sel)='length' then length(og['Species'])
+elif lowercase(sel)='tree' then
+     PhylogeneticTree( og['Seqs'], og['Species'], DISTANCE, og['AllAll'] )
+else error(sel,'is an invalid selector') fi
+end:
+CompleteClass(OrthologousGroup);

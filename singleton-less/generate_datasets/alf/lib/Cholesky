@@ -1,0 +1,89 @@
+#
+#  Cholesky decomposition out of SRS
+#
+#			Gaston Gonnet, (Jan 1998)
+#
+Cholesky := proc( A:matrix(numeric) )
+description
+'R := Cholesky(A) computes the Cholesky decomposition of the matrix A.
+A is the input matrix, and must be a square, symmetric, positive definite
+matrix.  If A does not satisfy these conditions, an error is returned.
+
+R is a square matrix, lower triangular, such that R*transpose(R) = A.
+
+Cholesky is used to check for positive-definiteness, as the same time
+that it allows to solve a system Ax=b (by doing two backsubstitutions)
+if it is positive-definite.';
+
+n := length(A);
+if n = 0 then error( 'invalid arguments' )
+elif length(A[1]) <> n then error( 'matrix is not square' )
+elif A <> transpose(A) then error( 'matrix is not symmetric' )
+
+elif n = 1 then
+     if A[1,1] <= 0 then error( 'not positive definite' )
+     else [[A[1,1]^(1/2)]] fi
+
+elif n = 2 then
+     t2 := A[1,1];
+     if t2 <= 0 then error( 'not positive definite' ) fi;
+     t1 := A[2,1];
+     t4 := A[2,2]-t1^2/t2;
+     if t4 <= 0 then error( 'not positive definite' ) fi;
+     t3 := t2^(1/2);
+     [ [t3,0], [t1/t3,t4^(1/2)]]
+
+elif n = 3 then
+     t10 := A[1,1];
+     if t10 <= 0 then error( 'not positive definite' ) fi;
+     t12 := t10^(1/2);
+     t7 := 1/t10;
+     t8 := A[1,2];
+     t5 := A[2,2]-t7*t8^2;
+     if t5 <= 0 then error( 'not positive definite' ) fi;
+     t11 := t5^(1/2);
+     t9 := A[1,3];
+     t6 := 1/t12;
+     t4 := A[2,3]-t7*t9*t8;
+     t3 := A[3,3]-t7*t9^2-1/t5*t4^2;
+     if t3 <= 0 then error( 'not positive definite' ) fi;
+     [ [t12,0,0], [t6*t8,t11,0], [t6*t9,t4/t11,t3^(1/2)] ]
+
+elif n = 4 then
+     t4 := A[1,1];
+     if t4 <= 0 then error( 'not positive definite' ) fi;
+     t9 := 1/t4;
+     t8 := A[1,4];
+     t7 := t9*t8;
+     t1 := t4^(1/2);
+     t6 := A[1,2];
+     t11 := A[2,2]-t9*t6^2;
+     if t11 <= 0 then error( 'not positive definite' ) fi;
+     t18 := 1/t11;
+     t5 := A[1,3];
+     t16 := A[2,3]-t9*t5*t6;
+     t14 := A[3,3]-t9*t5^2-t18*t16^2;
+     if t14 <= 0 then error( 'not positive definite' ) fi;
+     t2 := t14^(1/2);
+     t3 := t11^(1/2);
+     t10 := 1/t1;
+     t17 := 1/t3;
+     t15 := A[2,4]-t6*t7;
+     t13 := A[3,4]-t5*t7-t18*t15*t16;
+     t12 := A[4,4]-t9*t8^2-t18*t15^2-1/t14*t13^2;
+     if t12 <= 0 then error( 'not positive definite' ) fi;
+     [ [t1,0,0,0], [t10*t6,t3,0,0], [t10*t5,t17*t16,t2,0],
+	[t10*t8,t17*t15,1/t2*t13,t12^(1/2)]]
+
+else R := CreateArray(1..n,1..n);
+     AA := copy(A);
+     for p to n do
+	 if AA[p,p] <= 0 then error( 'not positive definite' ) fi;
+	 R[p,p] := AA[p,p]^(1/2);
+	 for k from p+1 to n do R[k,p] := AA[p,k]/R[p,p] od;
+	 for i from p+1 to n do
+	     for k from i to n do AA[i,k] := AA[i,k] - R[i,p]*R[k,p] od od
+	 od;
+     R
+     fi
+end:

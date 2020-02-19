@@ -1,0 +1,72 @@
+#
+#	Zscore - transform a vector or matrix of counts
+#		into a a normalized variable (one with expected
+#		value 0 and variance 1).  This is subtracting
+#		the expected value and dividing by the standard
+#		deviation.
+#
+#		In this way the observations can be measured in
+#		"standard deviations away from the mean", which
+#		is a simple and useful measure.
+#
+#	This is sometimes called the Z-transform, but since the
+#	Z-transform has a well established use in power series,
+#	we use the name Zscore.
+#
+#	If the input is a vector of integers, it is assumed that
+#	all the values are counts of events which are equally likely.
+#
+#	If the input is a matrix it is assumed that the values are
+#	counts of two independent events (columns/rows).
+#
+#	In both cases, a binomial distribution is assumed for the
+#	counts, i.e. the events are independent of each other.
+#
+#					Gaston H. Gonnet (Oct 7, 2005)
+#
+Zscore := proc( data:{list(integer),matrix(integer)} )
+if length(data) <= 1 or type(data,matrix) and length(data[1]) <= 1 then
+     if type(data,matrix) then
+	  r := CreateArray(1..length(data),1..length(data[1]))
+     else r := CreateArray(1..length(data)) fi
+elif type(data,matrix) then
+     sumcol := sum(data);
+     sumrow := sum(transpose(data));
+     n := sum(sumrow);
+     r := copy(data);
+     for i to length(sumrow) do for j to length(sumcol) do
+	p := sumrow[i] * sumcol[j] / n^2;
+        if p>0 then r[i,j] := (data[i,j]-n*p) / sqrt( n*p*(1-p) ) fi
+     od od;
+else n := sum(data);
+     r := copy(data);
+     p := 1/length(data);
+     if n>0 then for i to length(data) do
+	 r[i] := (data[i]-n*p) / sqrt( n*p*(1-p) )
+     od fi
+fi;
+r
+end:
+
+ZscorePercent := proc( data:{list(integer),matrix(integer)} )
+if length(data) <= 1 or type(data,matrix) and length(data[1]) <= 1 then
+     if type(data,matrix) then
+	  r := CreateArray(1..length(data),1..length(data[1]))
+     else r := CreateArray(1..length(data)) fi
+elif type(data,matrix) then
+     sumcol := sum(data);
+     sumrow := sum(transpose(data));
+     n := sum(sumrow);
+     r := copy(data);
+     for i to length(sumrow) do for j to length(sumcol) do
+	p := sumrow[i] * sumcol[j] / n^2;
+        if p>0 then r[i,j] := 100*(data[i,j]-n*p) / (n*p) fi
+     od od;
+else np := sum(data) / length(data);
+     r := copy(data);
+     if np>0 then for i to length(data) do
+	 r[i] := 100*(data[i]-np) / np
+     od fi
+fi;
+r
+end:

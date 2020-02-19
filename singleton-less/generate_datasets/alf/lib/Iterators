@@ -1,0 +1,91 @@
+#
+#	various unrelated iterators
+#
+###########################################
+#
+#	iterator for prime numbers, use: for n in Primes() do ... od;
+#
+#			Gaston Gonnet (April 2002)
+#
+Primes_iterator := proc() option internal;
+iterate(2);
+for i from 3 by 2 do
+    lim := ceil(sqrt(i));
+    for z from 3 by 2 to lim do
+        if mod(i,z)=0 then break fi od;
+    if z > lim then iterate(i) fi;
+    od
+end:
+Primes := noeval(Primes):
+
+
+Indets_iterator := proc( ind ) option internal;
+a := ind[1];  ty := ind[2];
+if type(a,ty) then iterate(a)
+elif type(a,{set,list,structure}) then
+     for z in a do procname( Indets(z,ty) ) od
+     fi
+end:
+Indets := noeval(Indets):
+
+
+
+Infix_iterator := proc( t ) option internal;
+if type(t,Infix(anything)) then procname(t[1])
+elif type(t,Leaf) then iterate(t)
+else procname(t[Left]);
+     iterate(t);
+     procname(t[Right])
+     fi
+end:
+Infix := noeval(Infix):
+
+
+Prefix_iterator := proc( t ) option internal;
+if type(t,Prefix(anything)) then procname(t[1])
+else iterate(t);
+     if not type(t,Leaf) then
+	  procname(t[Left]);
+	  procname(t[Right]) fi
+     fi
+end:
+Prefix := noeval(Prefix):
+
+
+Postfix_iterator := proc( t ) option internal;
+if type(t,Postfix(anything)) then procname(t[1])
+else if not type(t,Leaf) then
+	  procname(t[Left]);
+	  procname(t[Right]) fi;
+     iterate(t);
+     fi
+end:
+Postfix := noeval(Postfix):
+
+
+
+Leaves_iterator := proc( t ) option internal;
+if type(t,Leaves(anything)) then procname(t[1])
+elif type(t,Leaf) then iterate(t)
+else procname( t[Left] );
+     procname( t[Right] )
+     fi
+end:
+Leaves := noeval(Leaves):
+
+
+Lines_iterator := proc( s ) option internal;
+if type(s,Lines(anything)) then procname(s[1])
+elif not type(s,string) then error('Lines operates on Strings only');
+else
+    i := 1; l := length(s);
+    if l=0 then return() fi: # in case of the empty string, exit
+    do 
+        for j from i to l while s[j]<>'\n' do od:
+        iterate(s[i..min(j,l)]);
+        i := j+1;
+        if j>=l then break fi;
+    od:
+fi:
+end:
+Lines := noeval(Lines):

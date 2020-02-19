@@ -1,0 +1,364 @@
+#
+#	LongInteger, arbitrary precision integers
+#
+#				Gaston H. Gonnet (June 1998)
+#
+#	A more practical and complete example of
+#	 Object oriented programming in Darwin
+#
+#	An arbitrary precision integer is represented as an array
+#	 of integers base 67108864 (=2^26).  The integers can be
+#	 positive or negative provided that |r[i]| < 67108864
+#
+
+LongInteger := proc(s)
+option polymorphic;
+description
+'Data structure LongInteger( ... )
+Representation of integers which could exceed the 53 bits of precision
+available with IEEE double precision floating point numbers.  Operations with
+LongIntegers are contagious, that is to say that any arithmetic operation
+with at least one LongInteger argument will return a LongInteger result.
+
+This implementation is OO and any program/function working correctly for
+integers, should work correctly when the input contains LongIntegers (with
+the obvious differences accounted for additional precision).
+
+- Operations:
+    Initialization:      a := LongInteger( <integer> )
+                         a := LongInteger( <string> )
+                         a := LongInteger( <integer>, <integer>, ... )
+
+	The first case transform the integer argument to the long precision
+	format.  The second format accepts a string which should contain an
+	integer (possibly signed) of arbitrary length.  The third case is
+	to build a long precision integer when its representation base
+	LongInteger_base is known.
+
+	LongIntegers are represented by a LongInteger structure having the
+	following properties:
+
+	a := LongInteger( i1, i2, i3, .... , i[k] );
+
+	value:	i1 + i2*LongInteger_base + i3*LongInteger_base^2 + ...
+	assertions:	-LongInteger_base/2 <= i[j] <= LongInteger_base/2
+			i[k] <> 0 (except for the representation of 0)
+
+    Arithmetic operations:
+        a+b, a-b, a*b, iquo(a,b), a^b, mod(a,b), |a|
+	(powering is only supported for positive exponents)
+
+    Boolean operations:
+	a = b, a <= b, a < b
+
+    Special functions    Rand(LongInteger)
+    Printing:            print(a);
+                         printf( ''%d'', a );
+    Type testing:        type(a,LongInteger);
+
+- Conversions:
+    To string   : string(a)
+       numeric  : numeric(a)
+
+- Selectors:
+    no selectors
+
+See also,  ?Inherit  ?integer  ?LLL';
+
+     if nargs=1 and type(s,integer) then
+	  if s >= -LongInteger_base2 and s <= LongInteger_base2 then
+	       return( noeval(procname(args)) )
+	  else return( noeval( LongInteger( op(LongInteger_normal([s])))) ) fi
+     elif nargs > 1 and type([args],list(integer)) then
+	  maxs := max( max(args), -min(args) );
+	  if maxs <= LongInteger_base2 and args[nargs] <> 0 then
+	       return( noeval(procname(args)) )
+	  elif maxs < scalb(1,52) then
+	       return( noeval( LongInteger( op(LongInteger_normal([args])))) )
+	  else cy := round([args]/LongInteger_base);
+	       t := [args] - cy*LongInteger_base;
+	       return( noeval(LongInteger(op(t))) + LongInteger(0,op(cy)) )
+	       fi
+     elif nargs=1 and type(s,string) then
+	  t := s;
+	  if length(t) > 1 and t[1]='-' then sig := -1;  t := 1+t
+	  else sig := 1 fi;
+	  r := LongInteger_0;
+	  while length(t) > 0 do
+	      i := SearchString( t[1], '0123456789' );
+	      if i < 0 then error('invalid character in number') fi;
+	      r := 10*r+i;
+	      t := 1+t
+	      od;
+	  return(sig*r)
+     else error('invalid arguments')
+          fi;
+end:
+
+
+
+LongInteger_base := 67108864:
+LongInteger_base2 := LongInteger_base/2:
+LongInteger_log2base := 26:
+LongInteger_0 := noeval( LongInteger(0) ):
+
+
+
+LongInteger_abs := proc( a:LongInteger ) option internal;
+if a < 0 then -a else a fi
+end:
+
+
+
+LongInteger_equal := proc( a, b ) option internal;
+sequal(a-b,LongInteger_0)
+end:
+
+
+
+LongInteger_iquo := proc( a, b ) option internal;
+
+if type(a,LongInteger) then aa := [op(a)]
+elif type(a,integer) then aa := [op(LongInteger(a))]
+else error(a,'cannot be divided by a LongInteger') fi;
+la := length(aa);
+if aa[la] < 0 then aa := -aa;  sign := -1 else sign := 1 fi;
+
+if type(b,LongInteger) then bb := [op(b)]
+elif type(b,integer) then bb := [op(LongInteger(b))]
+else error(b,'cannot divide a LongInteger') fi;
+lb := length(bb);
+if bb[lb] < 0 then bb := -bb;  sign := -sign fi;
+
+apb := 0;
+for ib from lb by -1 to max(1,lb-3) do apb := apb*LongInteger_base+bb[ib] od;
+
+lq := max(1,la-lb+1);
+q := CreateArray(1..lq);
+for i from lq by -1 to 1 do
+    apa := 0;
+    for ia from min(la,lb+i+1) by -1 to max(1,lb+i-4) do
+	apa := apa*LongInteger_base+aa[ia] od;
+    if i=lq and ib=ia and apa < apb then return(LongInteger_0) fi;
+    q[i] := qi := round( scalb( apa/apb, (1-i+ia-ib)*LongInteger_log2base ));
+    cy := 0;
+    for j from i to lb+i-1 do
+	t := aa[j] - qi*bb[j-i+1] + cy;
+	cy := round(t/LongInteger_base);
+	aa[j] := t - cy*LongInteger_base
+	od;
+    for j from j to la while cy <> 0 do
+	t := aa[j] + cy;
+	cy := round(t/LongInteger_base);
+	aa[j] := t - cy*LongInteger_base
+	od;
+    od;
+for i from la by -1 to 2 while aa[i]=0 do od;
+if aa[i] < 0 then q[1] := q[1]-1 fi;
+LongInteger( op(sign*q) )
+end:
+
+
+
+LongInteger_less := proc( a, b ) option internal;
+c := a-b;
+c[length(c)] < 0
+end:
+
+
+
+LongInteger_lessequal := proc( a, b ) option internal;
+c := a-b;
+c[length(c)] <= 0
+end:
+
+
+
+LongInteger_mod := proc(a,b) option internal;  a-b*iquo(a,b) end:
+
+
+
+
+LongInteger_normal := proc( s:list(integer) ) option internal;
+ls := length(s);
+if ls=1 and abs(s[1]) <= LongInteger_base2 then return(s)
+elif ls=0 then return( [0] ) fi;
+cy := 0;
+for i to ls do
+     t := s[i]+cy;
+     cy := round(t/LongInteger_base);
+     s[i] := t-cy*LongInteger_base
+     od;
+if cy <> 0 then
+     r := s;
+     while cy <> 0 do
+         t := cy;
+         cy := round(t/LongInteger_base);
+         r := append(r,t-cy*LongInteger_base)
+         od;
+     r
+else for ls from ls by -1 to 2 while s[ls]=0 do od;
+     if ls <> length(s) then s[1..ls] else s fi
+     fi
+end:
+
+
+
+LongInteger_numeric := proc( s0:LongInteger ) option internal;
+r := 0;
+s := s0[1];
+for i from length(s) by -1 to 1 do r := r * LongInteger_base + s[i] od;
+r
+end:
+
+
+LongInteger_plus := proc( a, b ) option internal;
+if type(a,LongInteger) then aa := [op(a)]
+elif type(a,integer) then aa := LongInteger_normal([a])
+else error(a,'is an invalid argument to add to a LongInteger') fi;
+
+if type(b,LongInteger) then bb := [op(b)]
+elif type(b,integer) then bb := LongInteger_normal([b])
+else error(b,'is an invalid argument to add to a LongInteger') fi;
+
+ld := length(aa)-length(bb);
+if ld < 0 then t := [op(aa),seq(0,-ld)] + bb
+elif ld > 0 then t := aa + [op(bb),seq(0,ld)]
+else t := aa+bb fi;
+noeval( LongInteger( op(LongInteger_normal(t)) ))
+end:
+
+
+
+LongInteger_power := proc( a, b ) option internal;
+if sequal(a,1) then return(a)
+elif type(a,LongInteger) then aa := a
+elif type(a,integer) then aa := LongInteger(a)
+else error(a,'is an invalid argument to power to a LongInteger') fi;
+
+if type(b,LongInteger) then bb := LongInteger_numeric(b)
+elif type(b,integer) then bb := b
+else error(b,'is an invalid argument as power of a LongInteger') fi;
+
+if bb=1 then return(aa)
+elif sequal(aa,LongInteger(1)) then return(aa)
+elif sequal(aa,LongInteger_0) then
+     if bb > 0 then return(LongInteger_0)
+     elif bb=0 then error('0^0 is indeterminate')
+     else error('division by zero') fi
+elif bb=0 then return( LongInteger(1) )
+elif bb<0 then error('cannot divide by LongInteger, use iquo instead')
+     fi;
+
+if mod(bb,2)=0 then
+     procname( aa, bb/2 );  " * "
+else procname( aa, (bb-1)/2 );  " * " * aa fi
+end:
+
+
+
+
+LongInteger_print := proc( L:LongInteger ) option internal;
+printf( '%d\n', L ) end:
+LongInteger_printf := proc( fmt:string, L:LongInteger ) option internal;
+
+if length(L)=1 then return( sprintf(fmt,L[1]) ) fi;
+
+fmt2 := PrintfFormatAnalyzer( fmt );
+if not member(fmt2[4],{'d','i','u'}) then
+    error('cannot format LongInteger as ' . fmt ) fi;
+
+a := If( L>0, L, -L );
+base := LongInteger(10^14);
+
+s := '';
+while length(a) > 1 or a[1] <> 0 do
+    b := iquo(a,base);
+    t := a-b*base;
+    t2 := 0;
+    for i from length(t) by -1 to 1 do t2 := t2*LongInteger_base+t[i] od;
+    s := sprintf('%014.0f', t2) . s;
+    a := b;
+    od;
+while s[1]='0' do s := 1+s od;
+if L<0 and fmt2[4] <> 'u' then s := '-' . s fi;
+s
+end:
+
+
+
+LongInteger_Rand := proc() option internal;
+n := round( 20*Rand()+0.5 );
+r := CreateArray(1..n);
+for i to n do r[i] := round( Rand()*LongInteger_base/2 ) od:
+LongInteger(op(r))
+end:
+
+
+LongInteger_string := proc( L:LongInteger ) option internal;
+LongInteger_printf( '%d', L ) end:
+
+
+
+LongInteger_times := proc( a, b ) option internal;
+
+if type(b,LongInteger) then bb := [op(b)]
+elif type(b,integer) then bb := LongInteger_normal([b])
+else error(b,'is an invalid argument to multiply by a LongInteger') fi;
+
+if sequal(a,-1) then return( noeval(LongInteger(op(-bb))) )
+elif type(a,LongInteger) then aa := [op(a)]
+elif type(a,integer) then aa := LongInteger_normal([a])
+else error(a,'is an invalid argument to multiply by a LongInteger') fi;
+
+la := length(aa);
+if la > length(bb) then t := aa;  aa := bb;  bb := t;  la := length(aa) fi;
+
+if la=1 then
+     return( noeval( LongInteger( op(LongInteger_normal(aa[1]*bb)))) ) fi;
+opbb := op(bb);
+if la=2 then noeval( LongInteger( op(LongInteger_normal(aa[1]*[opbb,0] +
+	aa[2]*[0,opbb]))) )
+else lr := la+length(bb);
+     r := aa[1] * [opbb,seq(0,la)] + aa[2] * [0,opbb,seq(0,la-1)] +
+	  aa[3] * [0,0,opbb,seq(0,la-2)];
+     for i from 4 to la do
+	 r := r + aa[i] * [seq(0,i-1), opbb, seq(0,la-i+1)];
+	 if max( max(r), -min(r) ) >= 7881299347898368 then
+	      cy := round(r/LongInteger_base);
+	      if cy[lr] <> 0 then error('should not happen') fi;
+	      r := r - cy*LongInteger_base + [0,op(1..lr-1,cy)]
+	      fi
+	 od;
+     noeval( LongInteger( op(LongInteger_normal(r)) ))
+     fi
+end:
+
+
+
+LongInteger_type := structure(integer,LongInteger):
+
+
+
+PrintfFormatAnalyzer := proc( s:string )
+ls := length(s);
+if ls < 2 or s[1] <> '%' or CaseSearchString(s[ls],'diuoxXfeEgGcs') = -1 then
+    error(s . ' is an invalid format for printf') fi;
+width := 0;
+precision := 0;
+flags := {};
+seendot := seenwidth := false;
+for i from 2 to ls-1 do
+    j := CaseSearchString(s[i],'0123456789');
+    if s[i] = '.' then seendot := seenwidth := true
+    elif not seenwidth and CaseSearchString(s[i],'''-+ #0') <> -1 then
+	 flags := flags union {s[i]}
+    elif j >= 0 then
+	 seenwidth := true;
+	 if seendot then precision := 10*precision+j
+	 else width := 10*width+j fi
+    elif s[i]='l' or s[i]='h' then flags := flags union {s[i]}
+    else error( s . 'has invalid characters as a printf format') fi
+    od;
+[flags, width, precision, s[ls]]
+end:

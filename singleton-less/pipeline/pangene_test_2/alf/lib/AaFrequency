@@ -1,0 +1,37 @@
+#
+# Print percentage frequencies of amino acids
+#   of a given database
+#
+GetAaFrequency := proc( df:database )
+  a := GetAaCount(df);
+  unk := 100*(df[TotAA]/sum(a)-1);
+  a := 100/sum(a)*a;
+  for i to length(a) do
+    printf('%20s %5.2f %%\n',
+	   If( df[type]='Peptide', IntToAmino(i), IntToBase(i) ) ,a[i])
+  od;
+  printf('             unknown %5.2f %%\n', unk )
+end:
+
+AaFreqNoPat := proc( DB : database )
+  description 'Return the count vector of all amino acids or bases in F.';
+
+  Freq := CreateArray(1..21);
+  for e to DB[TotEntries] do
+    s := string(Sequence(DB[Entry,e])):
+    for i to length(s) do
+      p := AToInt(s[i]):
+      Freq[p] := Freq[p] + 1:
+    od:
+  od:
+  tot := sum(Freq);
+  for i to length(Freq) do
+    Freq[i] := Freq[i]/tot*100;
+  od; 
+  for i to 20 do
+    printf('%20s %5.2f %%\n',  IntToAmino(i) ,Freq[i]);
+  od;
+  printf('             unknown %5.2f %%\n', Freq[21] );
+  Freq
+end:
+

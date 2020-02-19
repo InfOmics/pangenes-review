@@ -1,0 +1,43 @@
+#
+# GetEntryInfo( EntryDescr, Tag1, .... );  Return the information tags of the
+#  entry which contains the given offset
+#
+GetEntryInfo := proc( EntryDescr:{integer,structure,list,string}, tag1:string )
+
+  if not type(DB,database) then error('DB not assigned a database')
+  elif type(EntryDescr,integer) then
+	# integer means an offset
+	if EntryDescr < 0 or EntryDescr >= DB[TotChars] then return() fi;
+	en := GetEntryNumber(EntryDescr);
+	if en <= 0 then return() fi;
+	en := [Entry(en)]
+  else en := [Entry(EntryDescr)] fi;
+
+  r := NULL;
+  for z in en do
+     for i from 2 to nargs do
+	if not type(args[i],string) then
+	     error(args[i],'is an invalid argument for GetEntryInfo') fi;
+	t := SearchTag(args[i],z);
+	if length(t) > 0 then r := r, args[i], t fi
+	od;
+     od;
+  r
+end:
+
+PrintInfo := proc (entries:{integer,structure}, tag1: string)
+  description
+  'Print the entry number and information tags (tag1 and additional optional
+  tags) for an entry given by number or several entries given by a data
+  structure.';
+  eval (print);
+  e := Entry (entries);
+  for x in e do
+    info := [GetEntryInfo (Entry (x), args[2..-1])];
+    printf ('Entry %d:\n', x);
+    for i by 2 to length (info) do
+      print( Paragraph(sprintf ('  %s=%s', info[i], info[i+1]), 
+                       -3-length(info[i])) )
+    od
+  od
+end:

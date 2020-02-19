@@ -1,0 +1,139 @@
+#########################################################################
+#									#
+#									#
+#   DbToDarwin: convert a Swissprot formatted file			#
+#	into a file suitable for Darwin					#
+#									#
+#				Gaston H. Gonnet (Nov 1991)		#
+#									#
+#									#
+#									#
+# This conversion is run with a command like:				#
+#									#
+#   DbToDarwin( ReadRawFile('sprot24.dat'), # input file (as produced by	#
+#					  # Amos Bairoch)		#
+#									#
+#		 'SwissProt24',		  # Name of the output file	#
+#									#
+#		 ReadRawFile('relnotes.txt'),# Any comment file, just for	#
+#					  # documentation purposes	#
+#									#
+#		 ['AC','DE','OS','KW'] ); # Tags which will be kept in	#
+#					  # the new database		#
+#									#
+#									#
+#									#
+#  This program requires a lot of main memory, (as much			#
+#	as the original input file).  Make sure that you		#
+#	have enough memory by using (in unix)				#
+#	unlimit datasize memoryuse					#
+#									#
+#########################################################################
+#									#
+#									#
+#  Once the new database is created, the first time the command		#
+#									#
+#  Loadfile(SwissProt24);							#
+#									#
+#  is executed in Darwin, the index of the database will be		#
+#  built.  Building the index will take about one hour of CPU time.	#
+#  You will find that Darwin has created a file SwissProt.tree.		#
+#  This index file is the Pat tree for all the peptides and is		#
+#  needed for most of the basic operations of Darwin.			#
+#									#
+#########################################################################
+#########################################################################
+#
+#
+DbToDarwin := proc( inp:string, outfile:string, descr:string, TagsToKeep:list(string) )
+
+Set(quiet=true);
+OpenWriting(outfile);
+printf('<DBDESCR>%s\n',descr);
+printf('<#>transduced with a program written by G.H. Gonnet</#>\n');
+printf('<CONVDATE>%s</CONVDATE>\n',date());
+printf('<INCLUDEDTAGS>%a</INCLUDEDTAGS>\n', TagsToKeep );
+printf('<ORIGSIZE>%d</ORIGSIZE> </DBDESCR>\n',length(inp));
+
+# Secondly we will scan the database for the
+# entry separator symbols // and for sequence starting
+# positions and call a subroutine for each part.
+offs := 0;
+do
+    j := CaseSearchString( '\nSQ', offs+inp );
+    # If there are no more peptide sequences,
+    # then the translation is finished.
+    if j < 0 then
+        OpenWriting(terminal);  Set(quiet=false);  return() fi;
+
+    i := CaseSearchString( '\n//', offs+j+inp );
+    if i<0 then error('at offset',offs,'a sequence is truncated') fi;
+    i := i+j;
+    if j < i then
+        ConvertHeader( inp[ offs+1 ... offs+j ], TagsToKeep );
+        ConvertSequence( inp[ offs+j+1 ... offs+i ] );
+        fi;
+    offs := offs+i+4;
+    od
+end:
+
+
+# The description part of an entry consists of fields, where
+# each field is named, in capital letters, at the beginning of
+# a line.  We will tag each field with the first two letters
+# of the name.
+ConvertHeader := proc( e:string, TagsToKeep )
+printf('<E>');
+i := 1;
+while i < length(e) do
+
+    # If a line does not start with an uppercase character, then
+    # skip it.
+    tag := e[i .. i+1];
+    if e[i+2]<> ' ' or SearchArray(tag,TagsToKeep) = 0 then
+        j := CaseSearchString( '\n', i+e );
+        if j < 0 then return() fi;
+        i := i+j+2;
+	next fi;
+
+    printf('<%s>',tag);
+
+    # Skip the tag and output everything,
+    # except for multiple spaces/newlines.
+    lastc := '>';
+    for i from i+5 to length(e) do
+        c := e[i];
+        if c='\n' then
+	    if e[i+1..i+2]=tag then c := ' '; i := i+3
+            elif e[i+1] <> ' ' then i := i-1;  break
+            else c := ' ' fi fi;
+
+    # We use the variable lastc to detect multiple spaces.
+        if lastc=' ' and c=' ' then next fi;
+        lastc := c;
+        printf('%c',c);
+        od:
+    printf('</%s>\n',tag);
+
+    j := CaseSearchString( '\n', i+e );
+    if j < 0 then return() fi;
+    i := i+j+2;
+
+    od
+end:
+
+
+# To convert the peptide sequence we just need to output
+# the <SEQ> tags, eliminate spaces and newlines.
+# The characters B and Z are mapped into an X.
+ConvertSequence := proc( s:string )
+printf('<SEQ>');
+for i from CaseSearchString('\n',1+s)+2 to length(s) do
+    c := s[i];
+    if c=' ' or c='\n' then next fi;
+    if c='B' or c='Z' then printf('X')
+    elif AToInt(c) = 0 then error('invalid amino acid in sequence')
+    else printf(c) fi;
+    od:
+printf('</SEQ></E>\n');
+end:

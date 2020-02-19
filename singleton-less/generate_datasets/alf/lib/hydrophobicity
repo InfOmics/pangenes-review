@@ -1,0 +1,49 @@
+hydrophobicity := proc()
+global FauchereHydrophobicity, FreeEnergyHydrophobicity, ChouFasman,
+   AtomicVolume;
+description 'define various measures of hydrophobicity and atomic volume';
+
+t := [	[Arg, -1.01, 19.92, 1.04, 225],
+	[Lys, -0.99, -9.52, 0.98, 171],
+	[Asp, -0.77,-10.95, 1.20, 125],
+	[Glu, -0.64,-10.20, 0.86, 155],
+	[Asn, -0.60, -9.68, 1.35, 135],
+	[Gln, -0.22, -9.38, 0.86, 161],
+	[Ser, -.004, -5.06, 1.32,  99],
+	[Gly,  0.00,  2.39, 1.50,  66],
+	[His,  0.13,-10.27, 1.06, 167],
+	[Thr,  0.26, -4.88, 1.07, 122],
+	[Ala,  0.31,  1.94, 0.70,  92],
+	[Pro,  0.72,  0.00, 1.59, 129],
+	[Tyr,  0.96, -6.11, 1.06, 203],
+	[Val,  1.20,  1.99, 0.62, 142],
+	[Met,  1.23, -1.48, 0.58, 171],
+	[Cys,  1.54, -1.24, 1.18, 106],
+	[Leu,  1.70,  2.28, 0.68, 168],
+	[Phe,  1.79, -0.76, 0.71, 203],
+	[Ile,  1.80,  2.15, 0.66, 169],
+	[Trp,  2.25, -5.88, 0.75, 240] ]:
+FauchereHydrophobicity := CreateArray(1..20):
+FreeEnergyHydrophobicity := CreateArray(1..20):
+ChouFasman := CreateArray(1..20):
+AtomicVolume := CreateArray(1..20):
+for i to 20 do
+    j := AAAToInt(t[i,1]);
+    FauchereHydrophobicity[j] := t[i,2];
+    FreeEnergyHydrophobicity[j] := t[i,3];
+    ChouFasman[j] := t[i,4];
+    AtomicVolume[j] := t[i,5];
+    od:
+end:
+
+#  Scaled hydrophobicities values from computational log(P) determinations
+#  by the "Small Fragment Approach" (see, "Development of Hydrophobicity
+#  Parameters to Analyze Proteins Which Bear Post- or Cotranslational
+#  Modifications" Black, S.D.  and Mould, D.R. (1991) Anal. Biochem. 193, 72-82).
+#  The equation used to scale raw log(P) values to the scaled values given
+#  is as follows: Scaled Parameters = (Raw Parameters + 2.061)/4.484. 
+#  http://psyche.uthct.edu/shaun/SBlack/aagrease.html
+BlackMould := [ 0.616, 0.000, 0.236, 0.028, 0.680, 0.043, 0.251, 0.501, 0.165,
+  0.943, 0.943, 0.283, 0.738, 1.00, 0.711, 0.359, 0.450, 0.878, 0.880, 0.825]:
+hydrophobicity();
+hydrophobicity := noeval(hydrophobicity):

@@ -1,0 +1,167 @@
+########################################################################
+# Alignment data structures for codon sequences.                       #
+#                                               Adrian Schneider, 2004 #
+########################################################################
+
+#################################################################
+# Replace a codon with one character which is used for          #
+# the generic dynamic programming. 				#
+# The CodonMappingString is defined in CodonMatrix		#
+#################################################################
+module external CodonToChar, CodonToCharTable, CharToCodon;
+CodonToChar := proc(cod:string) option internal;
+ci := CodonToCInt(cod);
+if ci=0 then return(CodonMappingString[65]);
+else
+    return(CodonMappingString[ci]);
+fi;
+end:
+
+CodonToCharTable := table('?');
+CharToCodonTable := table('XXX');
+for i to 64 do
+    CodonToCharTable[CIntToCodon(i)] := CodonMappingString[i];
+    CharToCodonTable[CodonMappingString[i]] := CIntToCodon(i);
+od;
+
+CharToCodon := proc(chr:string) option internal;
+ci := CaseSearchString(chr,CodonMappingString)+1;
+if ci>0 and ci<65 then 
+	return(CIntToCodon(ci));
+else
+	return('XXX');
+fi;
+end:
+end: # end module
+
+###############################################################
+# CodonAlign transforms the DNA sequences to char-strings and #
+# then calls the normal Align function			      #
+###############################################################
+CodonAlign := proc( seq1, seq2 ;
+        (method='Local') : { 'Local', 'Global', 'CFE', 'Shake',
+                             MinLength(posint), Shake(posint) },
+        (modif=NULL) : 'NoSelf',
+        'ApproxPAM' = (dm1:positive),
+        dm : { DayMatrix, list(DayMatrix) } ) -> Alignment;
+global logPAM1, CodonLogPAM1;
+
+stops := AToCodon('$');
+seqs := [seq1, seq2];
+# Extract DNA from Entry and transform sequence to a char string
+for i to 2 do
+    if type(seqs[i],Entry) or (SearchString('<DNA>',seqs[i])>0
+			 and SearchString('</DNA>',seqs[i])>0) then
+	seqs[i] := SearchTag('DNA',seqs[i]);
+    fi;
+    if mod(length(seqs[i]),3)<>0 then
+	error('sequence',i,'is not a multiple of 3 long') fi;
+    # remove stop codons, they only casue trouble
+    if member(seqs[i,-3..-1],stops) then seqs[i] := seqs[i,1..-4] fi;
+    tseq := '';
+    for j to length(seqs[i]) by 3 do
+	tseq := tseq.CodonToChar(seqs[i][j..j+2]);
+    od;
+    seqs[i] := tseq;
+od;
+
+
+
+# This moving of logPAM1s is necessary since the dynamic programming
+# directly accesses logPAM1 for small variances.
+oldlogPAM1 := logPAM1;
+if logPAM1<>CodonLogPAM1 then logPAM1 := CodonLogPAM1 fi;
+al := Align(op(seqs),args[3..-1]);
+logPAM1 := oldlogPAM1;
+return(al);
+end:
+
+##################################################################
+# Compute the dyn-prog strings from a codon alignment and        #
+# transform them back to DNA.                                    #
+##################################################################
+CodonDynProgStrings := proc(al:Alignment)
+if al[DayMatrix][type]<>'Codon' then 
+	error('only possible for codon alignments')
+fi;
+dps:=DynProgStrings(al);
+cdps:=CreateArray(1..2,'');
+for n to 2 do
+    for i to length(dps[n+1]) do
+	if dps[n+1,i]='_' then 
+		cdps[n]:=cdps[n].'___';
+	else
+		cdps[n]:=cdps[n].CharToCodon(dps[n+1,i]);
+	fi;
+    od;
+od;
+return([dps[1],op(cdps)]);
+end:
+
+
+PrintCodonAlignment := proc( ca:Alignment ) option internal;
+
+if not ca[DayMatrix][type]='Codon' then
+	error('print function is only for codon alignments');
+fi;
+	dps:=CodonDynProgStrings(ca);
+	aaident:=codident:=baseident:=totpos:=0;
+	for i by 3 to length(dps[2])-2 do
+		totpos:=totpos+1;
+		cs1:=dps[2][i..i+2]; cs2:=dps[3][i..i+2];
+		if cs1<>'___' and cs2<>'___' then 
+			
+			if CodonToCInt(cs1)=CodonToCInt(cs2) then codident:=codident+1 fi;
+			if CodonToInt(cs1)=CodonToInt(cs2) then aaident:=aaident+1 fi;
+			if cs1[1]=cs2[1] then baseident:=baseident+1 fi;
+			if cs1[2]=cs2[2] then baseident:=baseident+1 fi;
+			if cs1[3]=cs2[3] then baseident:=baseident+1 fi;
+		fi;
+	od;
+	printf('\nCodon-PAM: %g   ',ca[PamNumber]);
+	printf('AA-PAM: %g   ',CodonPamToPam(CodonLogPAM1,CF,ca[PamNumber]));
+	printf('Sim-score: %.1f\n',dps[1]);
+	printf('Ident.: AAs=%.1f%%   Codons=%.1f%%   Bases:=%.1f%%\n',100*aaident/totpos,100*codident/totpos,100*baseident/3/totpos);
+	PrintHeader(ca[Seq1]);
+  	PrintHeader(ca[Seq2]);
+	width:=69; # must be a multiple of 3
+	p1:=CreateString(width);
+	d1:=CreateString(width);
+	si:=CreateString(width);
+	d2:=CreateString(width);
+	p2:=CreateString(width);
+	pos:=1;
+	for i to length(dps[2])-2 by 3 do
+		p1[pos]:=p2[pos]:='<';
+		p1[pos+2]:=p2[pos+2]:='>';
+		if not dps[2][i]='_' then
+			d1[pos]:=dps[2][i];
+			d1[pos+1]:=dps[2][i+1];
+			d1[pos+2]:=dps[2][i+2];
+			p1[pos+1]:=CodonToA(dps[2][i..i+2]);
+		else
+			d1[pos]:=d1[pos+1]:=d1[pos+2]:='_';
+			p1[pos+1]:='_';
+		fi;
+		if not dps[3][i]='_' then
+			d2[pos]:=dps[3][i];
+			d2[pos+1]:=dps[3][i+1];
+			d2[pos+2]:=dps[3][i+2];
+			p2[pos+1]:=CodonToA(dps[3][i..i+2]);
+		else
+			d2[pos]:=d2[pos+1]:=d2[pos+2]:='_';
+			p2[pos+1]:='_';
+		fi;
+		for j from pos to pos+2 do
+			if d1[j]=d2[j] then si[j]:='|' else si[j]:=' ' fi;
+		od;
+		pos:=pos+3;
+		if pos>width then 
+			prints(p1); print(d1); print(si); print(d2); prints(p2); print('');
+			pos:=1;	
+		fi;	
+	od;
+	if pos>1 then 
+		prints(p1[1..pos-1]); print(d1[1..pos-1]); print(si[1..pos-1]); print(d2[1..pos-1]);prints(p2[1..pos-1]); print('');  
+	fi;
+end:

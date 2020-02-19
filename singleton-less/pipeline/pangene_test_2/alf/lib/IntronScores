@@ -1,0 +1,311 @@
+# Purpose: Intron scoring models
+# Author:  Lukas Knecht
+# Created: 13 Jun 1994
+#
+LinearIntron := proc (n, pam, minlen, F, I)
+  global LI_oldn, LI_oldlen, LI_oldF, LI_oldI, LI_oldres;
+  if nargs = 5 and n = LI_oldn and minlen = LI_oldlen and F = LI_oldF and
+    I = LI_oldI then
+    LI_oldres
+  elif type ([args], [string, numeric, posint, numeric, numeric]) then
+    len := length (n);
+    lalpha := round (minlen / 2);
+    lomega := minlen - lalpha;
+    alpha := CreateArray (1..len, -1e10);
+    delta := CreateArray (1..len, I);
+    omega := CreateArray (1..len, -1e10);
+    p := 1;
+    while p < len do
+      e := CaseSearchString ('GT', n[p..-1]);
+      if e < 0 then break fi;
+      alpha[p+e] := F + (lalpha - 1) * I;
+      p := p + e + 2
+    od;
+    p := 1;
+    while p < len do
+      e := CaseSearchString ('AG', n[p..-1]);
+      if e < 0 then break fi;
+      omega[p+e+1] := lomega * I;
+      p := p + e + 2
+    od;
+    LI_oldn := n;
+    LI_oldlen := minlen;
+    LI_oldF := F;
+    LI_oldI := I;
+    LI_oldres := [alpha, delta, omega, lalpha, lomega]
+  else
+    noeval (LinearIntron (args))
+  fi
+end:
+
+
+
+IntronModel := proc ( Donor:GramSite, InIntron:GramRegion,
+    Acceptor:GramSite, MinLen:posint )
+  if nargs<>4 then error('invalid number of arguments') fi;
+  noeval (IntronModel (args))
+end:
+
+IntronModel_type := noeval(structure(anything,IntronModel)):
+
+IntronModel_select := proc (g, sel, val)
+  i := SearchArray (sel, ['Donor', 'InIntron', 'Acceptor', 'MinLen']);
+  if i = 0 then
+    error ('Invalid selector', sel)
+  fi;
+  if nargs = 3 then g[i] := val else g[i] fi
+end:
+
+IntronModel_print := proc ()
+  m := noeval (IntronModel (args));
+  printf ('Donor: ');
+  print (m[Donor]);
+  printf ('Acceptor: ');
+  print (m[Acceptor]);
+  printf ('Intron (minimum length %d): ', m[MinLen]);
+  print (m[InIntron])
+end:
+
+logit := proc(L: numeric)
+  description
+  'Convert log10(p/(1-p)) to 10 log10(p).';
+  10 * (L - log10 (1 + 10^L))
+end:
+invlogit := proc(l: numeric)
+  description
+  'Convert 10 log10(p) to log10(p/(1-p)).';
+  l / 10 - log10 (1 - 10^(l/10))
+end:
+
+GramSite := proc ()
+
+  if type ([args], [array(array(numeric)), posint, numeric]) then
+    return (noeval (GramSite (args)))
+  elif type ([args], [array(array(integer)), array(integer),
+		      posint, numeric]) then
+    m := length (args[1][1]);
+    k := round (log (m) / log (4));
+    res := CreateArray (1..length (args[1]), 1..m);
+    pos := args[3] + 1;
+    for i to pos - 1 do
+      for j to m do
+	s1 := s2 := 0;
+	for r from mod (j - 1, m / 4) + 1 by m / 4 to m do
+	  s1 := s1 + args[1,i,r];
+	  s2 := s2 + args[2,r]
+	od;
+	a1ij := max (0.5, args[1,i,j]);
+	p := a1ij / max (4 * 0.5, s1);
+	q := (args[2,j] - a1ij) / (s2 - s1);
+	res[i,j] := log10 (p / q)
+      od
+    od;
+    s1 := sum (args[1,pos]);
+    s2 := sum (args[2]);
+    for j to m do
+      a1ij := max (0.5, args[1,pos,j]);
+      p := a1ij / s1;
+      q := (args[2,j] - a1ij) / (s2 - s1);
+      res[pos,j] := log10 (p / q)
+    od;
+    for i from pos + 1 to length (args[1]) do
+      for j to m do
+	r := trunc ((j - 1) / 4); r := 4*r+1 .. 4*r+4;
+	a1ij := max (0.5, args[1,i,j]);
+	s1ir := max (4 * 0.5, sum (args[1,i,r]));
+	p := a1ij / s1ir;
+	q := (args[2,j] - a1ij) / (sum(args[2,r]) - s1ir);
+	res[i,j] := log10 (p / q)
+      od
+    od;
+    return (noeval (GramSite (res, args[3], args[4])))
+  fi;
+  error ('Invalid GramSite format')
+end:
+
+GramSite_type := noeval(structure(anything,GramSite)):
+
+GramSite_select := proc (kg, sel, val)
+  i := SearchArray (sel, ['Scores', 'LeftLen', 'LogR0', 'RightLen',
+			  'Mean', 'Min', 'Max']);
+  if i = 0 then
+    error ('Invalid selector', sel)
+  fi;
+  if i > 3 then
+    if nargs = 3 then error ('Cannot assign', sel) fi;
+    if i = 4 then
+      length (kg[1]) + round (log (length (kg[1,1])) / log (4)) - 1 - kg[2]
+    elif i = 5 then
+      s := 0;
+      for c in kg[1] do s := s + sum (c) od;
+      logit (s / length (kg[1,1]) + kg[3])
+    else
+      m := length (kg[1,1]) / 4;
+      minmax := If (i = 6, min, max);
+      m0 := CreateArray (1..m); m1 := CreateArray (1..m);
+      for c in kg[1] do
+	for g to m do
+	  m1[g] := If (i = 6, DBL_MAX, -DBL_MAX);
+	  for b to 4 do
+	    m1[g] := minmax (m1[g],
+			     m0[trunc((m*(b-1)+g+3)/4)] + c[m*(b-1)+g])
+	  od
+	od;
+	h := m0; m0 := m1; m1 := h
+      od;
+      logit (minmax (m0) + kg[3])
+    fi
+  else
+    if nargs = 3 then kg[i] := val else kg[i] fi
+  fi
+end:
+
+GramSite_print := proc ()
+  kg := noeval (GramSite (args));
+  m := length (args[1][1]);
+  k := round (log (m) / log (4));
+  printf ('GramSite(w=%d, k=%d, P0=%.1f, mean=%.1f, max=%.1f, min=%.1f)\n',
+	  kg[LeftLen] + kg[RightLen], k, logit (kg[LogR0]), kg[Mean],
+	  kg[Max], kg[Min]);
+  printf ('.01*');
+  from 5 to k do printf (' ') od;
+  for i from -kg[LeftLen] to kg[RightLen] - k do printf ('%4d', i) od;
+  printf ('\n');
+  for j to m do
+    d := m;
+    from k to 3 do printf (' ') od;
+    to k do d := d / 4; printf ('%c', IntToB(mod(trunc((j-1)/d),4)+1)) od;
+    for c in kg[Scores] do printf ('%4d', 100*c[j]) od;
+    printf ('\n')
+  od
+end:
+
+GramRegion := proc ()
+
+  Args := args;
+  if type ([Args], [array(integer), array(integer), integer, numeric]) then
+    pI := CreateArray (1..length (args[1]));
+    pE := CreateArray (1..length (args[1]));
+    s1 := sum (args[1]);
+    s2 := sum (args[2]) - s1;
+    for i to length (args[1]) do
+      pI[i] := max (args[1,i], 0.5) / s1;
+      pE[i] := max (args[2,i] - args[1,i], 0.5) / s2
+    od;
+    return (noeval (GramRegion (pI, pE, args[3], args[4])))
+  elif type ([Args], [array(numeric), array(numeric), integer, numeric]) then
+    return (noeval (GramRegion (args)))
+  fi;
+  error ('Invalid GramRegion format')
+end:
+
+GramRegion_type := noeval(structure(anything,GramRegion)):
+
+GramRegion_select := proc (c, sel, val)
+  i := SearchArray (sel, ['ProbI', 'ProbE', 'Extend', 'LogR0',
+			  'Mean', 'Min', 'Max']);
+  if i = 0 then
+    error ('Invalid selector', sel)
+  fi;
+  if i > 4 then
+    if nargs = 3 then error ('Cannot assign', sel) fi;
+    r := zip (c[1] / c[2]);
+    if i = 5 then
+      r := sum (r) / length (r)
+    elif i = 6 then
+      r := min (r)
+    else
+      r := max (r)
+    fi;
+    logit (c[4] + log10 (r))
+  else
+    if nargs = 3 then c[i] := val else c[i] fi
+  fi
+end:
+
+GramRegion_print := proc ()
+  c := noeval (GramRegion (args));
+  printf ('GramRegion(Extend=%d, P0=%.3f, mean=%.3f, max=%.3f, min=%.3f)\n',
+	  c[Extend], logit (c[LogR0]), c[Mean], c[Max], c[Min]);
+  m := length (c[ProbI]) / 16;
+  k := round (log (m) / log (4));
+  to k do printf (' ') od;
+  for j to 16 do
+    printf (' .%c%c', IntToB(trunc((j+3)/4)), IntToB(mod(j-1,4)+1))
+  od;
+  printf ('\n');
+  pI := c[ProbI];
+  pE := c[ProbE];
+  for i to m do
+    d := m;
+    to k do d := d / 4; printf ('%c', IntToB(mod(trunc((i-1)/d),4)+1)) od;
+    for j from (i-1)*16+1 to i*16 do
+      printf ('%4d', 100 * log10 (pI[j] / pE[j]))
+    od;
+    printf ('\n')
+  od
+end:
+
+Intron := proc (n, pam, div)
+  global IT_oldn, IT_olddiv, IT_oldres, IT_scores, IT_model, IT_NONE;
+  if nargs = 3 and n = IT_oldn and div = IT_olddiv then
+    IT_oldres
+  elif type([args], [string, numeric, string]) then
+    divisions := ['fun','inv','mam','pln','pri','pro','rod','vrt','any'];
+    if not assigned (IT_scores) then
+      IT_scores := CreateArray (1..length (divisions))
+    fi;
+    i := SearchArray (div, divisions);
+    if i = 0 then
+      error ('No scoring model for division', div)
+    fi;
+    if IT_scores[i] = 0 then
+      IT_scores[i] := ReadLibrary ('IntronScores.'.div)
+    fi;
+    IT_model := IT_scores[i];
+    IT_oldn := n;
+    IT_olddiv := div;
+    if IT_model = IT_NONE then
+      IT_oldres := NULL
+    else
+      alpha := GetGramSiteScore (n, IT_model[Donor]);
+      delta := GetGramRegionScore (n, IT_model[InIntron]);
+      omega := GetGramSiteScore (n, IT_model[Acceptor]);
+      lalpha := round (IT_model[MinLen] / 2);
+      lomega := IT_model[MinLen] - lalpha;
+      extend := IT_model[InIntron,Extend];
+      if extend < lalpha then
+	s := sum (delta[1+extend..lalpha]);
+	for j to length (alpha) - lalpha do
+	  alpha[j] := alpha[j] + s;
+	  s := s - delta[j+extend] + delta[j+lalpha]
+	od
+      fi;
+      if extend < lomega then
+	s := sum (delta[1..lomega-extend]);
+	for j from lomega + 1 to length (omega) do
+	  s := s - delta[j-lomega] + delta[j-extend];
+	  omega[j] := omega[j] + s
+	od
+      fi;
+      IT_oldres := [alpha, delta, omega, lalpha, lomega]
+    fi
+  else
+    noeval (Intron (args))
+  fi
+end:
+
+ScoreIntron := proc (m: NucPepMatch, intron: posint..posint)
+  if not type (m[IntronScoring], structure) then
+    error ('Match does not have IntronScoring function')
+  fi;
+  f := op (0, m[IntronScoring]);
+  nuc := m[NucOffset] + NucDB[string]; nuc := nuc[1..m[NucLength]];
+  scores := f (nuc, m[PamNumber], op (m[IntronScoring]));
+  j := m[NucOffset] - GetPosition (NucDB, m[NucOffset])[1];
+  introndelta := intron[1] - j + scores[4] .. intron[2] - j - scores[5];
+  if introndelta[1] > introndelta[2] + 1 then
+    error ('Range shorter than scores[4] + scores[5]')
+  fi;
+  [scores[1,intron[1]-j], sum (scores[2,introndelta]), scores[3,intron[2]-j]]
+end:

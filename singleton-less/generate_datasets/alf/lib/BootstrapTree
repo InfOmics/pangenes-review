@@ -1,0 +1,185 @@
+#########################################################
+# Function to assign bootstrap values to internal nodes #
+# of a tree						#
+#                       Adrian Schneider, June 2005     #
+#########################################################
+
+
+module external BootstrapTree, ShowBootstrap:
+local CountTable, NodeToSets, nbsrounds, onBranches:
+
+# returns the set of all leaves (their labels) in a (sub)tree
+SetOfLeaves := proc(t:Tree) option internal;
+ll := []:
+for l in Leaves(t) do
+    ll := append(ll,l[Label]);
+od:
+return({op(ll)});
+end:
+
+# returns the tripartition of a tree by a node
+# note that the root is not a tripartition
+NodeTo3Sets := proc(fulltree:Tree, node:Tree) option internal;
+fs := SetOfLeaves(fulltree);
+if op(0,node)=Leaf then
+	ns := SetOfLeaves(node);
+	return({ns,{},fs minus ns});
+else
+	ls := SetOfLeaves(node['Left']);
+	rs := SetOfLeaves(node['Right']);	
+	return({ls,rs,(fs minus rs) minus ls});
+fi;
+end:
+
+# returns the split of the tree
+# = a bipartition caused by the branch. 
+# This is used for the BS on branches
+NodeTo2Sets := proc(fulltree:Tree, node:Tree) option internal;
+fs := SetOfLeaves(fulltree);
+s1 := SetOfLeaves(node);
+return({s1,fs minus s1});
+end:
+
+# create a MinSquareTree from all groups select in
+# args[3]
+GetTree := proc(Ds:array(matrix), labels:array, sel:array(integer)) 
+option internal;
+nl := length(labels);
+ng := length(Ds);
+D := CreateArray(1..nl,1..nl,0);
+V := CreateArray(1..nl,1..nl,0);
+for a to nl do for b from a+1 to nl do
+	S := Stat();
+	for i to ng do
+	    if sel[i]=1 and Ds[i,a,b]>0 then S+Ds[i,a,b] fi;
+	od:
+	D[a,b] := D[b,a] := S[Mean];
+	if S[Number]>1 then v := S[Variance]/S[Number]
+	elif S[Number]=1 then v := 300
+	else error('mincount of 0') fi;
+	V[a,b] := V[b,a] := v;
+od od:
+maxT := MinSquareTree(D,V,labels);
+maxQ := DimensionlessQuality;
+for i to 1+round(nl/5) do
+    t := MinSquareTree(D,V,labels,Random);
+    if DimensionlessQuality<maxQ then
+	maxQ := DimensionlessQuality;
+	maxT := t;
+    fi;
+od:
+return(maxT);
+end:
+
+# update the counts on the appearance of nodes
+UpdateCounts := proc(t:Tree)
+global CountTable;
+option internal;
+
+for n in Infix(t) do
+    if n=t then next fi;
+    # the branch containing the root would be counted twice
+    if n=t['Left'] and onBranches then next fi;
+    ns := NodeToSets(t,n);
+    CountTable[ns] := CountTable[ns]+1;
+od:
+
+end:
+
+# assign the BS values to all internal nodes
+BSTree := proc(full:Tree, node:Tree)
+global CountTable, nbsrounds;
+option internal;
+if op(0,node)=Leaf then return(node) fi;
+lst := BSTree(full,node[Left]);
+rst := BSTree(full,node[Right]);
+ns := NodeToSets(full,node);
+bsc := CountTable[ns];
+bsv := round(100*bsc/nbsrounds);
+return(Tree(lst,node[Height],rst,bsv));
+end:
+
+
+# the main function
+BootstrapTree := proc( ;
+	 (treeofall=NULL):Tree, (bstrees=NULL):array(Tree),
+	 (Ds=NULL):array(matrix), (labels=NULL):array , (nrounds=100):posint,
+	  (btype='Nodes'):{'Nodes','Branches'})
+global CountTable, nbsrounds, NodeToSets, onBranches;
+
+CountTable := table(0); # counts the appearance of each node
+if btype='Nodes' then NodeToSets := NodeTo3Sets; onBranches := false;
+else NodeToSets := NodeTo2Sets; onBranches := true fi;
+
+# Check if a list of trees or of D matrices is given
+if Ds<>NULL and labels<>NULL then
+    nbsrounds := nrounds;
+    ng := length(Ds);
+    nl := length(labels);
+
+    treeofall := GetTree(Ds,labels,CreateArray(1..ng,1));
+
+    for i to nrounds do
+        sel := [seq(If(Rand()>1/3,1,0),i=1..ng)];
+        bst := GetTree(Ds,labels,sel);
+        UpdateCounts(bst);
+    od:
+elif treeofall<>NULL and bstrees<>NULL then
+   nbsrounds := length(bstrees);
+   for bst in bstrees do
+	UpdateCounts(bst);
+   od:
+else
+   error('invalid arguments')
+fi:
+
+bstree := Tree(BSTree(treeofall,treeofall[Left]),treeofall[Height],
+		BSTree(treeofall,treeofall[Right]));
+
+return(bstree);
+end:
+
+# proc for option InternalNodes in DrawTree
+# or for option BranchDrawing
+ShowBootstrap := proc()
+option internal;
+if nargs=3 then # called by InternalNodes
+    t := args[1];
+    x := args[2];
+    y := args[3];
+    if length([op(t)])=4 and type(t[4],numeric) and t[4]<100 then
+        c := t[xtra]/100*[0,.7,0]+(100-t[xtra])/100*[1,0,0];
+	if t[xtra]>98 then bs := sprintf('%.1f%%',t[xtra])
+	else bs := sprintf('%d%%',round(t[xtra])) fi;
+        return([LTEXT(x,y,bs,color=c),
+                CIRCLE(x,y,1,color=c)])
+    else
+        return([])
+    fi;
+elif nargs>4 then # called by BranchDrawing
+    x1 := args[1];
+    y1 := args[2];
+    x2 := args[3];
+    y2 := args[4];
+    v := args[5];
+    if nargs>5 then a6 := args[6] else a6 := 0 fi;
+    if type(a6,numeric) then 
+	ycorr := a6;
+	if nargs>6 then a6 := args[7] fi;
+     else ycorr := 0 fi;
+    if type(a6,Tree) and length(a6)>3 and type(a6[4],numeric) 
+	and a6[4]<100 then 
+	bs := a6[4];
+	c := max(bs,30)-30;
+	c := c/70*[0,.7,0]+(70-c)/70*[1,0,0];
+	if bs>98 then bs := sprintf('%.1f%%',bs)
+        else bs := sprintf('%d%%',round(bs)) fi;
+    else c := [0,0,0]; bs := '' fi;
+
+    t := args[6];
+    return([ LINE( x1,y1, x2,y2 ),CTEXT( (x1+x2)/2, (y1+y2)/2 + ycorr,bs,color=c)]);
+fi;
+end:
+
+NULL:
+end: # module

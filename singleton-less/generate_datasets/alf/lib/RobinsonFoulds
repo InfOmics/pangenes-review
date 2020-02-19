@@ -1,0 +1,87 @@
+#
+# This function computes the Robinson-Foulds metric between 
+# phylogenetic trees.
+# 
+# The implementation follows the algorithm presented in
+#  Pattengale, N.D., Gottlieb E.J., and Moret, B.M.E., 
+#  Efficiently Computing the Robinson-Foulds Metric
+#  Journal of Computational Biology, 2007, 14(6): 724-735. 
+#  doi:10.1089/cmb.2007.R012.
+#
+#                                    Adrian Altenhoff, Jul 2008
+
+RobinsonFoulds := proc( trees:list(Tree) )
+	
+	BitXor := proc(a:{0,posint}, b:{0,posint})
+		bita := CreateArray(1..bits):
+		bitb := CreateArray(1..bits):
+		ra := a; rb := b;
+		for i to bits do 
+			c := ra/2; ra:=floor(c); bita[i] := 2*(c-ra);
+			c := rb/2; rb:=floor(c); bitb[i] := 2*(c-rb);
+		od:
+		c := 0; 
+		for i from bits to 1 by -1 do c:=2*c+mod(bita[i]+bitb[i],2) od:
+		return(c);
+	end:
+
+	GetEdgeHashes := proc(t:Tree)
+		# check that trees have the same leaf set
+		lf := []; for l in Leaves(t) do lf := append(lf,l[Label]) od: 
+		if( {op(lf)} <> leafs ) then error('Set of Leaf differ for Trees') fi;
+		
+		hL := GetEdgeHashesR(t[Left]);
+		hR := GetEdgeHashesR(t[Right]);
+		# double check, that sequence of bitwise Xor does not matter. 
+		# it seems that for 64bits, there are roundof errors in the bitwise 
+        # Xor calculation. 
+		if hL[1]<>hR[2] or hL[2]<>hR[1] then 
+			error('numerical errors in hash') fi;
+		if hL[3]=1 then {op(hR[3,1..-3])};   # Left is a Leaf, ignore last cut
+		elif hR[3]=1 then {op(hL[3,1..-3])}; # Right is a Leaf
+		else
+			{op(hL[3]), op(hR[3])}
+		fi:
+	end:
+	GetEdgeHashesR := proc(t:Tree)
+		if type(t,Leaf) then
+			leafH  := leafHashes[t[Label]];
+			leafHc := BitXor(leafH, compHash);
+			[leafH, leafHc, 1];
+		else
+			tl := procname( t[Left] );
+			tr := procname( t[Right] );
+			nodeHash  := BitXor(tl[1],tr[1]);
+			nodeHashC := BitXor(nodeHash, compHash);
+			hashs := [ If(tl[3]<>1,op(tl[3]),NULL), 
+			    If(tr[3]<>1,op(tr[3]),NULL), nodeHash, nodeHashC ];
+			[nodeHash, nodeHashC, hashs]
+		fi
+	end:
+
+	
+Nt := length(trees);
+if Nt<=1 then 
+	error('needs at least 2 trees to compute Robinson-Foulds distance') fi:
+
+leafs := []; leafHashes := table(): bits:=40: compHash := 0;
+for l in Leaves(trees[1]) do 
+	leafs := append(leafs, l[Label]);
+	h := Rand(0..2^bits-1);
+	leafHashes[l[Label]] := h;
+	compHash := BitXor(compHash, h);
+od:
+Nl := length(leafs): leafs := {op(leafs)}; 
+if length(leafs)<>Nl then error('Leaf Labels must only appear once') fi;
+
+
+D := CreateArray(1..Nt, 1..Nt);
+edgHashes := CreateArray(1..Nt):
+for i to Nt do for j from i+1 to Nt do
+	if edgHashes[i]=0 then edgHashes[i] := GetEdgeHashes(trees[i]) fi;
+	if edgHashes[j]=0 then edgHashes[j] := GetEdgeHashes(trees[j]) fi;
+	D[i,j] := D[j,i] := 1-length(intersect(edgHashes[j],edgHashes[i]))/(2*Nl-6);
+od od:
+return( D );
+end:
+

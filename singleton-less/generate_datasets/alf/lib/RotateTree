@@ -1,0 +1,110 @@
+# Rotate Tree:
+#  a function to rotate a darwin tree structure that preserve the heights and
+#  bootstrap values 
+#
+#          -
+#         / \
+#        /\  C
+#       /  B  
+#      A 
+#         (t)
+#
+# RotateTree(t,Left,Left) returns
+#        -
+#       / \   
+#      A  /\
+#        B  \
+#            C
+# 
+# 
+# RotateTree(t,Right,{Right,Left}) returns an error because t[Right] is a leaf
+#
+#                 cd, 2006, 2008 
+
+module external RotateTree, AllRootedTrees, AllTernaryRoots;
+
+RotateTree := proc(t:Tree,a:{'Left','Right'},b:{'Left','Right'})
+
+	if type(t[a],Leaf) then error('Impossible to rotate around a leaf.'); fi;
+	if length(t[a,b]) < 2 then error('Missing Height information'); fi;
+	
+	# we always rotate left, left. if the arguments are exchanged, switch
+	tmpT := copy(t);
+	if a = Right then tmpT := Tree(tmpT[Right],tmpT[Height],tmpT[Left]); fi;
+	if b = Right then tmpT[Left] := Tree(tmpT[Left,Right],tmpT[Left,Height],tmpT[Left,Left],
+                                             If(length(tmpT[Left])=4,tmpT[Left,xtra],NULL)); fi;
+	
+	# let's calculate some distances:
+	halfAAB := 0.5*(tmpT[Left,Left,Height] - tmpT[Left,Height]);
+	shiftA :=  - tmpT[Left,Height] - halfAAB;
+	shiftB := - tmpT[Left,Height] + halfAAB;
+	shiftC :=  -shiftA;
+
+	updateTreeLengths(tmpT[Right],shiftC);
+  	updateTreeLengths(tmpT[Left,Left],shiftA);
+   	updateTreeLengths(tmpT[Left,Right],shiftB);
+	# we generate the new tree
+	newT := Tree(tmpT[Left,Left],0,Tree(tmpT[Left,Right],halfAAB,tmpT[Right],100));
+
+        # we must now fix the bootstrap values, if available
+        if not type(tmpT[Left],Leaf) and length(tmpT[Left]) = 4 then
+            newT[Right,xtra] := tmpT[Left,xtra];
+        fi;
+
+	if a = Right then newT[Right] := Tree(newT[Right,Right],newT[Right,Height],newT[Right,Left],
+                                             If(length(newT[Right])=4,newT[Right,xtra],NULL)); fi;
+	if b = Right then newT := Tree(newT[Right],0,newT[Left]) fi;
+
+	return(newT);
+end:
+
+AllRootedTrees := proc(t:Tree)
+        if nargs = 2 then
+                constraint := args[2]; fi;
+        res := {}:
+        for i in {Left,Right} do
+                if type(t[i],Leaf) or (assigned(constraint) and constraint <> i) then
+                        next fi;
+                res := {op(res),op(AllRootedTrees(RotateTree(t,i,Left),Left)),
+                                op(AllRootedTrees(RotateTree(t,i,Right),Right))};
+        od:
+        res := append(res,t);
+        return(res);
+end:
+
+
+updateTreeLengths := proc(t:Tree,diff:numeric)
+	option internal;
+    for i in Infix(t) do
+		if length(i) < 2 then
+		  print(sprintf('Warning: Missing Height information for label %a',i[Label]));
+		else
+		  i[Height] := i[Height] + diff;
+		fi;
+	od;
+end:
+
+################################################################
+# AllTernaryRoots: for each internal node of a tree, return a #
+# tree with a ternary root, i.e. one subtree at distance zero. #
+# From here on, Adrian Schneider is responsible.	       #
+################################################################
+
+AllTernaryRoots := proc(t:Tree)
+AllTernaryRoots_R(t,'Left') union AllTernaryRoots_R(t,'Right')
+end:
+
+AllTernaryRoots_R := proc(t:Tree, dir:{'Left','Right'}) option internal;
+if type(t[dir],structure(anything,Leaf)) then return({}) fi;
+if dir='Left' then dL := t['Height']-t['Left','Height']; dR := -dL
+else  dR := t['Height']-t['Right','Height']; dL := -dR fi;
+t2 := copy(t);
+updateTreeLengths(t2['Left'],dL);
+updateTreeLengths(t2['Right'],dR);
+res := {t2};
+res := res union AllTernaryRoots_R(RotateTree(t,dir,'Left'),'Left');
+res := res union AllTernaryRoots_R(RotateTree(t,dir,'Right'),'Right');
+return(res);
+end:
+
+end: # module

@@ -1,0 +1,672 @@
+#
+#  Description
+#
+#
+#				Gaston H. Gonnet (May 1998)
+#
+# Modifications: Okt. 1998 M. Hallett
+#   - Added automatic printing of options line
+#   - Examples now takes normal quoted strings, Fake() and Hide()
+#   - Added Darwin to Latex routine
+#   - Added capability to handle Tables
+#   - Now prints word NULL instead of void.
+#   - Added variable to list of fname  (for system variables)
+#   - Parameters( ) now have type [string, anything]
+#      (due to evaluation problems).
+#
+# Major changes, using Documents among others, GhG (Oct 2001).
+#  
+
+Description_types := [
+	structure({string,symbol},{structure,function,variable,iterator}),# fname
+	structure(string,Summary),			# Summary
+	structure({structure,plus,times,power,string,set,list},CallingSequence),
+							# CallingSequence
+	structure({[string, anything],[string, anything, string]} ,Parameters),	
+							# Parameters
+	structure({type,anything,[{type,anything},string]},Returns),
+							# Returns
+	structure({ [{integer,string}, string],
+	    [{integer,string}, type,string]},Selectors),# Selectors
+	structure(string,Synopsis),			# Synopsis
+	structure(string,References),			# References
+	structure(string,Keywords),			# Keywords
+	structure({string, structure},Examples),	# Examples
+	structure({string,symbol,[{string,symbol},string]},SeeAlso) ]:
+							# SeeAlso
+
+
+Description_structures := [Descriptor]:
+for iii from 2 to length(Description_types) do
+    zz := Description_types[iii];
+    if type(zz,structure(anything,structure)) and length(zz)=2 and
+	 type(zz[2],symbol) then zz := zz[2]
+    else error('invalid Description_types table') fi;
+    Description_structures := append(Description_structures,zz)
+    od:
+
+
+
+
+
+Description := proc()
+option polymorphic;
+
+print;  # insure that some definitions are loaded
+typs := Description_types;
+
+# check arguments
+     if not type(args[1],typs[1]) then Description_error(args[1],1,error) fi;
+
+     i := 0;
+     for a in [args[2..nargs]] do
+	if type(a,{string,Paragraph,Indent,Code,Table,MapleFormula,List}) then
+	    next fi;
+	for j from 2 to length(typs) do
+	    if type(a,typs[j]) then
+		if i >= j then error(a,'is out of order') fi;
+		i := j;
+		break
+		fi
+	    od;
+	if j > length(typs) then
+	    Description_error(a,i+1,error) fi
+	od;
+
+     noeval(Description(args))
+end:
+
+
+
+
+
+Description_error := proc( arg, ord, err )
+if nargs=3 and err=error then
+     error( 'invalid argument', arg , 'should be of type',
+	Description_types[ord] )
+else printf( '\nERROR: the input does not have the correct type,\n' );
+     printf( 'it must be or type %a,\n', Description_types[ord] );
+     printf( 'please try again (or type ";"<return> to bypass)\n\n' );
+     fi
+end:
+
+
+
+
+
+
+
+Description_Document := proc( d:Description ) option internal;
+
+res := Document();
+tn := d[1];
+twidth := Set(screenwidth=80);  Set(screenwidth=twidth);
+if not type(tn,Description_types[1]) then error('invalid arguments') fi;
+optsdone := false;
+retdone := false;
+methdone := false;
+seldone := false;
+globdone := false;
+
+# Type, Name and summary
+fn := op(1,tn);
+if op(0,tn) = structure then tn1 := 1
+elif op(0,tn) = variable then tn1 := 2
+elif op(0,tn) = iterator then tn1 := 4
+else tn1 := 3 fi;
+r := op( tn1, [ 'Class', 'System variable', 'Function', 'Iterator' ] );
+r := r . ' ' . fn;
+
+# follow the arguments and Description_types in a balance-line algorithm
+ia := 2;
+id := 3;
+
+# Summary line
+if type(d[2],Description_types[2]) then
+     r := r . sprintf( ' - %s', d[2,1] );  ia := 3 fi;
+res := append(res,Paragraph(-20,r));
+
+for ia from ia to length(d) do
+
+    a := d[ia];
+    if type(a,{string,Paragraph,Table,Indent,Code,MapleFormula,List})
+	 then res := append(res,a);  next fi;
+
+
+    for id from id to length(Description_types)
+	 while not type(a,Description_types[id]) do od;
+    if id > length(Description_types) then
+	 error( a, 'is either invalid in a Description or out of order') fi;
+
+
+    # First do the automatic insertions, then process each argument
+
+    # Options (for functions only)
+    if id>2 and tn1=3 and not optsdone then
+	 optsdone := true;
+	 opts := {op(3,eval(fn))} intersect
+		{zippable,polymorphic,builtin,numeric};
+	 if length(opts) = 1 then res := append( res, 'Option: ' . opts[1] )
+	 elif length(opts) > 0 then
+	      r := 'Options: ' . opts[1];
+	      for oo from 2 to length(opts) do
+		  r := r . If( oo = length(opts), ' and ', ', ' ) . opts[oo] od;
+	      res := append( res, Paragraph(-9,r) )
+	      fi
+	 fi;
+
+
+    # Default Return
+    if id>5 and not retdone and tn1=3 and {op(5,eval(fn))} <> {} then
+	 retdone := true;
+	 res := append( res, '', 'Returns:', sprintf( '\t%a', op(5,eval(fn)) ))
+	 fi;
+
+
+    # Methods (for classs only)
+    if id>6 and not methdone and tn1=1 then
+	 methdone := true;
+	 t := {op(GetMethods(fn))} minus {Description};
+	 if length(t) > 0 then
+	      r := 'Methods:';
+	      for z in sort( [op(t)], uppercase ) do r := r . '   ' . z od;
+	      res := append( res, Paragraph(-11,r) );
+	      fi
+	 fi;
+
+    # Global variables
+    if id>5 and type(fn,procedure) and not globdone then
+	globdone := true;
+    	globs := Globals(fn);
+    	if globs<>{} then
+	    r := 'Global Variables:';
+	    for z in globs do r := r.'  '.z od;
+	    res := append( res, Paragraph(-11,r) );
+    	fi;
+    fi:
+
+    # Calling sequence
+    if Description_structures[id] = CallingSequence then
+	 if tn1 = 2 then
+	      error(a,'Calling Sequence invalid for system variable') fi;
+	 tit := op( tn1, [ 'Template', '', 'Calling Sequence', 'Usage' ] );
+	 res := append( res, '', Paragraph( -length(tit)-8,
+		tit .  sprintf( ':  %a', a[1] ) ));
+	 for i from 2 to length(a) do
+	      res := append( res, Indent(length(tit)+3,
+		  Paragraph(-5,sprintf('%a',a[i]))))
+	      od
+
+
+    # Parameters
+    elif Description_structures[id] = Parameters then
+	 if length(a)=0 or tn1=2 then error(a,'invalid Parameter argument') fi;
+	 if tn1=1 and d[Selectors] <> NULL then
+	      for z in d[Selectors] do
+		  if length(z)=3 then a := append( a, z )
+		  else a := append( a, [z[1],'',z[2]] ) fi od fi;
+	 maxcol := max( seq( length(a[i]), i=1..length(a) ));
+	 if maxcol < 2 or maxcol > 3 then
+	      error(a,'invalid number of columns') fi;
+	 if maxcol=2 then
+	      t := Table( gutter=3, width=60, ColAlign(l, l),
+		  Row('Name', 'Type'), Rule )
+	 else t := Table( gutter=3, width=60, ColAlign(l, l, l),
+		  Row('Name', 'Type', 'Description'), Rule ) fi;
+	 for z to length(a) do
+	      w := Row( seq(sprintf('%a',a[z,i]), i=1..length(a[z])) );
+	      while length(w) < maxcol do w := append(w,'') od;
+	      t := append(t,w);
+	      od;
+	 seldone := true;
+	 res := append( res, '', op( tn1,
+		[ 'Fields:', '', 'Parameters:', 'Parameters:' ]),
+	      Indent(2,t) )
+
+
+    # Returns
+    elif Description_structures[id] = Returns then
+	 res := append(res,'','Returns:');
+	 if length(a)=0 then res := append(res,'\tNULL') fi;
+	 for z in a do
+	      if type(z,list) then
+		   res := append(res, sprintf( '\t%a : %a', op(z) ))
+	      else res := append(res, sprintf( '\t%a', z )) fi
+	      od;
+	 retdone := true;
+
+
+    # Selectors (may be already done with Parameters)
+    elif Description_structures[id] = Selectors then
+	 if tn1 <> 1 then error(a,'Selectors is only for Classes') fi;
+	 if not seldone then
+	      maxcol := max( seq( length(a[i]), i=1..length(a) ));
+	      if maxcol < 2 or maxcol > 3 then
+		   error(a,'invalid number of columns') fi;
+	      if maxcol=2 then
+		   t := Table( gutter=3, width=60, ColAlign(l, l),
+		       Row('Name', 'Type'), Rule )
+	      else t := Table( gutter=3, width=60, ColAlign(l, l, l),
+		       Row('Name', 'Type', 'Description'), Rule ) fi;
+	      for z to length(a) do
+		   w := Row( seq(sprintf('%a',a[z,i]), i=1..length(a[z])) );
+		   while length(w) < maxcol do w := append(w,'') od;
+		   t := append(t,w);
+		   od;
+	      seldone := true;
+	      res := append( res, '', 'Fields:', Indent(2,t) )
+	      fi
+
+
+    # Synopsis
+    elif Description_structures[id] = Synopsis then
+	 w :=  'Synopsis:';
+	 for z in [op(a)] do w := w . '  ' . z od;
+	 res := append(res, Paragraph( w, -2 ))
+
+
+    # References
+    elif Description_structures[id] = References then
+	 w :=  'References:';
+	 for z in [op(a)] do w := w . '  ' . z od;
+	 res := append(res, Paragraph( w, -2 ))
+
+     # Keywords
+     elif Description_structures[id] = Keywords then
+	# keywords are not printed inside the help
+
+    # Examples
+    elif Description_structures[id] = Examples then
+	 res := append( res, '', 'Examples:', RunExamples(a) );
+
+    # SeeAlso
+    elif Description_structures[id] = SeeAlso then
+	 res := append(res,op(SeeAlso_Document(
+		SeeAlso(op( {op(a)} minus {fn} )))))
+
+    # case not analyzed properly above
+    else error(a,'should not happen') fi
+
+    od;
+
+res
+end:
+
+
+SeeAlso_string := proc( a ) option internal; string(SeeAlso_Document(a)) end:
+SeeAlso_Document := proc( a ) option internal;
+
+ twidth := Set(screenwidth=80);  Set(screenwidth=twidth);
+ res := [];
+ t := Values();
+ sa := [op(a)];
+ sa := sort( sa, x -> uppercase(If(type(x,list),x[1],x)) );
+
+ l := 0;
+ for z in sa do
+      if type(z,string) then l := l + length(z) + 3
+      elif type(z,[string,string]) then
+	   l := l + length(z[1]) + length(z[2]) + 6
+      else error(z,'is an invalid SeeAlso format') fi od;
+
+ if l+9 <= twidth then
+      r := 'See also:';
+      for z in sa do if type(z,list) then
+	       r := r . sprintf( '  ?%s (%s)', z[1], z[2] )
+	  else r := r . '  ?' . z fi od;
+      res := append(res,r);
+ else for z in sa do
+	  if type(z,list) then
+	       t := append( t, sprintf( '?%s (%s)', z[1], z[2] ))
+	  else t := append( t, '?' . z ) fi
+	  od;
+      res := append( res, 'See Also:',
+	  Indent( 2, Table( center, gutter=4, ColAlign('l'), t )))
+      fi;
+
+ Document(op(res))
+end:
+
+
+
+
+
+Description_string := proc( d ) option internal; string(Document(d)) end: 
+Description_latex := proc( d) option internal; latex(Document(d)) end: 
+Description_type := structure({structure,string},Description):
+
+
+RunExamples := proc( exmp : structure )
+global printlevel;
+
+str := '':
+for z in exmp do
+    if type(z, string) then
+	if z[length(z)]=':' or z[length(z)]=';' then
+	     str := str . sprintf('> %a\n', z)
+	else str := str . sprintf('> %a;\n', z) fi;
+
+	temppl := printlevel;  printlevel := 1;
+	t := [eval(parse(z))];
+	printlevel := temppl;
+
+	if z[length(z)] <> ':' then
+	     if type(parse(z),Assign) then
+		   str := str . sprintf('%a := ', op(1,parse(z)) ) fi;
+	     for j from 1 to length(t) do
+		   if j > 1 then str := str . ', ' fi;
+		   str := str . sprintf( '%a', t[j] );
+		   od:
+	     str := str . '\n':
+	     fi
+    elif type(z,Print(string)) then
+	 str := str . sprintf('> %s;\n', z[1] );
+	 OpenWriting( 'tmp_RunExamples' );
+	 eval(parse(z[1]));
+	 OpenWriting('previous');
+	 str := str . ReadRawFile( 'tmp_RunExamples' );
+    elif type(z,Fake(string,string)) then
+	str := str . sprintf('> %s;\n%s\n', z[1], z[2]);	
+    elif type(z, Hide(string)) then
+	eval(parse(op(z)));		
+    elif type(z,structure(string,Unassign)) then
+	for t in z do assign(symbol(t),symbol(t)) od
+    else error(z,'invalid format of example')
+    fi:
+od:
+return(str);
+end:						
+
+
+
+Description_select := proc( des, sel, val ) option internal;
+if nargs = 3 then error('not implemented yet')
+elif not type(sel,symbol) or not member(sel,Description_structures) then
+     error('invalid selector')
+else op( mselect( type, [op(des)], structure(anything,sel) ) ) fi
+end:
+
+
+
+
+HelpEntry := proc( title:{list(string),string}, keywords:list(string) )
+noeval(HelpEntry(args))
+end:
+
+
+
+HelpEntry_type := structure(anything,HelpEntry):
+
+HelpEntry_print := proc( he:HelpEntry )
+global currenthelp;
+currenthelp := he[title];
+printf( '<HELP>' );
+for z in If( type(he[title],list), he[title], [he[title]] ) do
+    printf( '<T>%s</T>', z ) od;
+printf( '\n' );
+for z in he[keywords] do printf( '<KW>%s</KW>', z ) od;
+printf( '\n<HT>' );
+for z in he[3..-1] do printf('%s',string(z)) od;
+printf( '</HT></HELP>\n' );
+end:
+
+
+############################################
+# Replace all characters in a string that  #
+# should not be used in filenames by an '_'#
+############################################
+Filename := proc(fn:string)
+fn2 := copy(fn);
+for i to length(fn) do
+    if i=1 and fn[i]='-' or
+    AsciiToInt(fn[i])<43 or
+    member(AsciiToInt(fn[i]),[44,47,58,59,60,61,62,63,64]) or
+    member(AsciiToInt(fn[i]),[91,92,93,94,96]) or
+    AsciiToInt(fn[i])>122 then fn2[i] := '_' fi;
+od:
+return(fn2);
+end:
+
+####################################################
+# Directly convert Descriptions to HTMLC	   #
+####################################################
+Description_HTMLC := proc(de:Description) option internal;
+
+
+des := [op(de)];
+
+# treat summary
+tn := des[1];
+if not type(tn,Description_types[1]) then error('invalid arguments') fi;
+fn := op(1,tn);
+if op(0,tn) = structure then tn1 := 1
+elif op(0,tn) = variable then tn1 := 2
+elif op(0,tn) = iterator then tn1 := 4
+else tn1 := 3 fi;
+detype := op( tn1, [ 'Class', 'System variable', 'Function', 'Iterator' ] );
+if type(des[2],Description_types[2]) then
+     summary := ' - '.des[2,1];
+     des := des[3..-1];
+else
+    summary := '';
+    des := des[2..-1];
+fi;
+
+doc := Document(
+    SectionHeader(2,fn),
+    detype.' ',
+    IT(fn),
+    summary,
+    '<br><br>'
+);
+
+rows := [];
+for tn in des do
+    if not type(tn,structure) then 
+	rows := append(rows,Row('',HTMLC(tn)));
+    else
+        t := op(0,tn);
+	if t=Keywords then next fi;
+	t := SearchArray(t,[CallingSequence,Parameters,Returns,
+		Synopsis,Selectors,Examples,SeeAlso,References]);
+        if t=0 then desc := ''
+	else desc := op(t,['Calling Sequence&nbsp;','Parameters',
+		'Return&nbsp;Type&nbsp;','Synopsis','Selectors','Examples',
+		'See also','References']);
+	fi;
+    	rows := append(rows,RowAlign('top'),Row(Bold(desc),HTMLC(tn)));
+    fi;
+od:
+# create additional rows for methods and globals
+for ipos from length(rows) to 2 by -1 do
+    z := rows[ipos,1];
+    if not type(z,structure(string,Bold)) then next fi;
+    z := z[1];
+    if length(z)>=7 and z[1..7]='Calling' then break fi;
+    if length(z)>=10 and z[1..10]='Parameters' then break fi;
+    if length(z)>=6 and z[1..6]='Return' then break fi;
+    if length(z)>=9 and z[1..9]='Selectors' then break fi;
+od:
+# Methods
+meths := [];
+if tn1=1 then
+    t := {op(GetMethods(fn))} minus {Description};
+    meths := [op(t)];
+fi;
+if meths<>[] then
+    vals := '';
+    for z in sort(meths,x->lowercase(x)) do
+    	vals := vals.HTMLC(HelpHref(z)).', ';
+    od;
+    vals := vals[1..-3];
+    rows := [op(rows[1..ipos]),
+	Row(Bold('Methods'),vals),
+	op(rows[ipos+1..-1])];
+fi;
+# Globals
+if type(fn,procedure) then globs := Globals(fn) else globs := {} fi;
+if globs<>{} then
+   vals := '':
+   for z in globs do
+    	vals := vals.HTMLC(HelpHref(z)).', ';
+   od;
+   rows := [op(rows[1..ipos]),
+        Row(Bold('Globals'),vals),
+        op(rows[ipos+1..-1])];
+fi;
+
+doc := append(doc, Table(ColAlign('l','l'),op(rows)) );
+
+return(HTMLC(doc));
+end:
+
+CallingSequence_HTMLC := proc(cs) option internal;
+doc := Document();
+for t in [op(cs)] do
+   doc := append(doc,TT(sprintf('%a',t)),'<br>');
+od: 
+return(HTMLC(doc));
+end:
+
+Synopsis_HTMLC := proc(sy) option internal;
+return(HTMLC(Document(op(sy))));
+end:
+
+# return a href to a link topic, IF it is member
+# of the global variable HelpIndex (set by makehtml)
+HelpHref_HTMLC := proc(ty)  
+global NoIndex;
+option internal;
+tys := sprintf('%a',ty[1]);
+if assigned(HelpIndex) and type(HelpIndex,list) then
+    if member(ty[1],HelpIndex) then
+	return(HTMLC(HyperLink(tys,Filename(tys.'.html'))));
+    fi;
+fi;
+return(tys)
+end:
+
+HelpHref_string := proc(ty)
+option internal;
+sprintf('?%a',ty[1]);
+end:
+
+Parameters_HTMLC := proc(ps)  option internal;
+rows := [Row('Name','Type','Description'),Rule];
+for p in ps do
+    t := p[2];
+    if type(p,set) then 
+	ts := HTMLC('{',seq(HelpHref(tt),tt=t),'}');
+    else
+	ts := HTMLC(HelpHref(t));
+    fi;
+    if length(p)=3 then d := p[3] else d := '' fi;
+    rows := append(rows,Row(TT(p[1]),ts,d));
+od;
+return( Table(ColAlign('l','l','l'),op(rows)));
+end:
+
+Selectors_HTMLC := proc(ss)  option internal;
+return(HTMLC(Parameters(op(ss))));
+end:
+
+Returns_HTMLC := proc(rs)  option internal;
+if length(rs)=0 then return(HelpHref('NULL')) fi;
+if type(rs[1],[anything,string]) then
+	return(HTMLC(HelpHref(rs[1,1])).' ('.rs[1,2].')');
+else
+	return(HTMLC(HelpHref(rs[1])));
+fi;
+end:
+
+SeeAlso_HTMLC := proc(sa)  
+global SeeAlsos;
+option internal;
+vals := '';
+for z in sort([op(sa)],x->lowercase(If(type(x,list),x[1],x))) do
+    if z=currenthelp then next fi;
+    if type(z,list) then
+    	vals := vals.HTMLC(HelpHref(z[1])). ' ('.z[2].'),&nbsp;&nbsp; ';
+    else
+	vals := vals.HTMLC(HelpHref(z)).',&nbsp;&nbsp; ';
+    fi;
+    if assigned(HelpIndex) and type(HelpIndex,list) then
+	t := If(type(z,list),z[1],z);
+	if not member(t,HelpIndex) and assigned(SeeAlsos) 
+		and type(SeeAlsos,set) then
+	    SeeAlsos := {op(SeeAlsos),t}
+	fi;
+    fi;
+od:
+if length(vals)>14 then vals := vals[1..-15] fi;
+return(vals);
+end:
+
+
+Examples_HTMLC := proc( exmp ) 
+global printlevel;
+option internal;
+res := [];
+for z in exmp do
+    outp := inp := '';
+    if type(z, string) then
+        if z[length(z)]=':' or z[length(z)]=';' then
+             inp := Color('green4', Code(sprintf('> %s\n', z)));
+   	else inp := Color('green4', Code(sprintf('> %s;\n', z)))
+	fi;
+    	temppl := printlevel;  printlevel := 1;
+    	t := [eval(parse(z))];
+    	printlevel := temppl;
+
+    	str := '';
+    	if z[length(z)] <> ':' then
+             if type(parse(z),Assign) then
+                   str := str . sprintf('%a := ', op(1,parse(z)) ) 
+	     fi;
+             for j from 1 to length(t) do
+                   if j > 1 then str := str . ', ' fi;
+                   str := str . sprintf( '%a', t[j] );
+             od:
+        fi;
+	outp := Color('Red',Code(str));
+    elif type(z,Print(string)) then
+         inp := Color('green4', Code(sprintf('> %s;\n', z[1])));
+         OpenWriting( 'tmp_RunExamples' );
+         eval(parse(z[1]));
+         OpenWriting('previous');
+         outp := Color('Red',Code(ReadRawFile( 'tmp_RunExamples')));
+    elif type(z,Fake(string,string)) then
+	inp := Color('green4', Code(sprintf('> %s;\n',z[1])));
+	outp := Color('Red',Code(z[2].'\n'));
+    elif type(z, Hide(string)) then
+        eval(parse(op(z)));
+    elif type(z,structure(string,Unassign)) then
+        for t in z do assign(symbol(t),symbol(t)) od
+    else error(z,'invalid format of example')
+    fi:
+    # break long answers into several lines
+    if outp<>'' then
+	t := outp[2,1];
+	if length(t)>90 then
+	    t2 := '';
+ 	    lastbreak :=0;
+	    for i to length(t) do
+		t2 := t2.t[i];
+		if t[i]='\n' then lastbreak := i fi;
+		if i-lastbreak>79 then 
+		    t2 := t2.'\n';
+		    lastbreak := i;
+		fi;
+	    od:
+	    outp := Color('Red',Code(t2));
+	fi;
+    fi;
+    res := append(res,inp,outp);
+od:
+doc := Document(op(res));
+return(HTMLC(doc));
+end:
+
+References_HTMLC := proc( ref ) option internal;
+return(HTMLC(op(ref)));
+end:

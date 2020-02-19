@@ -1,0 +1,25 @@
+#
+#	Evaluate the complexity of a sequence in bits per symbol by
+#	computing its compressed form.
+#
+#	This is a trivial measure and depends on the underlying system
+#	being able to run gzip -9 <filename>
+#
+#	Result: average number of bits per symbol.
+#
+#	A poor-man's complexity measure
+#
+#	Gaston H. Gonnet (Oct 17th, 2012)
+#
+SequenceComplexity := proc( s:string )
+if length(s) < 5 then
+    error(s,'string is too short to evaluate its complexity') fi;
+tmpfile := tmp70q987015au . Rand(1e8..1e9);
+OpenWriting( tmpfile );
+printf( '%s', s );
+OpenWriting( 'previous' );
+t := TimedCallSystem( 'gzip -9c ' . tmpfile );
+CallSystem( 'rm -f ' . tmpfile );
+if t[1] <> 0 then error('compression command failed') fi;
+(length(t[2])-42)*8/length(s)
+end:

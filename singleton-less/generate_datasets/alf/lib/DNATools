@@ -1,0 +1,165 @@
+#                             -*- Mode: Darwin -*-
+#  DNATools - Tools for using DNA sequences
+#  Author          : Gina Cannarozzi
+#  Created On      : Wed Jul 2 10:31:35 1996
+
+# WriteFastaWithNames merged with WriteFasta (in lib/FileConv). AR (April 2007)
+
+CreateDNAAlignFromProtein := proc (dna:array(string),sequ:array(string))
+  ne := length(sequ);
+  if ne <> length(dna) then error ('number of sequences in input arrays differ'); fi;
+  l1:=length(sequ[1]);
+  dna1 := CreateArray(1..ne,'');
+
+  for n to ne do
+    a := CheckDNA(CreateUngappedSequence(sequ[n]),dna[n]);
+    if a <> true then error('DNA does not code for amino acid sequence'); fi;
+    temp:=CreateString(l1*3);
+    pt:=pt1:=0;
+    for i to l1 do
+      if sequ[n,i]<>'_' then
+        for j to 3 do
+          pt:=pt+1;
+          pt1:=pt1+1;
+          temp[pt1]:=dna[n,pt]
+        od
+      else
+        for j to 3 do
+          pt1:=pt1+1;
+          temp[pt1]:='_'
+        od
+      fi
+    od;
+    dna1[n] := copy(temp);
+  od;
+
+  return(dna1);
+
+end:
+
+CheckDNA := proc (seq1,dna)
+  alt := 0;
+  if nargs > 3 then error('illegal number of arguments')
+  elif nargs = 3 and not type(args[3],posint) then 
+  	error('third argument must be a positive integer')
+  elif nargs = 3 then
+     alt := args[3];
+  fi;
+
+  count := 1;
+  ldna := length(dna);
+  lseq := length(seq1);
+
+  if not (ldna = lseq*3 or ldna = lseq*3 + 3) then 
+        error ('dna and protein sequence length mismatch',lseq,ldna,seq1,dna); fi;
+
+  for i to lseq do
+   if seq1[i] = '_' then  #if gap
+     if dna[count..count+2] = '___' then
+       ret := true;
+       count := count + 3;
+     else
+       return(false)
+     fi;
+   elif alt=0 then 
+     if seq1[i] <> CodonToA(uppercase(dna[count..count+2])) then
+       return(false)
+     else
+       ret := true;
+       count := count + 3;
+     fi;
+   elif not member(seq1[i],AltGenCode(alt,uppercase(dna[count..count+2]))) then
+     return(false);
+   else
+     ret := true;
+     count := count + 3;
+   fi;
+  od;
+  ret;
+end:
+
+CreateUngappedSequence := proc(aseq:{string, array(string)})
+
+  CUS := proc (oneseq)
+
+    lenseq := length(oneseq):
+    newseq := '':
+    pos := 1:
+
+    while pos <=  lenseq do
+
+      for i from pos to lenseq while oneseq[i] <> '_' do od;
+        newseq := newseq . oneseq[pos..i-1];
+      pos := i;
+
+      for i from pos to lenseq while oneseq[i] = '_' do od;
+      pos := i;
+    od;
+     newseq;
+  end:
+
+  if type(aseq,array) then
+    newseq := CreateArray(1..length(aseq));
+    ne := length(aseq);
+    for i to ne do
+      newseq[i] := CUS(aseq[i]);
+    od;
+  else
+      newseq := CUS(aseq);
+  fi;
+
+  newseq;
+
+end:
+
+CreateProteinAlignFromDNA := proc(seqs,dali)
+
+  ne := length(dali);
+  if ne <> length(seqs) then error ('number of sequences in input arrays differ'); fi;
+  ali := [];
+
+  for j to ne do
+
+    ldali := length(dali[j]);
+    if member(dali[j,-3..-1],['TGA','TAG','TAA']) then dali[j] := dali[j,1..-4] fi; 
+    if not CheckDNA(seqs[j],CreateUngappedSequence(dali[j])) then 
+      error('dna doesnt code for protein in sequence',j);
+    fi;
+    laa := ldali/3;
+    if not type(laa,integer) then error('length of dna not a multiple of 3'); fi;
+    count := 1;
+    oneali := CreateString(laa);
+      for i to ldali by 3 do
+        if dali[j,i..i+2] = 'TGA' or dali[j,i..i+2] = 'TAG' or
+           dali[j,i..i+2] = 'TAA' then error('stop codon in sequence',j); fi;
+        if dali[j,i..i+2] = '___' then
+          oneali[(i+2)/3] := '_' ;
+        else
+          oneali[(i+2)/3] :=  seqs[j,count];
+          count := count +1;
+        fi;
+      od;
+    ali := append(ali,oneali);
+  od;
+  ali;
+end:
+
+VerifyDb := proc(dbname:string)
+  ReadDb(dbname);
+  errors := [];
+  dbent := DB[TotEntries];
+  for j to dbent do
+    dna := SearchTag('DNA',Entry(j));
+    id := SearchTag('ID',Entry(j));
+    seq := SearchTag('SEQ',Entry(j));
+    if nargs >= 2 and type(args[2],posint) then # allow for alternative genetic codes
+      checker := CheckDNA(seq,dna,args[2])
+    else
+      checker := CheckDNA(seq,dna)
+    fi;
+    if not checker then
+      errors := append(errors,id) fi;
+  od;
+  errors;
+end:
+

@@ -1,0 +1,742 @@
+#
+# k-dimensional numerical minimization
+#
+#  This function assumes that the objective function f
+#  is discontinuous and uses simple hill descending
+#  algorithms.  It finds a local minimum at at a given
+#  argument tolerance
+#
+#			Gaston H. Gonnet (Sep 1992)
+MinimizeFunc := proc( f:procedure, iniguess:array(numeric),
+		 epsini:numeric, epsfinal:numeric )
+  global Minimize_args;
+
+Minimize_args := noeval(Minimize_args);
+if epsini <= 0 or epsfinal <= 0 or epsini < epsfinal then
+   error('accuracy parameters set incorrectly') fi;
+k := length(iniguess);
+x := copy(iniguess);
+try := CreateArray(1..k,1);
+dir := CreateArray(1..k,1);
+fx := Minimize_fc(f,x);
+eps := epsini;
+
+
+for iter to 50*k do
+
+    rdir := eps * zip( try * [seq(Rand(Normal),i=1..k)] );
+    h1 := -1;
+    h2 := 0;
+    h3 := 1;
+    f2 := fx;
+    f1 := Minimize_fc(f,x+h1*rdir);
+    f3 := Minimize_fc(f,x+h3*rdir);
+
+    to 5 do
+	if f1 < f2 then
+	     h3 := h2;  f3 := f2;  h2 := h1;  f2 := f1;
+	     h1 := h2 - (h3-h2)*1.61803398874989;
+	     f1 := Minimize_fc(f,x+h1*rdir);
+	elif f3 < f2 then
+	     h1 := h2;  f1 := f2;  h2 := h3;  f2 := f3;
+	     h3 := h2 + (h2-h1)*1.61803398874989;
+	     f3 := Minimize_fc(f,x+h3*rdir);
+	elif |h3-h2| > |h2-h1| then
+	     h4 := (h3+h2)/2;
+	     f4 := Minimize_fc(f,x+h4*rdir);
+	     if f4 < f2 then
+		  f1 := f2;  h1 := h2;  h2 := h4;  f2 := f4
+	     else f3 := f4;  h3 := h4 fi;
+	else h4 := (h1+h2)/2;
+	     f4 := Minimize_fc(f,x+h4*rdir);
+	     if f4 < f2 then
+		  f3 := f2;  h3 := h2;  f2 := f4;  h2 := h4;
+	     else f1 := f4;  h1 := h4 fi
+	fi;
+    od;
+    x := x+h2*rdir;
+    fx := f2;
+
+
+    totmod := 0;
+    for i to k do
+	if try[i] > Rand() then
+	    oldxi := x[i];
+	    x[i] := x[i] + dir[i]*eps;
+	    fx2 := Minimize_fc(f,x);
+	    if fx2 < fx then
+		 try[i] := 1;
+		 fx := fx2;
+		 totmod := totmod+1;
+		 next
+	    fi;
+
+	    x[i] := oldxi - dir[i]*eps;
+	    fx2 := Minimize_fc(f,x);
+	    if fx2  < fx then
+		 try[i] := 1;
+		 fx := fx2;
+		 dir[i] := -dir[i];
+		 totmod := totmod+1;
+		 next
+	    fi;
+
+	    x[i] := oldxi;
+	    try[i] := try[i]/2;
+	fi
+    od;
+
+    if totmod=0 then
+	if max(try) = 0.5 then eps := eps/2 fi;
+	for i to k do try[i] := 1 od;
+    fi;
+
+    if eps <= epsfinal/2 then return([x,fx]) fi
+od;
+if printlevel >= 1 and iter > 50*k then
+    printf( 'Warning: %d iterations without convergence, (alternatively use DisconMinimize)\n',
+	50*k ) fi;
+[x,fx]
+end:
+
+
+#
+# k-dimensional numerical minimization
+#
+#  This function assumes that the objective function f
+#  is discontinuous and uses random direction descending.
+#  It finds a local minimum at at a given argument tolerance.
+#
+#  It keeps a small set of points where the functional has
+#  decreased and bases its future guesses on differences between
+#  the best point and the points in the small set.
+#
+#			Gaston H. Gonnet (May 6th 2009)
+#
+DisconMinimize_old := proc( f:procedure, iniguess:array(numeric),
+		  epsini:numeric, epsfinal:numeric )
+
+if epsini <= 0 or epsfinal <= 0 or epsini < epsfinal then
+   error('accuracy parameters set incorrectly') fi;
+k := length(iniguess);
+x := copy(iniguess);
+fx := traperror(f(x));
+if not type(fx,numeric) then error('invalid initial point') fi;
+eps := epsini;
+prx := [x];
+
+# the following commented assignments are used to tune the
+# parameters for different problems - hoping to get a generally
+# good set of values.
+#lp := Rand(10..40);
+#epsincr := Rand(1.3..2);
+#epsdecr := Rand(0.95..0.99);
+#NormIncr := Rand(0.5..2.0);
+#Rexp := Rand(1/3..1);
+# The following was best for a set of several optimizations in 5 and 7
+# unknowns (IndelsAgain)
+#lp:=18; Rexp:=0.7191; epsincr:=1.60255; epsdecr:=0.960535; NormIncr:=0.874585;
+#lp:=12; Rexp:=0.73074; epsincr:=1.59635; epsdecr:=0.94243; NormIncr:=0.991917;
+#lp:=18; Rexp:=0.74571; epsincr:=1.96537; epsdecr:=0.969052; NormIncr:=0.806302;
+#lp:=27; Rexp:=0.76976; epsincr:=1.72997; epsdecr:=0.964442; NormIncr:=0.756428;
+#lp:=36; Rexp:=0.77834; epsincr:=1.60329; epsdecr:=0.96981; NormIncr:=1.41443;
+ lp:=28; Rexp:=0.66591; epsincr:=1.68563; epsdecr:=0.954085; NormIncr:=1.64513;
+#lp:=20; Rexp:=0.33812; epsincr:=1.66611; epsdecr:=0.962636; NormIncr:=1.4545;
+#lp:=30; Rexp:=0.51722; epsincr:=1.92486; epsdecr:=0.957557; NormIncr:=1.91248;
+#lp:=19; Rexp:=0.7658; epsincr:=1.52227; epsdecr:=0.978429; NormIncr:=1.24711;
+
+
+
+for iter do
+
+    if eps<epsfinal then
+	 #printf( 'iter=%d, lp=%d, Rexp=%g, epsincr=%g, epsdecr=%g, NormIncr=%g, fx=%.12g\n',
+	 #	iter, lp, Rexp, epsincr, epsdecr, NormIncr, fx );
+	 return([prx[1],fx])
+    fi;
+
+    if length(prx) = 1 then
+	 x := prx[1];
+	 newx := [ seq( x[i] + eps*Rand(Normal), i=1..k ) ];
+	 j := 1;
+    else j := round( Rand(0.5^Rexp..(length(prx)+0.5)^Rexp)^(1/Rexp) );
+	 x := prx[1];
+	 if j=1 then
+	      newx := [ seq( x[i] + eps*Rand(Normal), i=1..k ) ];
+	 else ni2 := If( Rand() < 0.05, 0.1, NormIncr );
+	      newx := [ seq( x[i] + (x[i]-prx[j,i]) *
+		eps*(1+ni2*Rand(Normal)), i=1..k )];
+	 fi
+    fi;
+
+    newf := traperror(f(newx));
+    if not type(newf,numeric) or newf >= fx then
+	 eps := eps*epsdecr
+    else prx := [newx,op(prx)];
+	 if length(prx) > lp then prx := prx[1..lp] fi;
+	 fx := newf;
+	 lastimprov := iter;
+	 eps := eps*epsincr;
+	 if printlevel > 3 then
+	     printf( 'improvement using %d, eps=%g, f=%.12g\n', j, eps, fx ) fi;
+    fi;
+
+od:
+end:
+
+Minimize_fc := proc(f,x)
+global Minimize_args, Minimize_n, Minimize_val;
+option internal;
+if not type(Minimize_args,array) then
+    Minimize_args := CreateArray(1..5*length(x));
+    Minimize_val := CreateArray(1..5*length(x));
+    Minimize_n := 0;
+    fi;
+
+i := SearchArray(x,Minimize_args);
+if i > 0 then return( Minimize_val[i] ) fi;
+fx := traperror(f(x));
+if not type(fx,numeric) then return( max(Minimize_val)+1 ) fi;
+Minimize_n := Minimize_n+1;
+if Minimize_n > length(Minimize_args) then Minimize_n := 1 fi;
+Minimize_args[Minimize_n] := copy(x);
+Minimize_val[Minimize_n] := fx;
+fx
+end:
+
+
+
+#
+# k-dimensional numerical minimization
+#
+#  This function assumes that the objective function f
+#  is discontinuous and uses random direction descending.
+#  It finds a local minimum at at a given argument tolerance.
+#
+#  It keeps a small set of points where the functional has
+#  decreased and bases its future guesses on differences between
+#  the best point and the points in the small set.
+#
+#  This newer version adds adaptivity for the distribution of
+#  the previous point to use and for the good epsilon values used.
+#  These are updated every time that a "good" new decrement is found.
+#  The definition of "good" new decrement has 3 possible options.
+#
+#			Gaston H. Gonnet (August 15th 2009)
+#
+DisconMinimize := proc( f:procedure, iniguess:array(numeric),
+		  epsini:numeric, epsfinal:numeric )
+global DisconMinimize_feval;
+
+if epsini <= 0 or epsfinal <= 0 or epsini < epsfinal then
+   error('accuracy parameters set incorrectly') fi;
+k := length(iniguess);
+x := copy(iniguess);
+fx := traperror(f(x));
+if not type(fx,numeric) then error('invalid initial point') fi;
+eps := epsini;
+prx := [x];
+if not type(DisconMinimize_feval,posint) then DisconMinimize_feval := 1
+else DisconMinimize_feval := DisconMinimize_feval+1 fi;
+
+RandEps := proc() if goodeps=[] then eps
+    else goodeps[Rand(1..length(goodeps))] fi end:
+
+# to recover all the testing variants, see version of 2009-08-21
+# modecr := 3;  modes := 2;
+nijmax := 15;
+lp:=49; resetiter:=6000; epsdecr:=0.87; epsincr:=9.56; goodepsmax:=230;
+allpts := [];
+
+
+for iter do
+
+    if mod(iter,resetiter)=1 then
+	# reset adaptive parameters (the problem may have changed its nature)
+	goodeps := [seq(epsini/10^i,i=0..5)];
+	nij0 := CreateArray(1..nijmax,2);
+	nij1 := CreateArray(1..nijmax,1);
+	PrevIndex0 := CreateArray(1..lp,2);
+	PrevIndex1 := CreateArray(1..lp,1);
+	decr0 := decr1 := 0;
+	goodecr := [];		# adaptive 7/10
+    fi;
+
+    if eps <= epsfinal then return([prx[1],fx]) fi;
+
+    # selection of the previous point in prx to use
+    s1 := Rand() * sum( PrevIndex1[i]/PrevIndex0[i], i=1..length(prx) );
+    s2 := PrevIndex1[1]/PrevIndex0[1];
+    for j to length(prx)-1 while s2 < s1 do
+	s2 := s2 + PrevIndex1[j+1]/PrevIndex0[j+1] od;
+
+    x := prx[1];
+    # note: an arithmetic or geometric mixture of previous points is not good
+    if j=1 then
+	 ni2 := 0;
+	 newx := [ seq( x[i] + eps*Rand(Normal), i=1..k ) ];
+
+    elif j=6 or (length(allpts) >= 10 and Rand() < 0.05) then
+	 j := 6;
+	 ni2 := 0;
+	 minx := copy(prx[1]);
+	 maxx := copy(prx[1]);
+	 for i from 2 to length(prx) do for l to k do
+	     minx[l] := min(minx[l],prx[i,l]);
+	     maxx[l] := max(maxx[l],prx[i,l]);
+	 od od;
+	 incr := CreateArray(1..k);  incr0 := 0;
+	 for y in allpts do
+	     s2 := sqrt(sum( ( (y[i]-x[i]) / (maxx[i]+1e-20) )^2, i=1..k ));
+	     if s2 > 0 then incr := zip( incr+(x-y)/s2 );  incr0 := incr0+1 fi;
+	 od;
+	 newx := x + incr/incr0;
+	 for i to k do if maxx[i]=0 then
+	     newx[i] := newx[i]*(1+1e-5*Rand(Normal)) fi od;
+
+    else s1 := Rand()*sum(nij1[i]/nij0[i],i=1..nijmax);
+	 s2 := nij1[1]/nij0[1];
+	 for ni2 to nijmax-1 while s2 < s1 do
+		s2 := s2+nij1[ni2+1]/nij0[ni2+1] od;
+	 t := ni2*3/nijmax;
+	 newx := [ seq( x[i] + (x[i]-prx[j,i]) * eps *
+		(1+t*Rand(Normal)), i=1..k )];
+    fi;
+
+    allpts := append(allpts,newx);
+    if length(allpts) > 100 then allpts := allpts[11..-1] fi;
+
+    PrevIndex0[j] := PrevIndex0[j]+1;
+    if ni2 > 0 then nij0[ni2] := nij0[ni2]+1 fi;
+    DisconMinimize_feval := DisconMinimize_feval+1;
+    newf := traperror(f(newx));
+    if not type(newf,numeric) or newf >= fx then
+	 eps := eps*epsdecr
+
+    else prx := [newx,op(prx)];
+	 if length(prx) > lp then prx := prx[1..lp] fi;
+	 decr := fx-newf;  decr0 := decr0+1;
+	 fx := newf;
+
+	 goodecr := append(goodecr,decr);
+	 if length(goodecr) >= 10 then
+	     decr1 := (sort(goodecr)[-3] + 4*decr1) / 5;  goodecr := []
+	 fi;
+	 decrlim := decr1;
+
+	 if decr > decrlim then
+		goodeps := append(goodeps,eps);
+		PrevIndex1[j] := PrevIndex1[j]+5;
+	 	if ni2 > 0 then nij1[ni2] := nij1[ni2]+5 fi;
+	 else	PrevIndex1[j] := PrevIndex1[j]+1;
+	 	if ni2 > 0 then nij1[ni2] := nij1[ni2]+1 fi;
+	 fi;
+
+	 eps := min(1,eps*epsincr);
+	 if length(goodeps) > goodepsmax then
+	     goodeps := goodeps[round(length(goodeps)/4)..-1] fi;
+	 if printlevel > 3 then
+	     printf( 'iter=%d, j=%d, eps=%.2g, f=%.12g, decr=%.3g\n',
+		iter, j, eps, fx, decrlim ) fi;
+    fi;
+
+od:
+end:
+
+
+#
+# 2D numerical minimization
+#
+#  This function assumes that the objective function f
+#  is expensive to compute, and hence will try to use
+#  the existing information as best possible.
+#
+#			Gaston H. Gonnet (Sep 1992)
+#
+Minimize2DFunc := proc( f:procedure, x:numeric, y:numeric ;
+		(prevpoints=[]):list(array(numeric,3)),
+		'MaxIter'=((MaxIter=55):posint) )
+
+if nargs=1 then return( procname(f,2*Rand()-1,2*Rand()-1) )
+elif nargs=2 then return( procname(f,x,2*Rand()-1) ) fi;
+
+p := prevpoints;
+fxy := traperror(f(x,y));
+if fxy=lasterror then error('function does not exist at initial points') fi;
+p := append(p, [x,y,fxy]);
+
+while length(p) < 3 do
+    nx := If( x=0, 2*Rand()-1, x*(0.9+Rand()/5) );
+    ny := If( y=0, 2*Rand()-1, y*(0.9+Rand()/5) );
+    fxy := traperror(f(nx,ny));
+    if fxy=lasterror then fxy := max( zip((x->x[3])(p) )) + 1 fi;
+    if printlevel > 3 then
+	printf( 'Minimize2DFunc: random f(%.7g,%.7g)=%.12g\n',nx,ny,fxy) fi;
+    p := append(p,[nx,ny,fxy]);
+    od;
+lastred := lam := 0;
+h := 1;
+z := CreateArray(1..2);
+
+# Main iteration loop
+for iter to MaxIter do
+
+    p := sort(p,x->x[3]);
+    if length(p) > 6 then p := p[1..6] fi;
+    fs := zip( (x->x[3])(p) );
+    if (max(fs)-min(fs)) / max(zip(abs(fs))) < sqrt(DBL_EPSILON) then break fi;
+    mx := p[1,1];  my := p[1,2];
+    x2 := p[2,1]-mx;  y2 := p[2,2]-my;
+    x3 := p[3,1]-mx;  y3 := p[3,2]-my;
+
+    if length(p)=3 then
+
+	 # use steepest descent based on a linear approximation
+	 # f(x,y) = d*x+e*y+f
+	 de := traperror(GaussElim( [[x2,y2], [x3,y3]],
+		[fs[2]-fs[1], fs[3]-fs[1]] ));
+	 if de=lasterror then break fi;
+	 d := sqrt( max( x2^2+y2^2, x3^2+y3^2 ) / (de[1]^2+de[2]^2) );
+	 nx := mx - de[1]*d;
+	 ny := my - de[2]*d;
+
+    elif length(p)=4 then
+
+	 # use the approximation f(x,y) = a*x^2+d*x+e*y+f;
+	 # minimize in x and do steepest descent on y
+	 x4 := p[4,1]-mx;  y4 := p[4,2]-my;
+	 ade := traperror(GaussElim([ [x2^2, x2, y2],
+				      [x3^2, x3, y3],
+				      [x4^2, x4, y4] ],
+		[fs[2]-fs[1], fs[3]-fs[1], fs[4]-fs[1]] ));
+	 if ade=traperror then break fi;
+	 nx := -ade[2]/ade[1]/2 + mx;
+	 d := max( abs(y2), abs(y3), abs(y4) );
+	 ny := my - If( ade[3]<0, -1, 1 ) * d;
+
+    elif length(p)=5 then
+
+	 # use the approximation f(x,y) = a*x^2+c*y^2+d*x+e*y+f;
+	 # minimize in x and y
+	 x4 := p[4,1]-mx;  y4 := p[4,2]-my;
+	 x5 := p[5,1]-mx;  y5 := p[5,2]-my;
+	 acde := traperror(GaussElim([ [x2^2, y2^2, x2, y2],
+				       [x3^2, y3^2, x3, y3],
+				       [x4^2, y4^2, x4, y4],
+				       [x5^2, y5^2, x5, y5] ],
+		[fs[2]-fs[1], fs[3]-fs[1], fs[4]-fs[1], fs[5]-fs[1]] ));
+	 if acde=lasterror then break fi;
+	 nx := -acde[3]/acde[1]/2 + mx;
+	 ny := -acde[4]/acde[2]/2 + my;
+
+    else
+	 # sort the points in increasing function value
+	 # use the approximation f(x,y) = a*x^2+b*x*y+c*y^2+d*x+e*y+f;
+	 # minimize in x and y
+	 x4 := p[4,1]-mx;  y4 := p[4,2]-my;
+	 x5 := p[5,1]-mx;  y5 := p[5,2]-my;
+	 x6 := p[6,1]-mx;  y6 := p[6,2]-my;
+	 s := traperror(GaussElim([ [x2^2, x2*y2, y2^2, x2, y2],
+				    [x3^2, x3*y3, y3^2, x3, y3],
+				    [x4^2, x4*y4, y4^2, x4, y4],
+				    [x5^2, x5*y5, y5^2, x5, y5],
+				    [x6^2, x6*y6, y6^2, x6, y6] ],
+		[fs[2]-fs[1], fs[3]-fs[1], fs[4]-fs[1], fs[5]-fs[1],
+		 fs[6]-fs[1]] ));
+	 if s=lasterror then break fi;
+	 a := s[1];  b := s[2];  c := s[3];  d := s[4];  e := s[5];
+         disc := 4*a*c-b^2;
+
+	 if a<0 or disc<0 then
+	      # saddle point or maximum
+	      lam := Eigenvalues( [[a,b/2],[b/2,c]], noeval(U) );
+	      de := [d,e] * U;
+	      for i to 2 do
+		  if lam[i] < 0.00001 then z[i] := If( de[i]<0, h, -h )
+		  else z[i] := -min(1,h)*de[i]/lam[i]/2 fi
+		  od;
+	      xmx0 := U*z;
+	      if printlevel > 4 then printf(
+		  'spectral: x-x0=%a, h=%g, lam=%a\n', xmx0, h, lam ) fi;
+	      nx := xmx0[1]+mx;
+	      ny := xmx0[2]+my;
+	      # a*nx^2+b*nx*ny+c*ny^2+d*nx+e*ny+fs[1];
+	 else nx := (b*e-2*c*d)/disc + mx;
+	      ny := (d*b-2*a*e)/disc + my;
+	      fi;
+
+	 fi;
+
+    fxy := traperror(f(nx,ny));
+    if fxy=lasterror then fxy := max( zip((x->x[3])(p) )) + 1 fi;
+    if printlevel > 3 then
+	printf( 'Minimize2DFunc: iter %d, f(%.7g,%.7g)=%.12g\n',
+	    iter,nx,ny,fxy) fi;
+    n := [nx,ny,fxy];
+    if n[3] < p[1,3] then
+	 if lam <> 0 then lam := 0;  h := 1.4142135623730950488*h fi;
+	 lastred := iter
+    elif lam <> 0 then lam := 0;  h := h/4 fi;
+
+    if length(p) >= 6 then
+	 p[ If( n[3] >= p[6,3], round(5*Rand()+1.5), 6 ) ] := n
+    else p := append(p,n) fi;
+
+od;
+if iter > MaxIter and printlevel > 1 then
+    lprint( 'Warning: Minimize2DFunc could not reach the desired accuracy' ) fi;
+
+sort(p,x->x[3])[1]
+end:
+
+
+#
+#   Minimize a Piecewise-constant function in a given direction
+#	using Brent's algorithm
+#
+#	Returns the value of the minimum and the increment
+#	in the direction to be at the midpoint of the minimal plateau
+#
+#   f(x)
+#
+# f4________
+#        ^ |                             _______________f2
+#        | |                             | ^
+# f1     | |_____________________________| |
+#        |  ^                          ^   |
+#        h4 |                          |   h2
+#           h3                         h1
+#
+#
+#					Gaston H. Gonnet (Aug 24, 2001)
+#
+MinimizePWC := proc( f:procedure, iniguess:numeric, relateps:numeric )
+global MinimizePWC_Incr;
+
+if relateps < DBL_EPSILON then error('relateps is too small')
+elif not type([MinimizePWC_Incr],[positive]) then MinimizePWC_Incr := 1 fi;
+
+h1 := h3 := iniguess;
+tol := abs(h1)+1;
+f1 := f(h1,args[4..nargs]);
+
+for iter to 200 do
+    # h2 not computed
+    if not assigned(h2) then
+	 h2 := h1 + MinimizePWC_Incr;
+	 f2 := f(h2,args[4..nargs]);
+	 if f2 < f1 then
+	      h4 := h1;  f4 := f1;
+	      h1 := h3 := h2;  f1 := f2;
+	      MinimizePWC_Incr := 2*MinimizePWC_Incr;
+	      h2 := noeval(h2);
+	 elif f2=f1 then
+	      h1 := h2;
+	      MinimizePWC_Incr := 2*MinimizePWC_Incr;
+	      if abs(h2)*DBL_EPSILON > tol then
+		   # unbounded horizontal on right side
+		   h1 := h2 := DBL_MAX;
+		   f2 := f1+0.01*abs(f1);
+		   MinimizePWC_Incr := 1
+	      else h2 := noeval(h2) fi
+	      fi
+
+    # h4 not computed
+    elif not assigned(h4) then
+	 h4 := h3 - MinimizePWC_Incr;
+	 f4 := f(h4,args[4..nargs]);
+	 if f4 < f1 then
+	      h2 := h3;  f2 := f1;
+	      h1 := h3 := h4;  f1 := f4;
+	      MinimizePWC_Incr := 2*MinimizePWC_Incr;
+	      h4 := noeval(h4);
+	 elif f4=f1 then
+	      h3 := h4;
+	      MinimizePWC_Incr := 2*MinimizePWC_Incr;
+	      if abs(h4)*DBL_EPSILON > tol then
+		   # unbounded horizontal on left side
+		   h3 := h4;
+		   f4 := f1+0.01*abs(f1);
+		   MinimizePWC_Incr := 1
+	      else h4 := noeval(h4) fi
+	      fi
+
+    # tolerance reached, return
+    elif h2-h1 <= relateps*max(abs(h2),abs(h1),tol) and
+	 h3-h4 <= relateps*max(abs(h3),abs(h4),tol) then
+	 if h4 <= -DBL_MAX or h2 >= DBL_MAX then return( [h3..h1,f1] ) fi;
+
+	 # test the midpoint, just in case
+	 h0 := (h1+h3)/2;
+	 f0 := f(h0,args[4..nargs]);
+	 if f0 = f1 then
+	      MinimizePWC_Incr := (h2-h4)/2;
+	      return( [h3..h1,f1] )
+	 elif f0 < f1 then
+	      h4 := h3;  f4 := f1;
+	      h2 := h1;  f2 := f1;
+	      h1 := h3 := h0;  f1 := f0;
+	 elif h0 > 0 then
+	      h2 := h0;  f2 := f0;
+	      h1 := h3;
+	 else h4 := h0;  f4 := f0;
+	      h3 := h1
+	      fi
+
+    # do the largest (relative) gap first
+    elif (h2-h1)*max(abs(h3),abs(h4),tol) > (h3-h4)*max(abs(h2),abs(h1),tol) then
+	 h0 := (h1+h2)/2;
+	 f0 := f(h0,args[4..nargs]);
+	 if f0 < f1 then
+	      h4 := h1;  f4 := f1;
+	      h3 := h1 := h0;  f1 := f0
+	 elif f0=f1 then
+	      h1 := h0
+	 else h2 := h0;  f2 := f0
+	      fi
+
+    else h0 := (h3+h4)/2;
+	 f0 := f(h0,args[4..nargs]);
+	 if f0 < f1 then
+	      h2 := h3;  f2 := f1;
+	      h3 := h1 := h0;  f1 := f0;
+	 elif f0=f1 then
+	      h3 := h0
+	 else h4 := h0;  f4 := f0
+	      fi
+
+	 fi;
+
+    if printlevel > 5 then
+	 printf( 'iter %d, h4=%a, h3=%a, h1=%a, h2=%a, f1=%g\n',
+		iter, h4, h3, h1, h2, f1 ) fi;
+    od;
+
+MinimizePWC_Incr := 1;
+error('too many iterations without convergence');
+end:
+
+
+
+#
+#	MinimizeSD
+#
+#	Minimize a multivariate function using controlled steepest descent
+#
+#	This means that the direction of the steepest descent
+#	will be used only while the function decrease agrees
+#	within 90% with the predicted derivative.
+#
+#	This is particularly suitable when the direction of the
+#	gradient is relevant to where we want to find a local
+#	minimum.
+#
+#	MinimizeSD returns the list [x,fx,f1x] at a local minimum
+#	(when the convergence criteria is met) or when the number
+#	of iterations exceeds 200.
+#
+#	The function f(x) should compute the functional and its
+#	gradient and these should be returned as a list of two
+#	values: [fx:numeric,f1x:list(numeric)]
+#
+#	Additional arguments passed on to MinimizeSD (fourth,
+#	fifth, etc.) are passed as additional arguments to f().
+#	In this way f() usually does not need to rely on global
+#	information.
+#
+#		Gaston H. Gonnet (Sept 28, 2001)
+#
+MinimizeSD := proc( f:procedure, iniguess:list(numeric), relateps:numeric )
+
+x0 := iniguess;
+h0 := 1;
+t := f(x0,args[4..nargs]);
+if not type(t,[numeric,list(numeric)]) then
+     error('the given function does not return a [numeric,list(numeric)]') fi;
+fx0 := t[1];  f1x0 := t[2];  nf1x0 := f1x0*f1x0;
+
+for iter to 200 do
+
+     if nf1x0 < x0*x0 * relateps^2 then return( [x0,fx0,f1x0] ) fi;
+     if printlevel > 5 then
+	  printf( 'MinimizeSD: iter %d, h=%g, x0=%a, fx0=%.10g, |f1x0|=%g\n',
+		iter, h0, x0, fx0, sqrt(nf1x0) ) fi;
+
+     x1 := x0 - h0*f1x0;
+     if x1=x0 then error('increment too small, falls out of precision') fi;
+     t := f(x1,args[4..nargs]);  fx1 := t[1];  f1x1 := t[2];
+
+     eps := (fx1-fx0) / (h0*nf1x0) + 1;
+     if printlevel > 3 then
+	 printf( 'MinimizeSD: it=%d, eps=%.3f, fx0=%.9g, h0=%.3g, nf1x0=%.3g\n',
+	      iter, eps, fx0, h0, nf1x0 ) fi;
+     if eps < 0.2 then
+	  if eps < 0.05 then h0 := 2*h0 else h0 := h0/eps*0.1 fi;
+	  x0 := x1;  fx0 := fx1;  f1x0 := f1x1;  nf1x0 := f1x0*f1x0
+     elif eps < 0.5 then h0 := 0.5*h0;
+	  if nf1x0 * h0^2 < DBL_EPSILON^2 * x0*x0 then error( [x0,fx0,f1x0],
+	'numerical difficulty, cannot approximate decrement with gradient' ) fi;
+     else h0 := 0.2*h0;
+	  if nf1x0 * h0^2 < DBL_EPSILON^2 * x0*x0 then error( [x0,fx0,f1x0],
+	'numerical difficulty, cannot approximate decrement with gradient' ) fi;
+	  fi
+
+     od;
+
+[x0,fx0,f1x0]
+end:
+
+
+
+#
+#   Minimize a continuous univariate function
+#	using Brent's algorithm
+#
+#	Returns [x0,fx0], where fx0=f(x0) is the local minimum found
+#
+#	f(x,args[5..nargs]) should return the function value (to minimize)
+#
+#					Gaston H. Gonnet (Nov 26, 2001)
+#
+MinimizeBrent := proc( f:procedure, iniguess:numeric, incr:numeric,
+	relateps:numeric )
+
+phi := 1.6180339887498948482;
+x0 := iniguess;
+fx0 := f(x0,args[5..nargs]);
+x1 := iniguess+incr;
+fx1 := f(x1,args[5..nargs]);
+if fx0 < fx1 then
+	t := x0;  x0 := x1;  x1 := t;  t := fx0;  fx0 := fx1;  fx1 := t fi;
+
+# exponential search
+to 100 do
+    x2 := x1 + (x1-x0)*phi;
+    fx2 := f(x2,args[5..nargs]);
+    if fx2 < fx1 then x0 := x1;  fx0 := fx1;  x1 := x2;  fx1 := fx2
+    else break fi
+    od;
+if fx2 < fx1 then error(x2, fx2,'apparently unbounded minimum' ) fi;
+
+#
+#   invariant: (x2-x1) = (x1-x0)*phi and fx1 <= fx0 and fx1 <= fx2
+#
+for iter to 200 while |x2-x0| > relateps*(|x0|+|x2|) do
+
+    if x2-x1-(x1-x0)*phi > DBL_EPSILON*(|x2|+|x0|) or fx1 > fx0 or
+	fx1 > fx2 then
+	error(x2-x1-(x1-x0)*phi,1e-10*|x2-x0|,fx0,fx1,fx2,
+	    'should not happen') fi;
+
+    x3 := x2 - (x2-x1)/phi;
+    fx3 := f(x3,args[5..nargs]);
+
+    if fx3 < fx1 then x0 := x1;  fx0 := fx1;  x1 := x3;  fx1 := fx3
+    else x2 := x0;  fx2 := fx0;  x0 := x3;  fx0 := fx3 fi
+
+    od;
+
+if iter > 200 then error(x1,fx1,'could not achieve relative error') fi;
+[x1,fx1]
+
+end:

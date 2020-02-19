@@ -1,0 +1,17 @@
+#
+#
+#  GramSchmidt - convert a set of linear vectors into an
+#   orthonormal system
+#
+#					Gaston H. Gonnet (July 1998)
+#
+GramSchmidt := proc( A:matrix(numeric) )
+r := [];
+for z in A do
+    for ri in r do z := z - (ri*z)*ri od;
+    nz := z*z;
+    if nz=0 then error('input vectors are linearly dependent') fi;
+    r := append(r,z/sqrt(nz))
+    od;
+r
+end:

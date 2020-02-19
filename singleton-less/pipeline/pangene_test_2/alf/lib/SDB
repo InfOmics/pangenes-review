@@ -1,0 +1,466 @@
+#
+#	SDB: Scientific Database package
+#
+#	Gaston H. Gonnet (Nov 30th, 2011)
+#
+
+SDB_FilesReadIn := table():
+SDB_Counter := table():
+SDB_Counter[1] := Counter('files read'):
+SDB_Counter[2] := Counter('records written'):
+SDB_Counter[3] := Counter('calls to SDB_Store'):
+SDB_Counter[4] := Counter('calls to SDB_Retrieve'):
+SDB_Counter[5] := Counter('calls to SDB_StoreAttribute'):
+SDB_Counter[6] := Counter('calls to SDB_RetrieveFile'):
+SDB_Counter[7] := Counter('calls to SDB_EraseFile'):
+
+if not assigned( HeadDir ) then HeadDir := ''
+elif not type(HeadDir,string) then
+     lprint( HeadDir, 'HeadDir is not a string')
+elif length(HeadDir) > 0 and HeadDir[-1] <> '/' then HeadDir := HeadDir . '/'
+fi:
+
+
+#################################################
+# SDB_Usage: print statistics and flush buffers #
+#################################################
+SDB_Usage := proc()
+SDB_Flush();
+for i in Indices(SDB_Counter) do if SDB_Counter[i,'value'] <> 0 then
+	print(SDB_Counter[i]) fi od
+end:
+
+
+########################################
+# SDB_Store: Store an object in a file #
+########################################
+SDB_Store := proc( object:{structure,list}, gname:{string,list} )
+global SDB_FilesReadIn;
+
+SDB_Counter[3]+1;
+if nargs = 1 then
+     parts := [ op(0,object), 'Global', SDB_UniqueSequentialNumber() ]
+else if type(gname,list) then parts := gname
+     else parts := SearchDelim( ':', gname ) fi;
+     if length(parts) = 1 then
+	  parts := [ op(0,object), parts[1], SDB_UniqueSequentialNumber()]
+     elif length(parts) = 2 then
+	  parts := append(parts, SDB_UniqueSequentialNumber() )
+     elif length(parts) = 3 then
+	  if type(parts[3],string) then
+              p3 := traperror(parse(parts[3]));
+              if type(p3,posint) then parts[3] := p3 fi;
+	  fi;
+     else error( parts, 'invalid generic name' ) fi;
+fi;
+fname := HeadDir . parts[2];
+t := symbol( parts[1] . '_table' );
+
+# is the file already read in?
+if SDB_FilesReadIn[fname] = 'unassigned' then
+     SDB_FilesReadIn[fname] := table();
+     if length(FileStat(fname)) = 0 and length(FileStat(fname.'.gz')) = 0 then
+	  SDB_Output( fname,
+	      [ 'if not type(%s_table,table) then %s_table := table() fi:\n',
+		parts[1], parts[1] ],
+	      [ '%s_table[%.0f] := %A:\n', parts[1], parts[3], object ]);
+	  assign( t, table() );
+     else if SDB_DoNotReadOnStore <> true then
+              for w in [ReadProgram(fname)] do
+	              SDB_FilesReadIn[fname,w] := eval(w) od;
+              SDB_Counter[1]+1;
+          fi;
+	  if SDB_FilesReadIn[fname,t] = 'unassigned' then   
+        SDB_Output( fname,
+         [ 'if not type(%s_table,table) then %s_table := table() fi:\n',
+            parts[1], parts[1] ] );
+      fi:
+      SDB_Output( fname,
+	      [ '%s_table[%.0f] := %A:\n', parts[1], parts[3], object ]);
+     fi;
+     t2 := eval(t);
+     if not type(t2,table) then assign(t,table());  t2 := eval(t) fi;
+     t2[parts[3]] := object;
+     SDB_FilesReadIn[fname,t] := t2;
+
+elif SDB_FilesReadIn[fname,t] = 'unassigned' then
+     SDB_FilesReadIn[fname,t] := table();
+     SDB_FilesReadIn[fname,t,parts[3]] := object;
+     SDB_Output( fname,
+         [ 'if not type(%s_table,table) then %s_table := table() fi:\n',
+		parts[1], parts[1] ],
+         [ '%s_table[%.0f] := %A:\n', parts[1], parts[3], object ]);
+
+else SDB_FilesReadIn[fname,t,parts[3]] := object;
+     SDB_Output( fname,
+         [ '%s_table[%.0f] := %A:\n', parts[1], parts[3], object ]);
+fi;
+parts[1] . ':' . parts[2] . ':' . parts[3]
+end:
+
+
+
+##################################################################
+# SDB_StoreAttribute: store an additional attribute of an object #
+##################################################################
+# Add an attribute to an object, typically this means that for a call like
+
+# SDB_StoreAttribute( 'ABC:a/b/c:123', xyz, 777 ) an assignment will
+# be added to file a/b/c:  ABC_table[123,xyz] := 777:
+
+# and for SDB_StoreAttribute( 'ABC:a/b/c:123', [x,y,z], 777 ) an assignment will
+# be added to file a/b/c:  ABC_table[123,x,y,z] := 777:
+SDB_StoreAttribute := proc( gname:{list,string}, sel:{string,list(string)}, val )
+SDB_Counter[5]+1;
+parts := If( type(gname,list), gname, SearchDelim( ':', gname ));
+if type(sel,string) then
+     sel_pr := '''' . sel . '''';
+     sel_in := sel
+else if length(sel)=0 then error('selector cannot be empty') fi;
+     sel_in := op(sel);
+     sel_pr := '''' . sel[1] . '''';
+     for i from 2 to length(sel) do sel_pr := sel_pr . ',''' . sel[i] . '''' od;
+fi;
+if length(parts)=3 then
+     if not type(parts[3],posint) then
+          p3 := traperror(parse(parts[3]));
+          if type(p3,posint) then parts[3] := p3 fi;
+     fi;
+     SDB_Output( parts[2],
+         [ '%s_table[%.0f,%s] := %A:\n', parts[1], parts[3], sel_pr, val ]);
+     t := SDB_FilesReadIn[parts[2]];
+     if type(t,table) then
+	  t2 := t[parts[1].'_table'];
+	  if type(t2,table) and t2[parts[3]] <> unassigned then
+		t2[parts[3],sel_in] := val
+	  fi
+     fi
+elif length(parts)=2 then
+     SDB_Retrieve( gname );
+     t := SDB_FilesReadIn[parts[2]];
+     if not type(t,table) then error('StoreAttribute: no object exists') fi;
+     t2 := t[parts[1].'_table'];
+     assert( type(t2,table) );
+
+     inds := Indices(t2);
+     if length(inds) <> 1 then
+	error(length(inds),'objects in file, must specify object ID') fi;
+     parts := append(parts,inds[1]);
+     SDB_Output( parts[2],
+         [ '%s_table[%.0f,%s] := %A:\n', parts[1], parts[3], sel_pr, val ]);
+     t2[parts[3],sel_in] := val
+else error(niy) fi
+end:
+
+
+##################################################
+# SDB_Retrieve: retrieve one object from the SDB #
+##################################################
+#
+#  If the gname is of the form Class:fname it is expected (and checked) that
+#  only one object of that class is in the file.
+#
+#  If the gname is of the form Class:fname:Id only that object will be
+#  returned.
+#
+#  In both cases, a single object (or unassigned) is returned
+#
+SDB_Retrieve := proc( gname:{string,[string,string],[string,string,posint]} )
+global SDB_FilesReadIn;
+
+SDB_Counter[4]+1;
+if type(gname,list) then parts := gname
+else parts := SearchDelim( ':', gname ) fi;
+if length(parts) = 3 then
+     if type(parts[3],integer) then p3 := parts[3]
+     else p3 := traperror(parse(parts[3]));
+          if not type(p3,posint) then p3 := parts[3] fi;
+     fi
+else p3 := unassigned fi;
+
+tn := symbol( parts[1] . '_table' );
+assign(tn,table());
+if SDB_FilesReadIn[parts[2]] <> unassigned then
+     t := SDB_FilesReadIn[parts[2],tn]
+else SDB_FilesReadIn[parts[2]] := table();
+     SDB_Counter[1]+1;
+     for w in [ReadProgram( parts[2] )] do
+	 SDB_FilesReadIn[parts[2],w] := eval(w) od;
+     t := SDB_FilesReadIn[parts[2],tn]
+fi;
+if p3=unassigned then
+     inds := Indices(t);
+     assert( length(inds)=1 );
+     t[inds[1]]
+else t[p3] fi
+end:
+
+
+#############################################################
+# SDB_RetrieveFile: ReadProgram(..) and remember internally #
+#############################################################
+SDB_RetrieveFile := proc( fname:string ) global SDB_FilesReadIn;
+SDB_Counter[6]+1;
+t := SDB_FilesReadIn[fname];
+if t <> unassigned then
+     for w in Indices(t) do assign(w,t[w]) od;
+     op(Indices(t))
+else SDB_FilesReadIn[fname] := table();
+     SDB_Counter[1]+1;
+     if length(FileStat(fname)) = 0 and length(FileStat(fname.'.gz')) = 0 then
+	return(NULL) fi;
+     t := [ReadProgram( fname )];
+     for w in t do SDB_FilesReadIn[fname,w] := eval(w) od;
+     t
+fi end:
+
+
+
+
+####################################################
+# SDB_EraseFile: erase a file with lock-protection #
+####################################################
+SDB_EraseFile := proc( fname:string ) global SDB_FilesReadIn;
+SDB_Counter[7]+1;
+SDB_LockFile( fname );
+CallSystem( 'rm -f ' . fname . '.gz ' . fname );
+CallSystem( 'rm -f ' . fname . '.lock' );
+SDB_FilesReadIn[fname] := unassigned;
+NULL
+end:
+
+
+####################################################
+# SDB_Search: find objects with a particular value #
+####################################################
+# SDB_Search( Obj, Attribute, value ) return objects with Attr=value
+# SDB_Search( Obj, t ) return objects with t(Obj) = true
+SDB_Search := proc( obj:symbol, predicate:{procedure,string},
+	val:anything )
+SDB_Retrieve( Triple, [Triple,'Global.sdb'] );
+end:
+
+
+
+#################################################################
+# SDB_Verify: verify all files and objects accessible to the DB #
+#################################################################
+SDB_Verify := proc( )
+end:
+
+
+
+#######################################################
+# SDB_Files: return all files used for storing the DB #
+#######################################################
+# Default returns all *.sdb files under the HeadDir,
+#	the user may provide its own
+SDB_Files := proc( )
+fs := TimedCallSystem( 'find ' . HeadDir . '. -name "*.sdb"' )[2];
+SearchDelim( '\n', fs )
+end:
+
+
+
+
+################################################################################
+#############       Objects used by the SDB       ##############################
+################################################################################
+
+#######################################################
+# Triple: an RDF subject-predicate-object expressions #
+#######################################################
+Triple := proc( Subject, Predicate:string, Object )
+if nargs <> 3 then error('invalid number of arguments' ) fi;
+noeval(procname(args)) end:
+CompleteClass( Triple );
+
+
+
+###############################################################
+# Dependency: describe an object dependencies/reconsstruction #
+###############################################################
+# A Dependency object establishes how to create an object from others
+Dependency := proc(
+	TargetObject,
+	Function:symbol,
+	ArgumentList:list,
+	other:table )
+if nargs=3 then procname(args,table())
+elif nargs=4 then noeval(procname(args))
+else error('invalid number of arguments') fi
+end:
+Dependency_select := proc( dep:Dependency, sel, val )
+if nargs=2 then dep['other',sel]
+elif nargs=3 then dep['other',sel] := val
+else error('invalid number of arguments') fi
+end:
+CompleteClass( Dependency );
+
+
+
+
+################################################################################
+############        Ancillary functions       ##################################
+################################################################################
+
+########################################################################
+# Generate a unique (HeadDir-wise) sequential number (uses lock files) #
+#   Its main use is to provide a unique database-wide identifier       #
+########################################################################
+SDB_UniqueSequentialNumber_set := {}:
+SDB_UniqueSequentialNumber := proc() global SDB_UniqueSequentialNumber_set;
+if SDB_UniqueSequentialNumber_set <> {} then
+    n := SDB_UniqueSequentialNumber_set[1];
+    SDB_UniqueSequentialNumber_set := SDB_UniqueSequentialNumber_set minus {n};
+    return(n)
+fi;
+for iter to 15 do
+    fs := traperror(TimedCallSystem( 'echo ' . HeadDir . 'USN_*' ));
+    if lasterror=fs or fs[1] <> 0 then sleep(Rand(1..20)); next fi;
+    fs := SearchDelim( ' ', fs[2] );
+    if fs=[] then sleep(Rand(1..20));  next else break fi
+od;
+# if it fails, the filesystem is in trouble, generate a random one
+if iter>15 then return( Rand( 1e8 .. 1e9 ) )
+else 
+     if fs[1,1..-2] = HeadDir . 'USN_*' then
+          return( Rand( 1e8 .. 1e9 ) )
+     else n := max( seq( parse(w[length(HeadDir)+5..-1]), w=fs ) ) fi:
+     for n from n+10 by 10 while not LockFile( HeadDir . 'USN_' . n ) do od;
+     comm :=  'rm -f';
+     for w in fs do comm := comm . ' ' . w od;
+     CallSystem( comm );
+fi;
+SDB_UniqueSequentialNumber_set := { seq(n+i,i=1..9) };
+n
+end:
+
+SDB_OutputQueue := table([],[]):
+###############################################################
+# SDB_Output: append printf'd lines to a file (or queue them) #
+###############################################################
+SDB_Output := proc( fname:string, out1:list, out2:list )
+global SDB_OutputQueue, SDB_FilesReadIn;
+if nargs <= 1 then return() fi;
+for i from 2 to nargs do
+    out := args[i];
+    if not type(out,list) or length(out) < 1 or not type(out[1],string) then
+	error(out,'argument',i,'invalid for SDB_Output') fi;
+    SDB_OutputQueue[fname] := append( SDB_OutputQueue[fname], copy(out) )
+od;
+if length(SDB_OutputQueue[fname]) >= 100 then
+    if type(SDB_FilesReadIn,table) then
+         t := SDB_FilesReadIn[fname];
+         SDB_Flush(fname);
+         SDB_FilesReadIn[fname] := t;
+    else SDB_Flush(fname) fi
+fi;
+NULL
+end:
+
+
+####################################################
+# SDB_Flush: flush a single file or all the queues #
+####################################################
+SDB_Flush := proc( fname:string ) global SDB_OutputQueue, SDB_FilesReadIn;
+if nargs=0 then
+     for x in Indices(SDB_OutputQueue) do procname(x) od;
+     SDB_FilesReadIn := table();
+
+elif nargs=1 then
+     if SDB_OutputQueue[fname] = [] then return() fi;
+     SDB_Counter[2]+1;
+     SDB_LockFile( fname );
+     if length(FileStat( fname . '.gz' )) > 0 then
+          CallSystem( 'gunzip ' . fname . '.gz' ) fi;
+     OpenAppending( fname );
+
+     for x in SDB_OutputQueue[fname] do printf(op(x)) od;
+
+     OpenWriting( 'previous' );
+     CallSystem( 'rm -f ' . fname . '.lock' );
+     SDB_OutputQueue[fname] := [];
+     SDB_FilesReadIn[fname] := unassigned;
+     NULL
+
+else error('invalid number of arguments') fi;
+NULL
+end:
+
+
+################
+# SDB_LockFile #
+################
+SDB_LockFile := proc( fname:string )
+comm := If( assigned(Program) and type(Program,string), Program . '/SDB', 'SDB');
+for i to 85 while not LockFile( fname . '.lock', comm ) do
+	# if it fails, the directory may not be there
+	if i=1 then
+	       parts := SearchDelim( '/', fname );
+	       if length(parts) > 1 then
+		   CallSystem( 'mkdir -p ' . fname[1..-length(parts[-1])-1] ) fi
+	elif i > 10 then
+	     fs := FileStat( fname . '.lock' );
+	     if length(fs) <> 0 and UTCTime() - fs[st_mtime] > 300 then
+		printf( 'Possible error: lock file %s (%s) too old, removed\n',
+		    fname . '.lock', ReadRawFile( fname . '.lock' ) );
+		CallSystem( 'rm -f ' . fname . '.lock' );
+	     fi;
+	     sleep(i)
+	else sleep(i) fi
+od;
+if i > 85 then error('file',fname,'busy, could not be locked') fi;
+end:
+
+
+##################
+# SDB_BuildIndex #
+##################
+SDB_BuildIndex := proc( dirname:string )
+if nargs=0 or dirname='' then return( procname( '.' ) ) fi;
+sdbs := SearchDelim( '\n', TimedCallSystem( 'find ' . dirname .
+	' -name "*.sdb"' )[2] );
+sdbz := SearchDelim( '\n', TimedCallSystem( 'find ' . dirname .
+	' -name "*.sdb.gz"' )[2] );
+printf( 'Searching in %d *.sdb files and %d *.sdb.gz files\n',
+	length(sdbs), length(sdbz) );
+
+
+onames := table({});
+objs := table(0);
+for fn in [op(sdbs),op(sdbz)] do
+    if length(fn) > 3 and fn[-3..-1] = '.gz' then fn := fn[1..-4] fi;
+    tabs := traperror(SDB_RetrieveFile( fn ));
+    if tabs = lasterror then
+	lprint( 'error while reading', fn, tabs, 'skipped' );
+	next
+    fi;
+    for t in tabs do
+	if length(t) > 6 and t[-6..-1] = '_table' then
+	     ts := symbol(t[1..-7]);
+	     onames[ [fn,ts] ] := Indices(eval(t));
+	     objs[ts] := objs[ts] + length(");
+	     assign( t, table() );
+	else lprint( 'extraneous object in', fn, t, 'skipped' );
+	     next
+	fi;
+    od;
+    SDB_Flush();
+od:
+print( 'number of objects per class:', objs );
+
+
+if length(FileStat( 'ObjectIndex.sdb.gz' )) > 0 then
+    CallSystem( 'gunzip -v ObjectIndex.sdb.gz' ) fi;
+OpenAppending( 'ObjectIndex.sdb' );
+lprint( 'if not type(ObjectIndex,table) then ObjectIndex := table() fi:' );
+for x in Indices(onames) do printf( 'ObjectIndex[%A]:=%A:\n', x, onames[x] ) od;
+OpenWriting( previous );
+CallSystem( 'gzip -9v ObjectIndex.sdb' );
+NULL
+
+end:
+
+
+NULL;

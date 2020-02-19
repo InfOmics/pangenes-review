@@ -1,0 +1,406 @@
+# Purpose: AllAll database server (ParExecuteIPC version)
+# Author:  CompBioResGrp (L.J. Knecht)
+# Created: 25 May 1994
+#
+MaxMatches := 10000:
+
+NextToken := proc (body: [string, integer])
+  t := body[1];
+  for i from body[2] to length (t) while t[i] <= ' ' do od;
+  if i <= length (t) then
+    specials := '!@#$%^&*()-+=[]{}\\|<>:;,./?';
+    if CaseSearchString (t[i], specials) >= 0 then
+      body[2] := i + 1;
+      t[i]
+    else
+      for j from i + 1 to length (t) while CaseSearchString (t[j], specials) < 0 and
+      t[j] > ' ' do od;
+      body[2] := j;
+      t[i..j-1]
+    fi
+  else
+    ''
+  fi
+end:
+    
+same := (t1, t2) -> evalb (SearchString (t1, t2) = 0 and SearchString (t2, t1) = 0):
+
+OutFields := ['Score', 'ID', 'AC', 'Position', 'Length', 'Pam', 'PamVariance',
+	      'Identity', 'Alignment']:
+OutNames := ['Score', 'ID1         ID2', 'AC1     AC2', 'Pos1 Pos2',
+	     'Len1 Len2', 'Pam', 'PamVar', '%iden']:
+OutLengths := [8, -23, -15, 10, 10, 6, 8, 5, 0]:
+
+ParseMsg := proc (msg: string)
+  global OutFields;
+  description 'Parses incoming message for AllAllDB and returns
+  - List of OneID, list of BothID, PamRange, SimilRange and set of
+    selected fields if this is a correct request
+  - an error message if there is an error we should reply to
+  - a 0 if there is no valid message to reply to.';
+  
+  endToken := x -> evalb (x = '' or same (x, 'OneID') or same (x, 'BothID') or
+			  same (x, 'PamRange') or same (x, 'ScoreRange') or
+			  same (x, 'Fields'));
+  normalize := proc (x)
+    upper := 'ABCDEFGHIJKLMNOPQRSTUVWXYZ_';
+    for i to length (x) do
+      p := CaseSearchString (x[i], 'abcdefghijklmnopqrstuvwxyz$');
+      if p >= 0 then x[i] := upper[p+1] fi
+    od;
+    x
+  end:
+   
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    return('Invalid incoming message'.msg);
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    return('Start of message body not found');
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  body := [msg[first+3..first + 2 + last], 1];
+  token := NextToken (body);
+  if length (token) < 6 or SearchString (token, 'AllAllDB') <> 0 and
+    SearchString (token, 'TestNewFunction') <> 0 then
+    return (sprintf ('"%s" is not a valid server command.', token))
+  fi;
+  # defaults
+  oneID := bothID := [];
+  fields := {};
+  pamRange := 0..INF;
+  similRange := 80..INF;
+  token := NextToken (body);
+  while token <> '' do
+    if same (token, 'OneID') then
+      token := NextToken (body);
+      while not endToken (token) do
+        if token <> ',' then oneID := append (oneID, normalize (token)) fi;
+	token := NextToken (body)
+      od
+    elif same (token, 'BothID') then
+      token := NextToken (body);
+      while not endToken (token) do
+        if token <> ',' then bothID := append (bothID, normalize (token)) fi;
+	token := NextToken (body)
+      od
+    elif same (token, 'PamRange') then
+      token := NextToken (body);
+      low := sscanf (token, '%g');
+      if length (low) <> 1 then
+	return (sprintf ('the lower PAM bound "%s" is invalid', token))
+      fi;
+      token := NextToken (body);
+      if token = 'INF' then
+	pamRange := low[1] .. INF
+      else
+	high := sscanf (token, '%g');
+	if length (high) <> 1 then
+	  return (sprintf ('the upper PAM bound "%s" is invalid', token))
+	fi;
+	if low[1] > high[1] then
+	  return (sprintf ('the PAM range %.1f to %.1f is invalid',
+			   low[1], high[1]))
+	fi;
+	pamRange := low[1] .. high[1]
+      fi;
+      token := NextToken (body)
+    elif same (token, 'ScoreRange') then
+      token := NextToken (body);
+      low := sscanf (token, '%g');
+      if length (low) <> 1 then
+	return (sprintf ('the lower score bound "%s" is invalid', token))
+      fi;
+      if low[1] < 80 then
+	return ('there are no matches with a score below 80')
+      fi;
+      token := NextToken (body);
+      if token = 'INF' then
+	similRange := low[1] .. INF
+      else
+	high := sscanf (token, '%g');
+	if length (high) <> 1 then
+	  return (sprintf ('the upper score bound "%s" is invalid', token))
+	fi;
+	if low[1] > high[1] then
+	  return (sprintf ('the score range %.1f to %.1f is invalid',
+			   low[1], high[1]))
+	fi;
+	similRange := low[1] .. high[1]
+      fi;
+      token := NextToken (body)
+    elif same (token, 'Fields') then
+      token := NextToken (body);
+      while not endToken (token) do
+        if token <> ',' then
+          token := normalize (token);
+ 	  for i to length (OutFields) while not same (token, OutFields[i]) do
+	  od;
+	  if i > length (OutFields) then
+	    return (sprintf ('the output field "%s" is unknown', token))
+	  fi;
+	  fields := fields union {i}
+	fi;
+	token := NextToken (body)
+      od
+    else
+      return (sprintf ('the selection command "%s" is unknown', token))
+    fi
+  od;
+  if fields = {} then fields := {1, 2, 4, 5, 6} fi;
+  [sort (oneID), sort (bothID), pamRange, similRange, fields]
+end:
+
+DoQuery := proc (ofs1: list, ofs2: list, pamRange: range, similRange: range)
+  global GF, DF_range;
+  arg := GF, (PamNumber=pamRange);
+  for i in ofs1 do
+    arg := arg, (Offset1=DF_range[i])
+  od;
+  for i in ofs2 do
+    arg := arg, (Offset2=DF_range[i])
+  od;
+  lowSimil := similRange[1];
+  highSimil := If (similRange[2] = INF, DBL_MAX, similRange[2]);
+  QueryGrid (arg);
+  i := 0;
+  while i <= MaxMatches do
+    m := GetNextGrid (GF);
+    if m = EOF then break fi;
+    if m[Sim] >= lowSimil and m[Sim] <= highSimil then
+      printf ('%a:\n', m); i := i + 1
+    fi
+  od
+end:
+
+ScanAllAll := proc (oneID: list, bothID: list, pamRange: range,
+		    similRange: range, fields: set)
+  global OutFields, OutLengths, OutNames, prefix, tmpfile,
+  GF, DB, DF_range, DF_ID, DF_AC;
+#  option trace;
+  tit := 'AllAllDB of '.SearchTag ('DBNAME', DB[string]).
+         ' release '.SearchTag ('DBRELEASE', DB[string]);
+  lprint (tit);
+  lprint (CreateString (length (tit), '-'));
+  hasOne := If (length (oneID) = 0, [], CreateArray (1..length (oneID)));
+  hasBoth := If (length (bothID) = 0, [], CreateArray (1..length (bothID)));
+  oneEntries := bothEntries := [];
+  for i to DB[TotEntries] do
+    has := false;
+    if DF_ID[i] = false then
+      s := string (Entry (i));
+      DF_ID[i] := copy (SearchTag ('ID', s));
+      DF_AC[i] := sscanf (SearchTag ('AC', s), '%s')[1]
+    fi;
+    id := DF_ID[i];
+    p := CaseSearchString('_',id)+1; id1 := id[1..p]; id2 := id[p..-1];
+    p := SearchOrderedArray (id, oneID);
+    p1 := SearchOrderedArray (id1, oneID);
+    p2 := SearchOrderedArray (id2, oneID);
+    if p > 0 and oneID[p] = id then
+      hasOne[p] := hasOne[p] + 1;
+      oneEntries := append (oneEntries, i); has := true
+    elif p1 > 0 and oneID[p1] = id1 then
+      hasOne[p1] := hasOne[p1] + 1;
+      oneEntries := append (oneEntries, i); has := true
+    elif p2 > 0 and oneID[p2] = id2 then
+      hasOne[p2] := hasOne[p2] + 1;
+      oneEntries := append (oneEntries, i); has := true
+    fi;
+    p := SearchOrderedArray (id, bothID);
+    p1 := SearchOrderedArray (id1, bothID);
+    p2 := SearchOrderedArray (id2, bothID);
+    if p > 0 and bothID[p] = id then
+      hasBoth[p] := hasBoth[p] + 1;
+      bothEntries := append (bothEntries, i); has := true
+    elif p1 > 0 and bothID[p1] = id1 then
+      hasBoth[p1] := hasBoth[p1] + 1;
+      bothEntries := append (bothEntries, i); has := true
+    elif p2 > 0 and bothID[p2] = id2 then
+      hasBoth[p2] := hasBoth[p2] + 1;
+      bothEntries := append (bothEntries, i); has := true
+    fi;
+    if has and DF_range[i] = false then
+      seq := Sequence (Entry (i));
+      DF_range[i] := seq[1]..seq[1] + length (string (seq)[1]) - 1
+    fi
+  od:
+  printf ('OneID           Entry    BothID          Entry\n');
+  printf ('--------------- -------    --------------- -------\n');
+  for i to max (length (oneID), length (bothID)) do
+    if i <= length (oneID) then
+      printf ('%-16s', oneID[i]);
+      if hasOne[i] = 0 then
+	printf ('   NONE    ')
+      else
+	printf ('%7d    ', hasOne[i])
+      fi
+    else
+      printf ('%27s', ' ')
+    fi;
+    if i <= length (bothID) then
+      printf ('%-16s', bothID[i]);
+      if hasBoth[i] = 0 then
+	printf ('   NONE    ')
+      else
+	printf ('%7d    ', hasBoth[i])
+      fi
+    fi;
+    printf ('\n')
+  od;
+  if length (oneEntries) = 0 and length (bothEntries) = 0 then
+    lprint ('error: no database entries have been selected');
+    return ()
+  fi;
+  printf ('\nPAM range:   %.1f to ', pamRange[1]);
+  if pamRange[2] = INF then
+    printf ('infinity\n')
+  else
+    printf ('%.1f\n', pamRange[2])
+  fi;
+  printf ('Score range: %.1f to ', similRange[1]);
+  if similRange[2] = INF then
+    printf ('infinity\n')
+  else
+    printf ('%.1f\n', similRange[2])
+  fi;
+  lprint ();
+  tempfile := prefix.'temp';
+  OpenWriting (tempfile);
+  if length (oneEntries) > 0 then
+    DoQuery (oneEntries, [], pamRange, similRange);
+    DoQuery ([], oneEntries, pamRange, similRange)
+  fi;
+  if length (bothEntries) > 0 then
+    DoQuery (bothEntries, bothEntries, pamRange, similRange)
+  fi;
+  OpenAppending (tmpfile);
+  sortfile := prefix.'sort';
+  CallSystem ('sort -u -t, +5n +1n +2n '.tempfile.' >'.sortfile);
+  for f in fields do
+    if OutLengths[f] <> 0 then
+      printf ('%'.OutLengths[f].'s ', OutNames[f])
+    fi
+  od;
+  printf ('\n');
+  for f in fields do
+    if OutLengths[f] <> 0 then
+      printf ('%s ', CreateString (abs (OutLengths[f]), '-'))
+    fi
+  od;
+  printf ('\n');
+  OpenReading( sortfile );
+  for sel to MaxMatches do
+    m := ReadLine ();
+    if m = EOF then break fi;
+    if member (1, fields) then printf ('%8.1f ', m[Sim]) fi;
+    if member (2, fields) then
+      printf ('%-11s %-11s ', DF_ID[GetEntryNumber(m[Offset1])],
+	      DF_ID[GetEntryNumber(m[Offset2])])
+    fi;
+    if member (3, fields) then
+      printf ('%-7s %-7s ', DF_AC[GetEntryNumber(m[Offset1])],
+	      DF_AC[GetEntryNumber(m[Offset2])])
+    fi;
+    if member (4, fields) then
+      printf ('%5d%5d ', m[Offset1] - Sequence (m[Offset1])[1] + 1,
+	      m[Offset2] - Sequence (m[Offset2])[1] + 1);
+    fi;
+    if member (5, fields) then
+      printf ('%5d%5d ', m[Length1], m[Length2])
+    fi;
+    if member (6, fields) then printf ('%6.2f ', m[PamNumber]) fi;
+    if member (7, fields) then printf ('%8.2f ', m[PamVariance]) fi;
+    if member (8, fields) or member (9, fields) then
+      spm := DynProgStrings (m, SearchDayMatrix (m[PamNumber], DMS))
+    fi;
+    if member (8, fields) then
+      ident := 0;
+      for i to length (spm[2]) do
+	if spm[2,i] = spm[3,i] then ident := ident + 1 fi
+      od;
+      printf ('%5.1f', 100 * ident / length (spm[2]))
+    fi;
+    printf ('\n');
+    if member (9, fields) then
+      printf ('%s\n%s\n\n', spm[2], spm[3])
+    fi
+  od;
+  for f in fields do
+    if OutLengths[f] <> 0 then
+      printf ('%s ', CreateString (abs (OutLengths[f]), '-'))
+    fi
+  od;
+  printf ('\n\n');
+  if m = EOF then
+    printf ('%d matches out of %d selected\n', sel - 1, GF[TotRecords])
+  else
+    printf ('More than %d matches selected, process terminated\n', sel - 1)
+  fi
+end:
+
+init := proc ()
+  global GF, DF_range, DF_ID, DF_AC;
+ 
+#  db_path := GetMachine():
+  db_path := '~darwin/DB/':           
+  ReadDb (db_path.'SwissProt.Z');
+  GF := OpenGrid('~darwin/DB/SP33/SwissProt33.AllAll');
+#  GF := OpenGrid(DB[FileName].'.AllAll');
+  CreateDayMatrices ();
+  DF_range := CreateArray (1..DB[TotEntries], false);
+  DF_ID := CreateArray (1..DB[TotEntries], false);
+  DF_AC := CreateArray (1..DB[TotEntries], false)
+end:
+
+job := proc ()
+  global msg, prefix, tmpfile;
+ # option trace;
+  prefix := '/tmp/'.getpid ().'.'; 
+ # OpenAppending ('~cbrg/AllAllDB/job.trace');
+ # lprint('Entering job in AllAllDB:', tmpfile);
+  req := ParseMsg (msg);
+  res := 'error'; 
+ # OpenAppending ('~cbrg/AllAllDB/job.trace');
+ # lprint('Result of ParseMsg:',req);
+  if type (req, string) or type (req, list) then
+    OpenWriting (tmpfile);
+    if type (req, string) then
+      lprint ('Sorry, your request could not be processed,');
+      printf ('because %s\n', req)
+    else 
+  #    lprint('ScanAllAll was not called to debug...');
+      a := ScanAllAll (op (req));
+      if a = lasterror then
+          lprint ();
+          lprint ();
+          lprint ('Sorry, your request could not be processed');
+          lprint ('because an error was encountered.');
+          lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+          lprint ('Thank you, the cbrg team.');
+          lprint ();
+          lprint ();
+          printf ('%s', a);
+          lprint ();
+        fi;
+    fi;
+    OpenWriting (terminal); 
+    res := ReadRawFile (tmpfile);
+ #   OpenAppending ('~cbrg/AllAllDB/job.trace');
+ #   printf('Result of AllAllDB: %s',res);
+    OpenWriting (terminal);
+  fi;
+#  CallSystem ('rm '.prefix.'*');
+  res
+end:
+
+# ReadProgram('~cbrg/AllAllDB/AllAllDB');
+# init();

@@ -1,0 +1,20 @@
+#
+#   Find the count of all amino acids or bases in the database
+#
+GetAaCount := proc( F : database )
+  if F[type]='Peptide' then Freq := CreateArray(1..20); g := AToInt
+  else Freq := CreateArray(1..5); g := BToInt fi;
+
+  for lo to F[TotAA] do
+    up := lo;  upup := F[TotAA]+1;
+    while upup-up > 1 do
+      j := round((up+upup)/2);
+      if F[string,F[Pat,j]+1] = F[string,F[Pat,lo]+1] then up := j
+      else upup := j fi
+    od;
+    if F[string,F[Pat,lo]+1] <> 'X' then
+      Freq[g(F[string,F[Pat,lo]+1])] := up-lo+1 fi;
+    lo := up
+  od;
+  Freq
+end:

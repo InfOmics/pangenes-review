@@ -1,0 +1,913 @@
+#
+#  Graphs
+#
+#  Data structure and basic functions definition
+#
+#  A graph is represented by
+#
+#  Graph( Edges( Edge(lab1,n1,n2), ... ), Nodes( lab1, lab2, ... ) )
+#
+#					Gaston H. Gonnet (Nov 1992)
+#			extended	Gaston H. Gonnet (Mar 1998)
+#			revised		Gaston H. Gonnet (Dec 2001)
+#
+###################
+# Graph functions #
+###################
+#
+Graph_select := proc( u:Graph, sel, val )
+if   sel='Edges' or sel='Edge' then
+     if nargs=3 then u[1] := val else u[1] fi;
+elif sel='Nodes' or sel='Node' then
+     if nargs=3 then u[2] := val else u[2] fi;
+elif sel='Degrees' or sel='Degree' then
+     ns := [op(u[2])];
+     r := CreateArray(1..length(ns));
+     for e in u[1] do
+	i1 := SearchArray(e[Node1],ns);  r[i1] := r[i1]+1;
+	i1 := SearchArray(e[Node2],ns);  r[i1] := r[i1]+1;
+	od;
+     r
+elif sel='EdgeSet' and nargs=2 then Edges_set(u[1])
+elif sel='AdjacencyMatrix' then
+     ns := [op(u[2])];
+     n := length(ns);
+     r := CreateArray(1..n,1..n);
+     for e in u[1] do
+	i1 := SearchArray(e[Node1],ns);
+	i2 := SearchArray(e[Node2],ns);
+	r[i1,i2] := r[i2,i1] := 1 od;
+     r
+elif sel='Adjacencies' then
+     ns := length(u[2]):
+     # transposed and sorted lookup list (NodeLabel -> pos)
+     nsLookup := transpose(sort([seq([u[2,i],i], i=1..ns)])):
+
+     r := CreateArray(1..ns,[]);
+     for e in u[1] do
+        i1 := SearchOrderedArray(e['Node1'],nsLookup[1]);
+        i2 := SearchOrderedArray(e['Node2'],nsLookup[1]);
+        j1 := nsLookup[2,i1]; 
+        j2 := nsLookup[2,i2];
+        r[j1] := append(r[j1],j2);
+        r[j2] := append(r[j2],j1);
+        od;
+     r
+elif sel='Incidences' then
+     ns := [op(u[2])];
+     r := CreateArray(1..length(ns),[]);
+     for i to length(u[1]) do
+	e := u[1,i];
+	i1 := SearchArray(e[Node1],ns);
+	i2 := SearchArray(e[Node2],ns);
+	r[i1] := append(r[i1],i);
+	r[i2] := append(r[i2],i);
+	od;
+     r
+elif sel='Distances' then
+     ns := [op(u[Nodes])];
+     n := length(ns);
+     r := CreateArray(1..n,1..n,DBL_MAX);
+     for i to n do r[i,i] := 0 od;
+     es := [];
+     for e in u[Edges] do if type(e[1],numeric) then es := append(es,e) fi od;
+     es := sort( es );
+     if length(es)=0 or es[1,1] < 0 then error('incorrect distances') fi;
+     for e in es do
+	i1 := SearchArray(e[Node1],ns);
+	j1 := SearchArray(e[Node2],ns);
+	e1 := e[1];
+	if e1 >= r[i1,j1] then next fi;
+	r[i1,j1] := r[j1,i1] := e1;
+	for i to n do if r[i,i1] <> DBL_MAX and i <> j1 then
+	    ri := r[i];
+	    rii1 := ri[i1]+e1;
+	    d := zip(rii1+r[j1]);
+	    for j to n do if d[j] < ri[j] then r[i,j] := r[j,i] := d[j] fi od;
+	    fi od;
+	od;
+     r
+elif sel='Distances2' then
+     ns := [op(u[Nodes])];
+     n := length(ns);
+     r := CreateArray(1..n,1..n,DBL_MAX);
+     for i to n do r[i,i] := 0 od;
+     es := [];
+     for e in u[Edges] do if type(e[1],numeric) then es := append(es,e) fi od;
+     es := sort( es );
+     if length(es)=0 or es[1,1] < 0 then error('incorrect distances') fi;
+     for e in es do
+	i1 := SearchArray(e[Node1],ns);
+	j1 := SearchArray(e[Node2],ns);
+	e1 := e[1];
+	if e1 >= r[i1,j1] then next fi;
+	r[i1,j1] := r[j1,i1] := e1;
+	for i to n do if r[i,i1] <> DBL_MAX and i <> j1 then
+	    ri := r[i];
+	    rii1 := ri[i1]+e1;
+	    d := zip(rii1+r[j1]);
+	    for j to n do if d[j] < ri[j] then r[i,j] := r[j,i] := d[j] fi od;
+	    fi od;
+	od;
+     r
+elif sel='Labels' then
+     ns := [op(u[2])];
+     n := length(ns);
+     r := CreateArray(1..n,1..n,DBL_MAX);
+     for e in u[1] do
+	i1 := SearchArray(e[Node1],ns);
+	i2 := SearchArray(e[Node2],ns);
+	r[i2,i1] := r[i1,i2] := e[1] od;
+     r
+else error('invalid selector') fi
+end:
+
+
+Graph := proc( a:{Edges,set}, n:{Nodes,set} ) option polymorphic;
+
+  if nargs=1 and type(a,Edges) then
+       t := { seq(op(2..3,e),e=[op(a)]) };
+       noeval(Graph(a,Nodes(op(t))))
+  elif nargs <> 2 then error('incorrect number of arguments in graph')
+  elif type(a,set(set)) and type(n,set) then
+       es := Edges();
+       for e in a do
+	    if length(e) <> 2 then
+		 error('edges must be sets with 2 vertices:', e)
+	    elif not member(e[1],n) then
+		 error( 'edge definition uses non-vertex:', e[1] )
+	    elif not member(e[2],n) then
+		 error( 'edge definition uses non-vertex:', e[2] ) fi;
+	    es := append(es,Edge(0,e[1],e[2]))
+	    od;
+       Graph( es, Nodes(op(n)) )
+  elif type(n,set(set)) and type(a,set) then procname(n,a)
+  elif type(a,set) or type(n,set) then error('invalid Graph definition')
+  else ns := {op(n)};
+       for z in a do if not member(z[Node1],ns) or not member(z[Node2],ns) then
+	    error(z,'edge uses nodes not appearing in Nodes') fi od;
+       noeval(Graph(args)) fi
+end:
+
+
+
+Graph_Tree := proc( g:Graph ) option internal;
+eds := copy(g['Edges']);
+ns := g['Nodes'];
+nsa := [op(ns)];
+if length(ns)=1 then return( Leaf(ns[Label],0,ns[Label] ) ) fi;
+if length(ns)=0 or length(eds)=0 then
+     error('cannot convert graph to a tree') fi;
+m := 1;
+eds2 := eds;
+if type(eds2[1,1],list) then
+     eds2 := copy(eds);
+     for i to length(eds2) do eds2[i,1] := eds2[i,1,1] od
+fi;
+u := Graph(eds2,ns);
+inc := u[Incidences];
+for i to length(eds2) do
+     if not type(eds2[i,1],numeric) or eds2[i,1] < 0 then
+	error('edge labels must be (or lists with) numeric distances (>0) to convert to a tree')
+     fi;
+     if eds2[i,1] > eds2[m,1] then m := i fi;
+     for j from 2 to 3 do
+     	k := SearchArray( eds2[i,j], nsa );
+	if k < 1 then error(eds2[i,j],'node label cannot be found in Nodes') fi;
+	eds2[i,j] := k
+     od;
+od;
+Tree( GraphTreeR( eds2[m,2], m, eds2[m,1]/2, inc, eds2, ns), 0,
+      GraphTreeR( eds2[m,3], m, eds2[m,1]/2, inc, eds2, ns) )
+end:
+
+GraphTreeR := proc( nto:posint, efrom:posint, height:nonnegative, inc, eds, ns )
+option internal;
+assert( length(inc[nto]) >= 1 );
+if   length(inc[nto]) = 1 then Leaf( ns[nto], -height, nto )
+elif length(inc[nto]) = 2 then
+     # single descendant, ignore node, extend branch
+     ch := {op(inc[nto])} minus {efrom};
+     a := op({eds[ch[1],2],eds[ch[1],3]} minus {nto});
+     GraphTreeR( a, ch[1], height+eds[ch[1],1], inc, eds, ns)
+else r := 0;
+     for e in inc[nto] do
+	if e = efrom then next fi;
+	a := If( eds[e,2] = nto, eds[e,3], eds[e,2] );
+	t := GraphTreeR( a, e, height+eds[e,1], inc, eds, ns);
+	r := If( r=0, t, Tree(r,-height,t) );
+     od;
+     r
+fi;
+end:
+
+
+
+Graph_minus := proc( a:Graph, b ) local i;
+
+if type(b,Graph) then Graph_minus( Graph_minus(a,b[Nodes]), b[Edges] )
+
+elif type(b,Edges) or type(b,set(set)) then
+     if type(b,Edges) then b2 := Edges_set(b)
+     elif { seq(length(b[i]), i=1..length(b)) } = {2} then b2 := b
+     else error(b,'use Edges or set of sets of pairs') fi;
+     re := [op(a[Edges])];
+     keep := [seq( If(member( {z[Node1],z[Node2]}, b2), NULL, z),z=re)]:
+     Graph( Edges(op(keep)), a[Nodes] )
+
+elif type(b,Nodes) or type(b,set({numeric,string,structure})) then
+     b2 := If( type(b,Nodes), {op(b)}, b );
+     re := [op(a[Edges])];
+     keep := [seq( If(member(z[Node1],b2) or member(z[Node2],b2),NULL,z),z=re)]:
+     Graph( Edges(op(keep)), Nodes( op( {op(a[Nodes])} minus b2 )) )
+
+else error('cannot subtract',b,'from a Graph') fi;
+end:
+
+
+
+Graph_union := proc( a:Graph, b ) option internal;
+    if type(b, Graph) then
+        Graph( Edges(op( {op(a[Edges])} union {op(b[Edges])} )),
+               Nodes(op( {op(a[Nodes])} union {op(b[Nodes])} )) ):
+    elif type(b,Nodes) or type(b, set({numeric,string,structure})) then
+        b2 := If( type(b,Nodes), {op(b)}, b):
+        Graph( a[Edges], Nodes( op({op(a[Nodes])} union b2) ));
+    elif type(b,Edges) then
+        Graph( Edges(op( {op(a[Edges])} union {op(b)} )), a[Nodes] ):
+    elif type(b,set(set)) then
+        Graph_union(a, Edges( seq(Edge(0,z[1],z[2]), z=b) ));
+    else error('cannot merge ',b,'from a graph') fi:
+end:
+
+Graph_plus := proc( a:Graph, b ) option internal;
+    return( Graph_union(a,b) )
+end:
+
+
+
+############################
+# Edge and Edges functions #
+############################
+#
+Edge_select := proc( a:Edge, sel, val )
+if   sel='Label' then
+     if nargs=3 then a[1] := val else a[1] fi;
+elif sel='From' then
+     if nargs=3 then a[2] := val else a[2] fi;
+elif sel='To' then
+     if nargs=3 then a[3] := val else a[3] fi;
+else error('invalid selector') fi
+end:
+
+Edge := proc( Label, Node1, Node2 ) option polymorphic;
+  if Node1=Node2 then error('incorrect node pointers in edge') fi;
+  noeval(Edge(args))
+end:
+
+
+
+###################
+# Nodes functions #
+###################
+
+
+#				Gaston H. Gonnet (Nov 1992)
+ShortestPath := proc( g:Graph, i, excl:set )
+
+  ns := [op(g[Nodes])];
+  if nargs > 2 then
+       ex := { seq( SearchArray(excl[j],ns), j=1..length(excl) ) };
+       if member(0,ex) then error(excl,'exclude set contains non-nodes') fi
+  else ex := {} fi;
+  ii := SearchArray(i,ns);
+  if ii <= 0 then error(i,'does not belong to the node set') fi;
+  inc := g[Incidences];
+  n := length(inc);
+  es := g[Edges];
+  stack := {ii};
+  MinDist := CreateArray(1..n,DBL_MAX);
+  MinDist[ii] := 0;
+
+  while length(stack) > 0 do
+      t := stack[1];  stack := stack minus {t};
+      for e in inc[t] do
+          ed := es[e];
+          d := If(type(ed[1], list), ed[1,1], ed[1]);
+          if type(d,numeric) and d>=0 then
+	      j := {SearchArray(ed[Node1],ns),SearchArray(ed[Node2],ns)} minus {t};
+	      j1 := j[1];
+	      if MinDist[j1] > MinDist[t]+d then
+	           MinDist[j1] := MinDist[t]+d;
+	           stack := stack union (j minus ex)
+	      fi
+          fi
+      od
+  od;
+
+  res := [];
+  for j to n do
+      if MinDist[j] < DBL_MAX then
+          res := append(res, [ns[j],MinDist[j]] )
+      fi
+  od;
+  res
+end:
+
+
+
+
+#			Gaston H. Gonnet (March 1998)
+Graph_Rand := proc( n:integer, m:numeric )
+
+if nargs=0 then return( Graph_Rand( round( Rand()*16 + 4.5 )) )
+elif nargs=1 then return( Graph_Rand(n,n*ln(n)) )
+elif m >= n*(n-1)/2 then return( Complete(n) )
+elif m > n*(n-1)/4 then return( EdgeComplement( Graph_Rand(n,n*(n-1)/2-m) ))
+     fi;
+
+ns := Nodes():
+for i to n do ns := append(ns,i) od:
+es := Edges();
+while m > length(es) do
+        n1 := round( Rand()*n + 0.5 );
+        n2 := round( Rand()*n + 0.5 );
+        if   n1<n2 then es := append(es, Edge(0,n1,n2));
+        elif n2<n1 then es := append(es, Edge(0,n2,n1)) fi;
+	if m <= length(es) then es := Edges(op({op(es)})) fi
+        od;
+Graph( es, ns )
+end:
+
+
+
+#			Gaston H. Gonnet (April 1998)
+BipartiteGraph := proc( n1:integer, n2:integer, e:integer )
+if nargs = 0 then return( BipartiteGraph( round( Rand()*16 + 4.5 ),
+	round( Rand()*16 + 4.5 ) ))
+elif nargs = 1 then return( BipartiteGraph( n1, round( Rand()*16 + 4.5 ) ))
+elif nargs = 2 then return( BipartiteGraph( n1, n2, round(Rand()*n1*n2) ))
+elif n1<0 or n2<0 or e<0 then error('invalid arguments')
+elif n1*n2=0 then
+     ns := Nodes();
+     for i to n1+n2 do ns := append(ns,i) od;
+     return( Graph( Edges(), ns ) )
+elif e > n1*n2 then return( BipartiteGraph(n1,n2,n1*n2) )
+elif e > n1*n2/2 then 
+     invGraph := BipartiteGraph(n1,n2,n1*n2-e); 
+     invEdges := invGraph['EdgeSet'];
+     edg := Edges();
+     for i to n1 do for j from n1+1 to n1+n2 do 
+         if not member({i,j},invEdges) then edg := append(edg, Edge(0,i,j)) fi:
+     od od:
+     return( Graph( edg, invGraph['Nodes']) );
+     fi;
+
+ns := Nodes();
+for i to n1+n2 do ns := append(ns,i) od;
+es := {};
+while e > length(es) do
+    e1 := round( Rand()*n1 + 0.5 );
+    e2 := round( Rand()*n2 + 0.5 ) + n1;
+    es := es union {Edge(0,e1,e2)}
+    od;
+Graph( Edges(op(es)), ns )
+end:
+
+
+
+
+#			Gaston H. Gonnet (March 1998)
+Complete := proc( n:integer )
+es := NULL;  ns := NULL;
+for i to n do
+    ns := ns, i;
+    for j from i+1 to n do es := es, Edge(0,i,j) od
+    od;
+Graph( Edges(es), Nodes(ns) )
+end:
+
+
+#			Gaston H. Gonnet (March 1998)
+TetrahedronGraph := proc() Complete(4) end:
+
+HexahedronGraph := CubeGraph := proc() copy(Graph(
+    Edges( Edge(0,1,2), Edge(0,1,4), Edge(0,1,5), Edge(0,2,3), Edge(0,2,6),
+	   Edge(0,3,4), Edge(0,3,7), Edge(0,4,8), Edge(0,5,6), Edge(0,5,8),
+	   Edge(0,6,7), Edge(0,7,8) ), Nodes(1,2,3,4,5,6,7,8) )) end:
+
+OctahedronGraph := proc() copy(Graph(
+    Edges( Edge(0,1,2), Edge(0,1,3), Edge(0,1,4), Edge(0,1,5), Edge(0,2,3),
+	   Edge(0,2,5), Edge(0,2,6), Edge(0,3,4), Edge(0,3,6), Edge(0,4,5),
+	   Edge(0,4,6), Edge(0,5,6) ), Nodes(1,2,3,4,5,6) )) end:
+
+IcosahedronGraph := proc() copy(Graph(
+    Edges( Edge(0,1,2), Edge(0,1,3), Edge(0,1,4), Edge(0,1,5), Edge(0,1,6),
+	   Edge(0,2,3), Edge(0,2,6), Edge(0,2,7), Edge(0,2,8), Edge(0,3,4),
+	   Edge(0,3,8), Edge(0,3,9), Edge(0,4,5), Edge(0,4,9), Edge(0,4,10),
+	   Edge(0,5,6), Edge(0,5,10), Edge(0,5,11), Edge(0,6,7), Edge(0,6,11),
+	   Edge(0,7,8), Edge(0,7,11), Edge(0,7,12), Edge(0,8,9),
+	   Edge(0,8,12), Edge(0,9,10), Edge(0,9,12), Edge(0,10,11),
+	   Edge(0,10,12), Edge(0,11,12) ), Nodes(1,2,3,4,5,6,7,8,9,10,11,12) ))
+	end:
+
+DodecahedronGraph := proc() copy(Graph( Edges(
+    Edge(0,1,2), Edge(0,1,5), Edge(0,1,6), Edge(0,2,3), Edge(0,2,8),
+    Edge(0,3,4), Edge(0,3,10), Edge(0,4,5), Edge(0,4,12), Edge(0,5,14),
+    Edge(0,6,7), Edge(0,6,15), Edge(0,7,8), Edge(0,7,16), Edge(0,8,9),
+    Edge(0,9,10), Edge(0,9,17), Edge(0,10,11), Edge(0,11,12), Edge(0,11,18),
+    Edge(0,12,13), Edge(0,13,14), Edge(0,13,19), Edge(0,14,15), Edge(0,15,20),
+    Edge(0,16,17), Edge(0,16,20), Edge(0,17,18), Edge(0,18,19), Edge(0,19,20) ),
+    Nodes(1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20) )) end:
+
+PetersenGraph := proc() copy(Graph( Edges(
+    Edge(0,1,3), Edge(0,1,4), Edge(0,1,7), Edge(0,2,4), Edge(0,2,5),
+    Edge(0,2,8), Edge(0,3,5), Edge(0,3,9), Edge(0,4,10), Edge(0,5,6),
+    Edge(0,6,7), Edge(0,6,10), Edge(0,7,8), Edge(0,8,9), Edge(0,9,10) ),
+    Nodes(1,2,3,4,5,6,7,8,9,10) )) end:
+
+#			Gaston H. Gonnet (April 1998)
+RegularGraph := proc( n:integer, e:integer )
+
+if nargs=0 then return( RegularGraph( round(Rand()*16 + 4.5)) )
+elif nargs=1 then return( RegularGraph(n, round(Rand()*n-0.5)) )
+elif not type(n*e/2,integer) then return( RegularGraph(n,e-1) )
+elif e >= n-1 then return( Complete(n) )
+elif e > (n-1)/2 then return( EdgeComplement( RegularGraph(n,n-1-e) )) fi;
+
+deg := CreateArray(1..n,e):
+free := n*e;
+es := {};
+for r while free > 0 do
+
+    t1 := Rand()*free;
+    for e1 while t1 >= 0 do t1 := t1 - deg[e1] od;
+    e1 := e1-1;
+
+    d1 := deg[e1];
+    if free-d1 <= 0 or r > n*e then return(RegularGraph(args)) fi;
+    deg[e1] := 0;
+    t1 := Rand()*(free-d1);
+    for e2 while t1 >= 0 do t1 := t1 - deg[e2] od;
+    e2 := e2-1;
+    deg[e1] := d1;
+
+    if e1 > e2 then t1 := e1;  e1 := e2;  e2 := t1 fi;
+    ed := Edge(0,e1,e2);
+    if not member(ed,es) then
+	 es := es union {ed};
+	 deg[e1] := deg[e1]-1;
+	 deg[e2] := deg[e2]-1;
+	 free := free-2;
+	 r := 0;
+	 fi;
+    od;
+
+ns := Nodes();
+for i to n do ns := append(ns,i) od;
+Graph( Edges(op(es)), ns )
+end:
+
+
+EdgeComplement := proc( g:Graph )
+
+ges := g[EdgeSet];
+ng := g[Nodes];
+n := length(ng);
+es := Edges();
+for i to n do for j from i+1 to n do if not member({ng[i],ng[j]},ges) then
+    es := append(es,Edge(0,ng[i],ng[j])) fi od od;
+Graph( es, ng )
+end:
+
+
+# check Graph just at the surface, for large Graphs the full
+# check has a severe efficiency impact
+Graph_type := noeval(Graph(structure(anything,Edges),Nodes)):
+Edges_type := structure(Edge,Edges):
+Edges_set := proc(e:Edges) local i;  option internal;
+{seq( {e[i,Node1],e[i,Node2]}, i=1..length(e) )} end:
+Edge_type := structure(anything,Edge):
+Nodes_type := structure(anything,Nodes):
+
+
+
+DrawGraph := proc( g:Graph ;
+        (init='equal'):{'equal','distance','weight',procedure},
+		'EdgeDrawing'=((LineProcArg='unlabeled'):{'unlabeled','labeled',procedure}),
+		'NodeDrawing'= ( NodeProcArg : procedure ),
+		'TextSize' = ((TextSize=10) : posint ),
+        (colorspec=[]):list(structure(anything,Color)) )
+global printlevel;
+
+#	Local procedures
+DrawGraphSearchEdge := proc(e,s)
+  if e=s then true
+  elif type(s,{list,set}) then
+     for i to length(s) do
+	t := procname(e,s[i]);
+	if t <> false then return(t) fi;
+	od;
+     false
+  elif type(s,structure(anything,Color)) then
+     for i from 2 to length(s) do
+	t := procname(e,s[i]);
+	if t then return(s[1]) fi;
+	od;
+     false
+  elif type(s,structure(anything,Edges)) then member(e,{op(s)})
+  else false fi
+  end:
+
+DrawGraphSearchNode := proc(e,s)
+  option internal;
+  if e=s then true
+  elif type(s,{list,set}) then
+     for i to length(s) do
+	t := procname(e,s[i]);
+	if t <> false then return(t) fi;
+	od;
+     false
+  elif type(s,structure(anything,Color)) then
+     for i from 2 to length(s) do
+	t := procname(e,s[i]);
+	if t then return(s[1]) fi;
+	od;
+     false
+  elif type(s,structure(anything,Nodes)) then member(e,{op(s)})
+  else false fi
+  end:
+
+DistLabel2Dist := proc(e:Edge) if type(e[Label],nonnegative) then
+    t := e[Label]+1e-7 else t:=0 fi; [t,t] end:
+WeightLabel2Dist := proc(e:Edge) if type(e[Label],positive) then
+	t := 1/e[Label] else t := 0 fi; [t,t] end:
+Equal2Dist := proc(e:Edge) [1,1] end:
+
+if type(init,procedure) then dfun := init;
+elif init='equal' then dfun := Equal2Dist;
+elif init='distance' then dfun := DistLabel2Dist;
+elif init='weight' then dfun := WeightLabel2Dist;
+else error(string(init).' not yet implemented') fi:
+
+if LineProcArg='unlabeled' then
+	LineProc := proc(x1,y1,x2,y2,lab,ts,c)
+	  [LINE(x1,y1, x2,y2, If(nargs>6,color=c,NULL))]
+	end:
+elif LineProcArg='labeled' then
+	LineProc := proc(x1,y1,x2,y2,lab,ts,c)
+	  [LINE(x1,y1, x2,y2, If(nargs>6,color=c,NULL)),
+	   CTEXT( (x1+x2)/2, (y1+y2)/2, lab, points=ts, If(nargs>6,color=c,NULL) )];
+	end:
+elif type(LineProcArg,procedure) then LineProc := LineProcArg;
+else error('unknown LineProcArg:',LineProcArg) fi:
+
+if not assigned(NodeProcArg) then
+	NodeProc := proc(x,y,lab,ts,c)
+	  [CIRCLE(x,y,ts,If(nargs>4,color=c,NULL)),
+	   CTEXT(x,y-0.01,lab,points=ts,If(nargs>4,color=c,NULL))];
+	end:
+else NodeProc := NodeProcArg fi:
+
+m := length(g[Edges]);
+ns := [op(g[Nodes])];
+n := length(ns);
+dist := CreateArray(1..n,1..n):
+var  := CreateArray(1..n,1..n):
+
+for e in g[Edges] do
+    i := SearchArray(e[Node1],ns);  j := SearchArray(e[Node2],ns);
+	r := dfun(e):
+    dist[i,j] := dist[j,i] := r[1];
+	var[i,j]  := var[j,i]  := r[2]:
+    od;
+
+BestPot := DBL_MAX;
+st := time();
+oprl := printlevel;  printlevel := 0;
+to 20 do
+    x := NBody(dist,var,4,2,0.1,1);
+    x := NBody(dist,var,2,2,0.1,0.001,x);
+    if NBodyPotential < BestPot then BestPot := NBodyPotential;  xsol := x fi;
+    if time()-st > 30 then break fi;
+    od;
+printlevel := oprl;
+if printlevel >= 2 then
+    printf( 'DrawGraph, NBody: potential %.10g\n', BestPot ) fi;
+
+gr := []:
+#colorspec := [args[2..nargs]];
+for e in g[Edges] do
+    i := SearchArray(e[2],ns);  j := SearchArray(e[3],ns);
+    t := DrawGraphSearchEdge(e,colorspec);
+	edg := If(type(e[Label],{numeric,string}),e[Label],sprintf('%a',e[Label]));
+    if t=false then
+	 gr := append(gr, op(LineProc(xsol[i,1],xsol[i,2],xsol[j,1],xsol[j,2],
+	                              edg,TextSize)));
+    else t := GetColorMap(t);
+	 gr := append(gr, op(LineProc(xsol[i,1],xsol[i,2],xsol[j,1],xsol[j,2],
+	                              edg,TextSize,t)));
+	 fi
+    od:
+
+for i to n do
+    nod := ns[i];
+    t := DrawGraphSearchNode(nod,colorspec);
+    if not type(nod,{numeric,string}) then nod := sprintf('%a',nod) fi;
+    if t=false then
+	 gr := append(gr, op(NodeProc(xsol[i,1],xsol[i,2],nod,TextSize)));
+    else t := GetColorMap(t);
+         gr := append(gr, op(NodeProc(xsol[i,1],xsol[i,2],nod,TextSize,t)));
+	 fi
+    od:
+DrawPlot( gr, proportional );
+end:
+
+
+
+
+#  MTH - August 17, 1998
+#  InduceGraph.
+#   fixed implementation according to Wikipedia to following definition:
+#    A subgraph H of a graph G is said to be induced if, for any pair of vertices
+#    x and y of H, xy is an edge of H if and only if xy is an edge of G. In other
+#    words, H is an induced subgraph of G if it has exactly the edges that appear
+#    in G over the same vertex set. If the vertex set of H is the subset S of
+#    V(G), then H can be written as G[S] and is said to be induced by S.
+#
+#                                               Adrian Altenhoff, Oct 2011
+InduceGraph := proc( origG : Graph, elements : {Edges, Nodes} )
+  
+    if type(elements,Nodes) then
+        nodesToRem := {op(origG[Nodes])} minus {op(elements)};
+        if length(nodesToRem)=0 then return( copy(origG) );
+        else return( origG minus nodesToRem );
+        fi:
+    elif type(elements, Edges) then
+        edgesToKeep := {op(elements)}:
+        edg := Edges( seq(If(member(z,edgesToKeep),z,NULL), z=[op(origG[Edges])]) );
+        return( Graph( edg ) ):
+    fi:
+end:
+        
+#
+# MH - 05.09.98 - Algorithm to return Connected Components of a Graph
+# GG - 15.12.04 - New version using tables and Nodes which are not
+#			consecutive integers.
+# Input:  G := Graph(V, E)
+# Output: A set of Graphs {G1, G2, ..., Gk} where each Gi is a
+#	connected subgraph of G.
+#
+FindConnectedComponents := proc ( G : Graph )
+
+ns := G['Nodes'];
+lns := length(ns);
+nodes := CreateArray(1..lns,[]);
+edges := CreateArray(1..lns,[]);
+t := table();
+for i to lns do t[ns[i]] := i;  nodes[i] := [ns[i]] od;
+for e in G['Edges'] do
+    i1 := t[e[Node1]];  i2 := t[e[Node2]];
+    if i1 <> i2 then # must union two sub-graphs
+	 if length(nodes[i1])<length(nodes[i2]) then
+		tmp := i2; i2 := i1; i1 := tmp
+	 fi;
+	 nodes[i1] := append(nodes[i1], op(nodes[i2]));
+	 for w in nodes[i2] do t[w] := i1 od;
+	 nodes[i2] := [];
+    fi
+od;
+
+for e in G['Edges'] do
+    i1 := t[e[Node1]];
+    edges[i1] := append(edges[i1], e);
+od:
+
+{ seq( If( nodes[i]=[], NULL, Graph( Edges(op(edges[i])), Nodes(op(nodes[i])))),
+	i=1..lns ) }
+end:
+
+
+#
+# convert a graph into the dimacs format
+#
+Graph_dimacs := proc( gr:Graph )
+ns := [op(gr['Nodes'])];
+r := sprintf( 'c Graph generated by Darwin\np edge %d %d\n',
+    length(ns), length(gr[1]) );
+es := '';
+for e in gr[1] do
+    i1 := SearchArray(e[2],ns);
+    i2 := SearchArray(e[3],ns);
+    if i1 < 1 or i2 < 1 then error(e,'invalid edge') fi;
+    if e[1] > 0 then es := es . sprintf( 'e %d %d %.8g\n', i1, i2, e[1] )
+    else es := es.sprintf('e %d %d\n', i1, i2 ) fi;
+    if length(es) > 1000 then r := r . es;  es := '' fi;
+od;
+r . es
+end:
+
+
+ParseDimacsGraph := proc( s:string )
+    N := M := -1;
+    edgs := Edges();
+    nr := 0;
+    for line in Lines(s) do
+        nr := nr+1;
+        if line[1]='c' then next;
+        elif line[1]='p' then
+           t := sscanf(line, 'p %s %d %d');
+           if length(t)<>3 then error('could not parse problem: '.line[1..-2]);
+           else N := t[2]; M := t[3]; fi:
+        elif member(line[1],{'a','e'}) then
+            t := sscanf(line, '%s %d %d %d');
+            lenT := length(t);
+            if lenT>2 and t[2]<=N and t[3]<=N then 
+                edgs := append(edgs, Edge( If(lenT=4,t[4],0), t[2], t[3]));
+            else error('invalid line('.nr.'): '.line);
+            fi:
+        fi:
+    od:
+    if length(edgs)<>M then 
+        error('expected '.M.' edges, but found '.length(edgs)); 
+    fi:
+    return( Graph(edgs, Nodes(seq(i,i=1..N))) );
+end:
+
+Graph_XGMML := proc( G:Graph;
+        'directed'=((directed=false):boolean),
+        'title'=((title='Graph from Darwin'):string),
+        'NodeLabel'=(NodeLabelFun_:procedure),
+        'EdgeLabel'=(EdgeLabelFun_:procedure),
+        'NodeAttribute'=(NodeAttrFun:procedure),
+        'EdgeAttribute'=(EdgeAttrFun:procedure) )
+
+    HandleAttrReturn := proc(ret)
+        if ret=NULL then return('');
+        elif type(ret,string) then return(ret);
+        elif type(ret,table) then 
+            t := '<att';
+            for z in Indices(ret) do t:=t.sprintf(' %s="%a"', z, ret[z]) od:
+            t := t.' />\n';
+        elif type(ret, list(table)) then
+            t := '';
+            for z in ret do t:=t.HandleAttrReturn(z) od:
+        else error('unexpected attribute type:'. string(ret)) 
+        fi:
+        return(t);
+    end:
+
+    NodeLabelFun := If(assigned(NodeLabelFun_),NodeLabelFun_,x->x);
+    EdgeLabelFun := If(assigned(EdgeLabelFun_),EdgeLabelFun_,x->x[Label]);
+
+    t:=[]:
+    t := append(t,'<?xml version="1.0"?>\n');
+    t := append(t,sprintf('<graph id="%s" label="%s" ',title, title));
+    t := append(t,'xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" '.
+        'xmlns:ns1="http://www.w3.org/1999/xlink" '.
+        'xmlns:dc="http://purl.org/dc/elements/1.1/" '.
+        'xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" '.
+        'xmlns="http://www.cs.rpi.edu/XGMML" ');
+    t := append(t,sprintf('directed="%d">\n', If(directed,1,0)));
+    t := append(t,'\t<att name="documentVersion" value="1.0"/>\n');
+
+    for node in G[Nodes] do 
+        t := append(t, sprintf('<node id="%a" label="%a">\n', node, 
+            NodeLabelFun(node) ));
+        if assigned(NodeAttrFun) then 
+            t := append(t, HandleAttrReturn( NodeAttrFun(node) ));
+        fi:
+        t := append(t,'</node>\n');
+    od:
+    for edge in G[Edges] do 
+        t := append(t, sprintf('<edge id="%a %a" label="%a" '.
+            'source="%a" target="%a">\n', edge['From'], edge['To'], 
+            EdgeLabelFun(edge),  edge['From'], edge['To']));
+        if assigned(EdgeAttrFun) then
+            t := append(t,HandleAttrReturn( EdgeAttrFun(edge) ));
+        fi:
+        t:=append(t,'</edge>\n');
+    od:
+    t := append(t,'</graph>\n');
+    return( ConcatStrings(t,'') ):
+end:
+
+# Implementation of Prim's algorithm for minimum spanning tree
+# (accept also a distance matrix as input, GhG Mar 21, 2010)
+#                                       cd, Dec 2006
+MST := proc(g:{Graph,matrix(nonnegative)})
+    if type(g,matrix) then return(
+	Graph( Edges(seq( Edge(g[op(w)],op(w)),w=MST_matrix(g) ))) )
+    fi;
+    # implementation of Prim's algorithm for minimum spanning tree
+    nv := length(g[Nodes]);
+    dist := CreateArray(1..nv,DBL_MAX);
+    corresp_edge := CreateArray(1..nv);
+    is_added := CreateArray(1..nv,false);
+    e := [];
+    # we start from first node
+    is_added[1] := true;
+    last := 1;
+    all_edges := g[Edges]:
+    all_incidences := g[Incidences]:
+    all_nodes := [op(g[Nodes])]:
+    last_id := all_nodes[last];
+    to nv -1 do
+        # step 1: update the distance of the last with all nodes not yet
+        #         connected
+        for i in all_incidences[last] do
+            tmp := all_edges[i];
+            other_id := If(tmp[2]=last_id,tmp[3],tmp[2]);
+            other := SearchOrderedArray(other_id,all_nodes);
+            if not is_added[other] then
+                if tmp[1] < dist[other] then
+                    dist[other] := tmp[1];
+                    corresp_edge[other] := tmp;
+                fi;
+            fi;
+        od:
+        # step 2: take the vertex that has the smallest distance, but has
+        #         not been picked yet
+        min_dist := DBL_MAX;
+        min_v := -1;
+        for i to nv do
+            if not is_added[i] then
+                if dist[i] < min_dist then
+                    min_dist := dist[i];
+                    min_v := i;
+                fi;
+            fi;
+        od;
+        if min_v = -1 then
+            error('The input graph has more than one connected component');
+        fi;
+        e := append(e,corresp_edge[min_v]);
+        is_added[min_v] := true;
+        last := min_v;
+        last_id := SearchOrderedArray(last,all_nodes);
+    od:
+    return(Graph(Edges(op(e))));
+end:
+
+MST_matrix := proc( g:matrix(nonnegative) )
+n := length(g);
+pairs := [];
+for i to n do
+    if g[i,i] <> 0 then error(g[i,i],i,'diagonal element non-zero') fi;
+    for j from i+1 to n do
+	if g[i,j] <> g[j,i] then error(i,j,g[i,j],g[j,i],
+	    'matrix non-symmetric') fi;
+	pairs := append(pairs,[g[i,j],i,j])
+    od;
+od;
+lab := [seq(i,i=1..n)];
+pairs := sort(pairs);
+r := [];
+for w in pairs do
+    lab2 := lab[w[2]];  lab3 := lab[w[3]];
+    if lab2 <> lab3 then
+	r := append(r,[w[2],w[3]]);
+	for i to n do if lab[i] = lab3 then lab[i] := lab2 fi od;
+	if max(lab) = 1 then break fi;
+    fi
+od;
+assert(length(r)=n-1);
+r
+end:
+
+#
+#	Path( g:Graph, n1:Node, n2:Node )
+#	Find a path between node n1 and n2, return a list
+#	with all the edges in the path.
+#
+#	If there is no path, it returns an empty set
+#
+#	Gaston H. Gonnet (February 12th, 2009)
+#
+Path := proc( g:Graph, n1, n2 )
+if not has(g[2],n1) then error('node n1 not in graph g')
+elif not has(g[2],n2) then error('node n2 not in graph g') fi;
+es := [op(g[1])];
+paths := { seq( If(w[2]=n1,[n1,w,w[3]],NULL), w=es ),
+	   seq( If(w[3]=n1,[n1,w,w[2]],NULL), w=es )};
+while opaths <> paths do
+    opaths := paths;  paths := [];
+    for w in opaths do
+	v := w[-1];
+	for u in es do
+	    t := 0;
+	    # do not append to w as it will be reused.
+	    if u[2]=v and not member(u[3],w) then t := [op(w),u,u[3]]
+	    elif u[3]=v and not member(u[2],w) then t := [op(w),u,u[2]] fi;
+	    if t <> 0 then
+		if t[-1] = n2 then # found a path
+		    return( [ seq(t[2*i],i=1..length(t)/2) ] )
+		fi;
+		paths := append(paths,t);
+	    fi
+	od;
+    od;
+    paths := {op(paths)}
+od;
+return([])
+end:

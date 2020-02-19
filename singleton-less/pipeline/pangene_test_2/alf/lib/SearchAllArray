@@ -1,0 +1,38 @@
+#
+# Purpose: Recursive version of SearchArray in Darwin. The proc
+#          SearchArray returns the first index of an occurrence
+#          of a string or a number t in an array A. When there 
+#          are multiple occurrences of t in A, all apart from 
+#          the first are ignored. This proc returns a list of 
+#          indices of all occurrences of t in A.
+# Author:  Peter von Rohr
+# Created: Tue Feb 11 09:31:03 CET 2003
+#
+# ############################################################ #
+SearchAllArray := proc ( t:anything, A:array )
+	# initialize variables and constants:
+	#   -- cumulative index of all fidx returned   ==> cidx
+	#   -- index returned by each SearchArray call ==> fidx
+	#   -- the index list that will be returned by 
+	#      this procedure                          ==> ilist
+	#   -- the length of array A                   ==> lA
+	cidx := 0:
+	fidx := 0:
+	ilist := []:
+	lA := length(A):
+	
+	# loop as long as member(t,A[(fidx+1)..lA]), add fidx to ilist
+	do 
+		### # search for t in sub-array of A that has not been
+		### # searched previously
+		fidx := SearchArray(t,A[(cidx+1)..lA]):
+		### # if t is not found, break, o/w continue
+		if fidx = 0 then break fi:
+		### # cumulate the indices
+		cidx := cidx + fidx:
+		### # add new cumulative index to list
+		ilist := append(ilist,cidx):
+	od:
+	return(ilist):
+	
+end:

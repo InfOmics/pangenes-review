@@ -1,0 +1,525 @@
+# Purpose: PredictGenes server (ParExecuteIPC version)
+# Author:  CompBioResGrp (L.J. Knecht)
+# Created: 25 May 1994
+#
+
+
+GetToken := proc(tt: [posint, string])
+  t := tt[2];
+  for i from tt[1] to length(t) while t[i] <= ' ' do od;
+  if i <= length(t) then
+    for j from i to length(t) while
+    SearchString(t[j], 'abcdefghijklmnopqrstuvwxyz_0123456789') >= 0 do od;
+    if j > i then
+      tt[1] := j; t[i..j-1]
+    else
+      tt[1] := i + 1; t[i]
+    fi
+  else
+    tt[1] := i; ''
+  fi
+end:
+
+ParseMsg := proc(msg: string)
+  global seq1, division, alignments, seqid, minpam, maxpam, rawprediction,
+  visualize;
+  description
+'Parses incoming message for Predict and returns
+   - a list sequence,division,options if there is a correct nucleotide sequence
+     to be searched
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+
+  if length(msg) < 10 or msg[1..5] <> 'From ' then
+    lprint('Invalid incoming message');
+    return(0)
+  fi;
+  first := CaseSearchString('\n\n', msg);
+  if first < 0 then
+    lprint('Start of message body not found');
+    return(0)
+  fi;
+  last := CaseSearchString('\n\n', first + 2 + msg);
+  if last < 0 then
+    return('?there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  division := seq1 := rawprediction := visualize := '';
+  alignments := 0; seqid := 'unknown'; maxpam := DBL_MAX; minpam := -DBL_MAX;
+  tt := [1, msg[first+3..first + 2 + last]];
+  token := GetToken(tt);
+  if lowercase(token) <> 'testnewfunction' and
+    lowercase(token) <> 'predictgenes' then
+    return(sprintf('?"%s" is not a valid server command.', token))
+  fi;
+
+
+  do
+    token := GetToken(tt);
+    if token = '' then
+      break
+    elif lowercase(token) = 'division' then
+      if division <> '' then
+	return('?there is more than one Division specification')
+      fi;
+      if GetToken(tt) <> '=' then
+        return('?the Division specification lacks the "="')
+      fi;
+      token := GetToken(tt);
+      divisions := 'any fun inv mam pln pri pro rod vrt';
+      p := SearchString(token, divisions);
+      if length(token) = 3 and mod(p, 4) = 0 then
+	division := divisions[p+1..p+3]
+      else
+	return('?'.token.' is an invalid division')
+      fi
+    elif lowercase(token) = 'alignments' then
+      if alignments <> 0 then
+	return('?there is more than one Alignments specification')
+      fi;
+      if GetToken(tt) <> '=' then
+        return('?the Alignments specification lacks the "="')
+      fi;
+      alignments := sscanf(GetToken(tt), '%d');
+      if length(alignments) = 0 then
+	return('?an invalid number in the Alignments specification')
+      fi;
+      alignments := alignments[1]
+    elif lowercase(token) = 'id' then
+      if seqid <> 'unknown' then
+	return('?there is more than one ID specification')
+      fi;
+      if GetToken(tt) <> '=' then
+        return('?the ID specification lacks the "="')
+      fi;
+      seqid := uppercase(GetToken(tt))
+    elif lowercase(token) = 'maxpam' then
+      if maxpam <> DBL_MAX then
+	return('?there is more than one MaxPam specification')
+      fi;
+      if GetToken(tt) <> '=' then
+        return('?the MaxPam specification lacks the "="')
+      fi;
+      maxpam := sscanf(GetToken(tt), '%g');
+      if length(maxpam) = 0 then
+	return('?an invalid number in the MaxPam specification')
+      fi;
+      maxpam := maxpam[1]
+    elif lowercase(token) = 'minpam' then
+      if minpam <> -DBL_MAX then
+	return('?there is more than one MinPam specification')
+      fi;
+      if GetToken(tt) <> '=' then
+        return('?the MinPam specification lacks the "="')
+      fi;
+      minpam := sscanf(GetToken(tt), '%g');
+      if length(minpam) = 0 then
+	return('?an invalid number in the MinPam specification')
+      fi;
+      minpam := minpam[1]
+    elif lowercase(token) = 'rawprediction' then
+      if GetToken(tt) <> '=' then
+        return('?the RawPrediction specification lacks the "="')
+      fi;
+      rawprediction := lowercase(GetToken(tt));
+      if rawprediction <> 'false' and rawprediction <> 'true' then
+	return('?an invalid RawPrediction specification')
+      fi
+    elif lowercase(token) = 'visualize' then
+      if GetToken(tt) <> '=' then
+        return('?the Visualize specification lacks the "="')
+      fi;
+      visualize := lowercase(GetToken(tt));
+      if visualize <> 'false' and visualize <> 'true' then
+	return('?an invalid Visualize specification')
+      fi
+    else
+      other := first := 0;
+      for i to length(token) do
+	if NToInt(uppercase(token[i])) = 0 then
+	  other := other + 1; if first = 0 then first := i fi
+	fi
+      od;
+      if other = 0 then
+	seq1 := seq1.uppercase(token)
+      elif other < length(token)/10 then
+        return(sprintf('?the sequence contains an invalid character "%c" at position %d.',
+		       token[first], length(seq1) + first))
+      fi
+    fi
+  od;
+  if division = '' then division := 'any' fi;
+  rawprediction := evalb(rawprediction = 'true');
+  visualize := evalb(visualize <> 'false');
+  if length(seq1) < 12 then
+    return('?the sequence is shorter than 12 bases.')
+  fi;
+  'ok'
+end:
+
+
+AppendPostScript := proc(fromfile: string, tofile: string, title: string)
+  global tmpfile, hasps;
+  t := ReadRawFile(fromfile);
+  p := CaseSearchString('\n', t);
+  OpenAppending(tofile);
+  printf('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending(tmpfile);
+  hasps := true
+end:
+
+ListSites := proc(p: array(numeric))
+  printf(' #    bp prob.     #    bp prob.     #    bp prob.     #    bp prob.\n');      
+  printf('-- ----- -----    -- ----- -----    -- ----- -----    -- ----- -----');
+  s := CreateArray(1..length(p));
+  for i to length(p) do s[i] := [i,p[i]] od;
+  s := sort(s, x->-x[2]);
+  for i to min(length(s),20) do
+    if mod(i, 4) = 1 then printf('\n') fi;
+    printf('%2d %5d %5.3f    ', i, s[i,1], 10^(s[i,2]/10))
+  od;
+  printf('\n')
+end:
+
+PlotRegions := proc(ado: list)
+  pd := [LTEXT(0,1,'Raw splice site and intron region prediction')];
+  ls := length(ado[1]);
+  alpha20 := If(ls >= 200, sort(ado[1])[ls-19], 0);
+  omega20 := If(ls >= 200, sort(ado[3])[ls-19], 0);
+  delta := zip(10^(ado[2]/10));
+  mindelta := min(delta); deltadelta := max(delta)-mindelta;
+  if (deltadelta = 0) then
+    deltadelta := mindelta;
+  fi;
+  delta := zip((delta-mindelta)/deltadelta);
+  dbp := 1000 * trunc((ls + 4999) / 5000);
+  x := y := 0;
+  for bp by dbp to ls do
+    bpe := min(bp + dbp - 1, ls);
+    pd := append(pd, LINE(bp - x, y, bpe - x, y));
+    for i from bp - 1 + dbp/10 by dbp/10 to bpe do
+      pd := append(pd, LINE(i - x, y, i - x, y-0.05), 
+		   CTEXT(i - x, y-0.15, sprintf('%d', i)))
+    od;
+    for i from bp to bpe do
+      if i > bp then
+	pd := append(pd, LINE(i - 1 - x, y + delta[i-1], i - x, y + delta[i]))
+      fi;
+      if ado[1,i] >= alpha20 then
+	y1 := y + 10^(ado[1,i]/10);
+	pd := append(pd, LINE(i - x, y, i - x, y1),
+		     LINE(i - x, y1, i - x + dbp/200, y1+0.02),
+		     LINE(i - x, y1, i - x + dbp/200, y1-0.02))
+      fi;
+      if ado[3,i] >= omega20 then
+	y1 := y + 10^(ado[3,i]/10);
+	pd := append(pd, LINE(i - x, y, i - x, y1),
+		     LINE(i - x, y1, i - x - dbp/200, y1+0.02),
+		     LINE(i - x, y1, i - x - dbp/200, y1-0.02))
+      fi
+    od;
+    x := x + dbp; y := y - 1.5
+  od;
+  DrawPlot(pd)
+end:
+
+printkey := x->printf('FT   %-16s', x):
+printnote := proc(nr: set, ms: list(NucPepMatch))
+  printkey(' ');
+  printf('/note="%d of %d match', length(nr), length(ms));
+  if length(ms) > 1 then printf('es') fi;
+  printf(' at %.1f', ms[nr[1],PamNumber]);
+  if length(nr) > 1 then printf('-%.1f', ms[nr[length(nr)],PamNumber]) fi;
+  printf(' PAM"\n')
+end:
+
+printseq := proc(s: string, how: procedure)
+  len := length(s);
+  for i by 60 to len do
+    printf('     ');
+    for j from i by 10 to i + 59 do
+      printf('%-11s', If(j <= len, how(s[j..min(j + 9, len)]), ' '))
+    od;
+    printf('%9d\n', min(i+59, len))
+  od
+end:
+
+PredictSecStruct := proc()
+  #option trace
+  global DB, NucDB, PepDB, prefix, seq1, division, alignments, seqid, minpam, maxpam,
+  rawprediction, visualize, hasps;
+  Set(printgc=false);
+  len := length(seq1);
+  printf('Results of PredictGenes applied on a %d bp nucleotide sequence.\n',
+	 len);
+  MAXDNALEN := 25000;
+  if len > MAXDNALEN then
+    printf('\nThe sequence is longer than %d bases, this job cannot be processed.\n',
+	    MAXDNALEN);
+    printf('Split the sequence into (overlapping) smaller parts.\n');
+    return()
+  fi;
+  hasps := false;
+  allplotfile := prefix.'all.temp.ps';
+  plotfile := prefix.'temp.ps';
+  #OpenWriting(allplotfile); 
+  #OpenWriting(terminal);
+  OpenAppending(tmpfile);
+  Set(plotoutput=plotfile);
+  if rawprediction then
+    ado := Intron(seq1, 1, division);
+    printf('\nRaw donor site prediction (intron starts):\n');
+    ListSites(ado[1]);
+    printf('\nRaw acceptor site prediction (intron ends):\n');
+    ListSites(ado[3]);
+    PlotRegions(ado);
+    AppendPostScript(plotfile, allplotfile, 'Raw intron region prediction')
+  fi;
+  minSimil := max(min((len - 1000) * 50 / 3000, 50), 0) + 100;
+  ms := AlignNucPepAll(seq1, DM, division, minSimil-10);
+  ms := sort(ms, m->-m[Sim]);
+  ms2 := [];
+  for m in ms while length(ms2) < 50 do
+    m2 := LocalNucPepAlignBestPam(m);
+    if m2[Sim] >= minSimil and m2[PamNumber] >= minpam and
+      m2[PamNumber] <= maxpam then
+      ms2 := append(ms2, m2)
+    fi
+  od;
+
+  if length(ms2) = 0 then
+    printf('\nNo significant matches with proteins found. Could not determine structure.\n')
+  else
+    ms2 := sort(ms2, x->x[PamNumber] * PepDB[TotAA] + x[PepOffset]);
+    n := 1;
+    for i from 2 to length(ms2) do
+      if ms2[i,NucOffset] <> ms2[n,NucOffset] or
+	ms2[i,PepOffset] <> ms2[n,PepOffset] then
+	n := n + 1; ms2[n] := ms2[i]
+      fi
+    od;
+    ms2 := ms2[1..n];
+    count := CreateArray(1..7);
+    for i to len do
+      j := NToInt(seq1[i])+1; count[j] := count[j] + 1
+    od;
+  
+    printf('\nID   %-10s predicted; %s; %s; %d NToInt.\n',
+	   seqid, If(count[6] = 0, 'DNA', 'RNA'), uppercase(division), len);
+    dt := date();
+    printf('XX\nDT   %s-%s-%s\nXX\n', dt[9..10], uppercase(dt[5..7]),
+	   dt[21..24]);
+    printf('CC   Gene structure prediction by comparing the gene with\n');
+    dbname := SearchTag('DBNAME', PepDB[string]);
+    printf('CC   %d out of %d entries of %s release %s.\nXX\n',
+	   length(ms2),	PepDB[TotEntries], dbname,
+	   SearchTag('DBRELEASE', PepDB[string]));
+    DB := PepDB;
+    id := CreateArray(1..length(ms2));
+    for i to length(ms2) do
+#gmc     str := string(Entry(Offset(ms2[i,PepOffset])));
+      str := Entry(GetEntryNumber(ms2[i,PepOffset]));
+      stag := SearchTag('ID', str);
+      id[i] := sscanf(stag, '%s')[1];
+      printf('DR   %s; %-19s Sim %6.1f at %5.1f PAM\n',
+	     dbname, (sscanf(SearchTag('AC', str), '%s')[1]).' '. id[i].'.',
+	     ms2[i,Sim], ms2[i,PamNumber])
+    od;
+    printf('XX\nFH   Key             Location/Qualifiers\nFH\n');
+    res := PredictGenes(ms2);
+    
+ 
+    for pred in res[1] do
+      cds := pred[1];
+      printkey('CDS');
+      if length(cds) = 1 then
+	printf('%d..%d\n', cds[1,1], cds[1,2]); mRNA := seq1[cds[1]]
+      else
+	printf('join('); l := 5; mRNA := '';
+	for i to length(cds) do
+	  s := sprintf('%d..%d', cds[i,1], cds[i,2]);
+	  if l + length(s) >= 58 then
+	    printf(',\n'); printkey(' '); l := 0
+	  elif i > 1 then
+	    printf(','); l := l + 1
+	  fi;
+	  printf('%s', s); l := l + length(s);
+	  mRNA := mRNA.seq1[cds[i]]
+# something is wrong with seq1 (rob)
+	od;
+	printf(')\n')
+      fi;
+      printkey(' '); printf('/score=%.1f\n', pred[2]);
+      printkey(' '); printf('/note="by similarity to ');
+      l := 24;
+      for i in pred[3] do
+	if l + length(id[i]) >= 56 then
+	  printf(',\n'); printkey(' '); l := 0
+	elif i <> pred[3,1] then
+	  printf(', '); l := l + 2
+	fi;
+	printf('%s', id[i]); l := l + length(id[i])
+      od;
+      printf('"\n');
+      printkey(' '); printf('/codon_start=1\n');
+      printkey(' '); printf('/translation="');
+      l := 14;
+      for i to trunc(length(mRNA)/3) do
+	if l = 58 then
+	  printf('\n'); printkey(' '); l := 0
+	fi;
+	printf('%c', GenCode(mRNA[3*i-2..3*i]));
+	l := l + 1
+      od;
+      printf('"\n')
+    od;
+    ii := ie := 1; exonnr := intronnr := 0; state := INTRON;
+    do
+      epos := If(ie <= length(res[2]), res[2,ie,Start], DBL_MAX);
+      ipos := If(ii <= length(res[3]), res[3,ii,Start], DBL_MAX);
+      if epos <= ipos then
+	if epos = DBL_MAX then break fi;
+	ex := res[2,ie];
+	if state = INTRON then exonnr := exonnr + 1 fi;
+	printkey('exon');
+	if ex[FloatStart] then printf('<') fi;
+	printf('%d..', ex[Start]);
+	if ex[FloatEnd] then printf('>') fi;
+	printf('%d\n', ex[End]);
+	printnote(ex[Nr], ms2);
+	if ex[MaxShifts] > 0 then
+	  printkey(' ');
+	  printf('/note="contains %d', ex[MinShifts]);
+	  if ex[MinShifts] < ex[MaxShifts] then
+	    printf(' to %d', ex[MaxShifts])
+	  fi;
+	  printf(' frame shift');
+	  if ex[MaxShifts] > 1 then printf('s') fi;
+	  printf('"\n')
+	fi;
+	printkey(' ');
+	printf('/score=%.1f\n', ex[Sim]);
+	printkey(' ');
+	printf('/number=%d\n', exonnr);
+	ie := ie + 1; state := EXON
+      else
+	int := res[3,ii];
+	if state = EXON then intronnr := intronnr + 1 fi;
+	printkey('intron');
+	printf('%d..%d\n', int[Start], int[End]);
+	printnote(int[Nr], ms2);
+	printkey(' ');
+	printf('/score=%.1f\n', int[Sim]);
+	printkey(' ');
+	printf('/number=%d\n', intronnr);
+	ii := ii + 1; state := INTRON
+      fi
+    od;
+    printf('XX\n');
+    printf('SQ   Sequence %d NToInt; %d A; %d C; %d G; %d T; %d other;\n',
+	   len, count[2], count[3], count[4], count[5] + count[6],
+	   count[1]+count[7]);
+    printseq(seq1, lowercase);
+    printf('//\n\n');
+    if visualize then
+      if length(ms2) > 40 then
+	VisualizeGene(ms2[1..40])
+      else
+	VisualizeGene(ms2)
+      fi;
+      AppendPostScript(plotfile, allplotfile, 'Gene structure visualization')
+    fi;
+    if alignments > 0 then
+      if alignments >= length(ms2) then
+	printf('Detailed alignments:\n')
+      elif alignments = 1 then
+	printf('First detailed alignment:\n')
+      else
+	printf('First %d detailed alignments:\n', alignments)
+      fi;
+      Set(screenwidth=74);
+      for i to min(length(ms2), alignments) do
+	m := ms2[i];
+	lprint();
+	nucPos := m[NucOffset] - GetOffset(seq1, NucDB);
+	pepPos := m[PepOffset] - Sequence(Offset(m[PepOffset]))[1];
+	printf('aligned positions=%d-%d,%d-%d\n',
+	       nucPos + 1, nucPos + m[NucLength],
+	       pepPos + 1, pepPos + m[PepLength]);
+	print(m)
+      od
+    fi
+  fi;
+
+  
+  if hasps then
+    printf('\nPostScript programs to draw');
+    if rawprediction then printf(' the raw intron region prediction') fi;
+    if visualize and length(ms2) > 0 then
+      if rawprediction then printf(' and') fi;
+      printf('\nthe graphical alignment of the');
+      if length(ms2) > 40 then printf(' first 40') fi;
+      printf(' implied gene structures')
+    fi;
+    printf(':\n\n-------- PostScript output -------- cut here --------\n');
+    printf('%s', ReadRawFile(allplotfile))
+  fi
+end:
+
+init := proc()
+  global NucDB, PepDB, PM_offsets;
+  PM_offsets := false;
+#  db_path := GetMachine():
+  db_path := '/home/darwin/DB/':
+  PepDB := ReadDb(db_path.'SwissProt.Z');
+  NucDB := ReadDb(db_path.'NBase');
+  CreateDayMatrices()
+end:
+
+job := proc()
+  global msg, prefix;
+  prefix := '/tmp/'.getpid().'.';
+  res := ParseMsg(msg):
+  if type(res, numeric) then
+    res := 'ERROR'
+  else
+    OpenWriting(tmpfile);
+#    if true and CaseSearchString('korosten@inf.ethz.ch', msg) < 0 then
+#      lprint('Sorry! Due to machine load, the PredictGene server is');
+#      lprint('currently not available. Please try again later.')
+#    else
+      if res[1] = '?' then
+	lprint('Sorry, your request could not be processed,');
+	printf('because %s', res[2..-1]);
+	lprint()
+      else
+	a := traperror(PredictSecStruct());
+        if a = lasterror then
+          lprint ();
+          lprint ();
+          lprint ('Sorry, your request could not be processed');
+          lprint ('because an error was encountered.');
+          lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+          lprint ('Thank you, the cbrg team.');
+          lprint ();
+          lprint ();
+          printf ('%s', a);
+          lprint ();
+        fi;
+      fi;
+#    fi;
+    OpenWriting(terminal);
+    res := ReadRawFile(tmpfile)
+  fi;
+  CallSystem('rm '.prefix.'*');
+  res
+end:
+# ReadLibrary('Server/PredictGenes');
+
+# init();
+# ReadProgram('~cbrg/PredictGenes/msg.txt');
+

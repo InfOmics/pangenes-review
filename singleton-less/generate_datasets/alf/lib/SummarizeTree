@@ -1,0 +1,109 @@
+#
+#  CollapseNodes( tree, threshold )
+#	convert all subtrees smaller than threshold to single nodes
+#
+#					Gaston H Gonnet (Nov 1991)
+#
+#  Extended to several collapsing option:
+#	- number of nodes
+#	- PAM distance
+#	- Lineages (for species trees)
+#	- Bootstrapping
+#					Adrian Schneider, Aug 2005
+
+module external CollapseNodes, PrintTreeSeq;
+
+CollapseNodes := proc( tree:Tree;
+	'NodeCount'= (ncount:posint),
+	'PAM' = (pam:positive),
+	'Class' = (class:{string,list(string)}),
+	'Bootstrapping' = (boots : posint) )
+
+if op(0,tree) = Leaf then return(tree) fi;
+if nargs=1 then error('need a condition for collapsing') fi;
+leaves := LeafList(tree);
+collapse := false;
+if  assigned(class) and type(class,string) then class := [class] fi;
+if assigned(ncount) and DrawTCount(tree) <= ncount then collapse := true
+elif assigned(pam) then
+	pams := [seq(abs(tree[2]-L[Height]),L=leaves)];
+	pams := sort(pams,x->-x);
+	if pams[1]+pams[2]<=pam then collapse := true fi;
+elif assigned(class) then
+	if not assigned(GenomeSummaries) then error('GenomeSummaries not assigned') fi;
+	specs := [seq(If( (type(L[1],structure) and op(0,L[1])=Color),L[1,2],L[1]),L=leaves)];
+	for cl in class do
+	    isclass := [seq(member(cl,GenomeSummaries[z,Lineage]),z=specs)];
+	    if not member(false,isclass) then 
+		collapse:=true; 
+		collapsedclass := cl;
+		break 
+	    fi;
+	od;
+elif assigned(boots) then	
+	bs := [];
+	for n in Infix(tree) do
+	    if op(0,n)=Tree and length(n)=4 then bs := append(bs,n[4]) fi;
+	od:
+	if min(bs)>=boots then collapse := true fi;
+fi;
+if collapse then
+     hs := 0;
+     nl := '';
+     cols := [];
+     for l in leaves do
+	hs := hs+l[Height];
+	if type(l[1],structure) and op(0,l[1])=Color then
+	    cols := append(cols,l[1,1]);
+	    nl:=nl.'/'.string(l[1,2]);
+	else
+	    cols := append(cols,'black');
+	    nl:=nl.'/'.string(l[1]);
+	fi;
+     od:
+     nh := hs/length(leaves);
+     if length(nl)>0 then nl := nl[2..-1] fi;
+     if length(nl)>20 then nl := nl[1..20].'...' fi;
+     if assigned(collapsedclass) then nl := collapsedclass.' ('.length(leaves).')' fi;
+     cols := {op(cols)};
+     if length(cols)=1 then nc := cols[1] else nc := black fi;
+     if nc<> black then nl := Color(nc,nl) fi;
+     return( Leaf(nl,nh) );
+else return (Tree( CollapseNodes(tree[1],args[2]), tree[2],
+	   CollapseNodes(tree[3],args[2]), op(4..-1,tree) ) )
+fi
+end:
+
+LeafList := proc(tree:Tree) option internal;
+ls := [];
+for L in Leaves(tree) do
+    ls := append(ls,L);
+od:
+ls;
+end:
+
+#
+#  Print out sequences in a tree
+#   (this is suitable for building a file containing sequences
+#    found in a subtree resulting from MinSquareTree)
+#
+#				GhG (July 1991)
+#
+PrintTreeSeq := proc( t:Tree )
+description 'Print out sequences cross referenced in a tree.';
+
+if op(0,t)=Tree then
+	PrintTreeSeq(t[1]);
+	PrintTreeSeq(t[3]);
+	return()
+	fi;
+if not type(Names,list(string)) then
+	error('Names should be assigned a list of cross-reference names') fi;
+i := SearchArray(t[1],Names);
+if i=0 then error('cross-reference not found in Names table') fi;
+print(Entry(i));
+return();
+end:
+
+
+end: #module

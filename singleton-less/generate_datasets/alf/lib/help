@@ -1,0 +1,210 @@
+#
+#  help system
+#
+#   Triggered by an explicit call: help('xxx') or by
+#   the lexical scanner upon seeing a "?"
+#
+#   When called by the lexical scanner upon a "?",
+#   the argument is returned as a string.
+#
+#				Gaston H. Gonnet (Jan 1994)
+#
+help := proc( t )
+global HelpText, HelpIndex;
+
+if nargs <> 1 then
+     if nargs=0 then help('help')
+     else for z in args do help(z) od fi;
+     return()
+
+elif not type(t,string) then
+     printf( 'the argument to help should be a string.  Try enclosing\n' );
+     printf( 'its argument with single quotes ('')\n' );
+     return()
+
+elif length(t)=0 then help('help');  return()
+
+elif not (type(HelpText,string) and length(HelpText) > 100) then
+     HelpText := ReadRawFile( libname . '/HelpText.txt' );
+     i := CaseSearchString( '<T>index</T>', HelpText );
+     if i > 0 then
+	  HelpIndex := SearchTag( 'HT', i+HelpText );
+	  HelpText := HelpText[1..i-1]
+	  fi
+     fi;
+
+for i to length(t) while t[i]=' ' do od;
+if i>1 then return( help( t[i..-1] )) fi;
+
+if SearchString('index',t)=0 and length(t) = 5 then
+  printf('%s\n',HelpIndex);  return() fi;
+
+r := [];
+for s in [ '<T>' . t . '</T>', '<KW>' . t . '</KW>', ' ' . t . ' ' ] do
+     # case sensitive search first
+     of := 0;
+     do  i := CaseSearchString(s,of+HelpText);
+	 if i<0 then break fi;
+	 r := append(r, i+of);
+	 j := SearchString('</HELP>',of+i+1+HelpText);
+	 of := of+i+1+j;
+	 od;
+     if length(r) > 0 then
+	 if length(r) > 2 then
+	      printf( 'the following help files contain the keyword:\n' );
+	      for z in r do DisplayHelpHead(z) od
+	 else for z in r do DisplayHelp(z) od
+	      fi;
+	 printf('   ------------\n');
+	 return()
+	 fi;
+
+     # case insensitive search next
+     of := 0;
+     do  i := SearchString(s,of+HelpText);
+	 if i<0 then break fi;
+	 r := append(r, i+of);
+	 j := SearchString('</HELP>',of+i+1+HelpText);
+	 of := of+i+1+j;
+	 od;
+     if length(r) > 0 then
+	 if length(r) > 2 then
+	      printf( 'the following help files contain the keyword:\n' );
+	      for z in r do DisplayHelpHead(z) od
+	 else for z in r do DisplayHelp(z) od
+	      fi;
+	 printf('   ------------\n');
+	 return()
+	 fi;
+     od;
+
+#
+# If the exact matches failed, try to see if this is a Class.
+# If it is a class, it will have a proc assigned to it and it
+# will have a type associated with it (by default CompleteClass
+# creates one).
+ts := symbol(t);
+if assigned(ts) and type(eval(ts),procedure) and 
+    assigned(symbol( t.'_type' )) then
+    printf( 'Class: %s(\n', t );
+    dists := [op(disassemble(eval(ts))[1])];
+    for z in dists do
+	if type(z,colon(symbol,anything)) then
+	     printf( '\t%s:%a', op(1,z), assemble(op(2,z)) );
+	else printf( '\t%a', z ) fi;
+	printf( '%s\n', If( z=dists[-1], '', ',' ))
+    od;
+    printf( ')\n' );
+    return()
+fi;
+
+ss := [ '<T>' . t, '<KW>' . t, ' ' . t . ' ' ];
+
+for k from 0 to length(t)/4+1 do
+    for s in ss do
+	 of := 0;
+	 do  if k=0 then i := SearchString( s, of+HelpText )
+	     else i := ApproxSearchString( s, of+HelpText, k ) fi;
+	     if i<0 then break fi;
+	     r := append(r, i+of);
+	     j := SearchString('</HELP>',of+i+1+HelpText);
+	     of := of+i+1+j;
+	     od;
+         if length(r) > 0 then
+	     if length(r) > 2 then
+	          printf( 'the following help files contain (approximately) the keyword:\n' );
+	          for z in r do DisplayHelpHead(z) od
+	     else for z in r do DisplayHelp(z) od
+	          fi;
+	     printf('   ------------\n');
+	     return()
+	     fi;
+	 od
+    od;
+
+printf( 'sorry, nothing suitable could be found, try another keyword\n' );
+printf( 'or search in the index ("?index").\n' );
+
+end:
+
+#
+#   Show the help page to the user
+#
+DisplayHelp := proc( ii )
+global HelpText;
+
+i := ii;
+while i > 1 and HelpText[i..i+5] <> '<HELP>' do i := i-1 od;
+entry := SearchTag( 'HELP', i-1+HelpText );
+printf( '%s\n', SearchTag('HT',entry) );
+end:
+
+#
+DisplayHelpHead := proc( ii )
+global HelpText;
+
+i := ii;
+while i > 1 and HelpText[i..i+5] <> '<HELP>' do i := i-1 od;
+entry := SearchTag( 'HELP', i-1+HelpText );
+printf( '  ?%s\n', SearchTag('T',entry) );
+end:
+
+#
+#    The help program runs the following algorithm:
+#    (each "match" is done with ApproxSearchString, an exact
+#    match means 0 insertions/deletions or mismatches, but
+#    ignoring case differences, a k-match is a match which
+#    ignores case differences and allows up to k insertions,
+#    deletions or mismatches)
+#
+#	(i) search for a proper <HELP>
+#	    When called with the string xxx
+#	    (a) attempt an exact match in all the file with "<T>xxx</T>"
+#	    (b) attempt an exact match in all the file with "<KW>xxx</KW>"
+#	    (c) attempt an exact match in all the file with " xxx "
+#	    for k from 0 to length(xx)/4+1 do
+#		(d) attempt a k match in all the file with "<T>xxx"
+#		(e) attempt a k match in all the file with "<KW>xxx"
+#		(f) attempt a k match in all the file with " xxx"
+#		od;
+#	    (g) declare failure (match a default help-text)
+#
+#	(ii) for each of the <HELP>...</HELP> found in step (i) (note that when
+#		attempting a match at any level, we could find multiple
+#		hits) do
+#		run/show the <PR>/<HT> in sequential order
+#		 (if the hit is in the middle of an <HT>, and it is
+#		  sorrounded by <1P> or <3P> display those instead of
+#		  the <HT>).
+#
+#Comments.
+#
+#  Running programs allows us a tremendous flexibility in showing
+#  examples, checking for status, displaying appropriate information, etc.
+#
+#  When the HT are large (chapters of a book) it is convenient to split
+#  them in 1P and 3P (this is a logical division, where 1P is a unit of
+#  about 1 page which is self consistent, ditto for 3P).  It is then
+#  much more useful to show just this chunk.
+#
+#  The complicated search procedure is done to prioritize the selection
+#  of the HT as best possible.
+#
+#  It is our experience that more than 25% of errors in a string render
+#  the match useless.
+#
+#  The programs to be executed could query the users, but be aware that
+#  great havoc could be caused if this was triggered at the lexical
+#  level with an incomplete statement.
+#
+#  The most common program executed is print(xxx) when xxx is a procedure,
+#  as this gives the current definition, parameter names and types.
+#
+#  It is best to typeset the text without hyphenation, as the searching
+#  could fail if the word is present but split accross a line.
+#
+#  Full text searching is the most user friendly way to search for
+#  information when you do not know was it exactly what you are
+#  trying to find.
+#
+#

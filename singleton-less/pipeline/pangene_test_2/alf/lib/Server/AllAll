@@ -1,0 +1,854 @@
+# Purpose: All-All server processing (ParExecuteIPC version)
+# Author:  CompBioResGrp (G.H.Gonnet, T.F.Jenny, L.J.Knecht)
+# Created: 24 May 1994
+#
+# Changed: April 2002 (G. Signorell)
+#
+MainTitle := 'No title specified';
+ParseMsg := proc (msg: string)
+  global db, DB, SPDF, MainTitle;
+ # option trace;
+  description
+'Parses incoming message for AllAll and returns
+   - a text with commands if there is a correct data base to be AllAlled
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+  
+ db_path := '~darwin/DB/':
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    lprint ('Invalid incoming message');
+    return (0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    lprint ('Start of message body not found');
+    return (0)
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('?there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  body := msg[first+3..first+2+last];
+  token := sscanf (body, '%s');
+  token := If (length (token) = 0, '', token[1]);
+  if length (token) < 6 or SearchString (token, 'TestNewFunction1') <> 0 and
+    SearchString (token, 'AllAll') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token))
+  fi;
+  seqs := CaseSearchString (token, body) + length (token) + body;
+    
+  dot := SearchString('.', seqs);
+ 
+  if dot > -1 then 
+    newdot  := SearchString('.', seqs[dot+1..-1]);
+    while newdot >-1 do
+      dot := newdot + dot+1;
+      newdot  := SearchString('.', seqs[dot+1..-1]);
+    od;
+    commands := seqs[dot+1..-1];
+    seqs := uppercase(seqs[1..dot]);
+  else
+    return (sprintf('There are no commands'));
+  fi;
+  
+  p := SearchString('title:', commands);
+  if p>-1 then
+     p1 := SearchString('&', commands[p+1..-1])+p+2;
+     p2 := SearchString('&', commands[p1+1..-1])+p1;
+     if p2-p1>0 then 
+      MainTitle := commands[p1..p2];
+      commands:= commands[1..p].commands[p2+2..-1];
+     fi;
+  fi;
+  printf('<DBDESCR>Database for AllAll</DBDESCR>\n');
+  bad := copy([]);
+  for seqno do
+    printed := false;
+    while length (seqs) > 0 and (isspace(seqs[1]) ) do seqs := 1+seqs od;
+    i1 := SearchString(',',seqs);  if i1<0 then i1 := 10^7 fi;
+    i2 := SearchString('.',seqs);  if i2<0 then i2 := 10^7 fi;
+    i3 := SearchString(';',seqs);  if i3<0 then i3 := 10^7 fi;
+    it := min(i1,i2);
+    it := min(it, i3);
+    if it = 10^7 then
+      return ('?"'.seqs[1..min (length (seqs), 6)].
+	      '..." has no terminator ("," or "." or ";").')
+    fi;
+
+    # decide which is the format
+    if seqs[1] = '<' then
+      # entry in SGML format
+      if length (seqs) < 3 or seqs[1..3] <> '<E>' then
+	return ('?SGML entry "'.seqs[1..it+1].'" does not start with <E>.')
+      fi;
+      i3 := CaseSearchString ('</E>', seqs);
+      if i3 < 0 then
+	return ('?SGML entry "'.seqs[1..it+1].'" does not end with </E>.')
+      fi;
+      i4 := CaseSearchString ('<SEQ>', seqs);
+      if i4 < 0 or i4 > i3 then
+	return ('?SGML entry "'.seqs[1..it+1].'" has no <SEQ> tag.')
+      fi;
+      i5 := CaseSearchString ('</SEQ>', seqs);
+      if i5 < i4 or i5 > i3 then
+	return ('?SGML entry "'.seqs[1..it+1].'" has no </SEQ> tag.')
+      fi;
+      for i to i4 + 5 do
+	printf ('%c', If(isspace(seqs[i]),'',seqs[i]))
+      od;
+      upper := lower := false;
+      for i from i4 + 6 to i5 do
+	if isspace(seqs[i])  then next fi;
+	if CaseSearchString( seqs[i], 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0 then
+	  printf('%c',seqs[i]);
+	  upper := true
+	elif CaseSearchString( seqs[i], 'acdefghiklmnpqrstvwyx' ) >= 0 then
+	  printf('%c', IntToA( CaseSearchString( seqs[i],'arndcqeghilkmfpstwyvx')+1 ));
+	  lower := true
+	else bad := append(bad, '?"'.seqs[i].
+		     '" is an invalid character in the sequence "'.
+		     seqs[1..it].'".');
+	fi
+      od;
+      if upper and lower then
+	bad := append(bad, '?of mixed upper and lower case to describe sequence "'.
+		seqs[1..it].'".');
+      fi;
+      for i from i5 + 1 to i3 + 4 do
+	printf ('%c', If(isspace(seqs[i]),'',seqs[i]))
+      od;
+      printf ('\n');
+      it := i3 + 4
+    else
+      under := CaseSearchString ('_', seqs);
+      i1 := max(SearchString(';',seqs), SearchString(',',seqs));
+      ac := (under = -1 or under > i1) and it < 10 and it <= i1;
+      if ac then it := i1; fi;
+      if i1 < 0 or i1 > it then i1 := under; fi;
+      if i1 < 0 then i1 := 10^7 fi;
+      if (i1 < it) or ac or under > -1  then      
+	# must be an accession number or an ID
+	arg := sscanf (seqs[1..it], '%s %d-%d');
+	if length (arg) <> 1 and length (arg) <> 3 then
+	   bad := append(bad, '?"'.seqs[1..it].'" is not a valid sequence identification.');
+	fi;
+	if not type(SPDF,database) then
+	  OpenWriting (terminal);
+          #machine := TimedCallSystem('machine', 10);
+	  SPDF := ReadDb('~darwin/DB/SwissProt.Z'); 
+	  OpenAppending (db)
+	fi; 
+	if ac then it := it + 1; fi;
+	DB := SPDF;
+	i2 := 0;
+	if CaseSearchString ('_', Align) >0 and CaseSearchString ('__', Align)=-1 then
+	  ent := arg[1];
+	elif arg[1] > 'O' and arg[1] <= 'Z' and length(arg) < 10 then
+	  ent := SearchDb(arg[1]);
+	else
+	  ent := SearchDb(arg[1]);
+	fi;
+        ent_len := length([ent]);
+	if ent_len = 1 and length(arg) = 1 then
+	  printf('%s',ent);
+	  printed := true;
+        elif ent_len >1 then
+#more stringent test for cases like  HBA_HUMAN and IHBA_HUMAN
+          found := false; nogood := false;
+          for bb to length([ent]) do 
+            ac := SearchTag('AC', ent[bb]);
+            id := SearchTag('ID', ent[bb]);
+            if ac= arg[1] or id = arg[1] and found = false then
+              number := bb; found := true;
+            elif ac=arg[1] or id = arg[1] and found = true then
+             nogood := true;
+	     bad := append(bad, sprintf('?"%s" was found %d times in the database. \
+	     Please specify more clearly.', arg[1],ent_len ));
+             break;
+            fi;
+          od;
+          if type(number, integer) and found = true and nogood = false then 
+            ent := ent[number]; ent_len := 1; else 
+        fi;
+        elif ent_len <>1 then
+	   bad := append(bad, '?"'.arg[1].'" cannot be found in the database. \
+Enter IDs or just the peptide sequences');
+	fi;
+	if length (arg) = 3 and ent_len = 1 then
+	  t := [GetEntryInfo (ent, 'AC', 'ID', 'DE', 'OS', 'SEQ')];
+	  printf ('<E>');
+	  for i by 2 to length (t) do
+	    if t[i] = 'DE' then
+	      printf ('<DE>Pos %d to %d of %s</DE>\n',
+		      arg[2], arg[3], t[i+1])
+	    elif t[i] = 'SEQ' then
+	      if arg[2] > arg[3] or arg[2] < 1 or
+		arg[3] > length (t[i+1]) then
+		bad := append(bad, '?positions '.arg[2].' to '.arg[3].
+			' cannot be extracted from '.arg[1]);
+	      else
+  	        printf ('<SEQ>%s</SEQ>\n', t[i+1,arg[2]..arg[3]]);
+	      fi;
+	    else
+	      printf ('<%s>%s</%s>\n', t[i], t[i+1], t[i])
+	    fi
+	  od;
+	  printf ('</E>\n')
+	else 
+	  if bad = [] and printed = false then print( Entry(Offset(i2)) ); fi; 
+	fi
+      else
+	# must be an explicitly given amino acid sequence
+	printf( '<E><DE>Input sequence number %d</DE><SEQ>', seqno );
+	upper := lower := false;
+	for i to it do
+	  if isspace(seqs[i])  then next fi;
+	  if CaseSearchString( seqs[i], 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0 then
+	    printf('%c',seqs[i]);
+	    upper := true
+	  elif CaseSearchString( seqs[i], 'acdefghiklmnpqrstvwyx' ) >= 0 then
+	    printf('%c', IntToA( CaseSearchString( seqs[i],
+					'arndcqeghilkmfpstwyvx')+1 ));
+	    lower := true
+	  else
+	    bad := append(bad, '?"'.seqs[i].'" is an invalid character in the sequence "'.
+		    seqs[1..it].'".');
+	  fi
+	od;
+	if upper and lower then
+	  bad := append(bad, '?of mixed upper and lower case to describe sequence "'.
+		  seqs[1..it].'".');
+	fi;
+	printf( '</SEQ></E>\n' )
+      fi
+    fi;
+    seqs := it+seqs;
+    while length (seqs) > 0 and (isspace (seqs[1]) ) do seqs := 1 + seqs od;
+    if length (seqs) <= 1 then break fi;
+    if seqs[1] = '.' then seqs := 1 + seqs; break fi;
+    if seqs[1] = ';' then seqs := 1 + seqs; break fi;
+    if seqs[1] = ',' then seqs := 1 + seqs fi
+  od;
+  OpenWriting (terminal);
+  if bad <> [] then return(bad); fi;
+  err :=  traperror (ReadDb (db));
+  if err = lasterror then
+    return ('?the database format is invalid ('.err.
+	    '); check the validity of sequences.')
+  fi;
+  DB := ReadDb(db);
+  if DB[TotEntries] < 2 then
+    return( '?there are less than two sequences, should have at least two entries.')
+  fi;
+  for i to DB[TotEntries] do
+    if length(String(Sequence(Entry(i)))[1]) = 0 then
+      return( '?sequence #'.i.' has no amino acids.')
+    fi
+  od;
+  return (commands);
+end:
+ 
+#
+# DistanceFit
+#
+DistanceFit := proc( u:Graph, Dist:matrix(numeric), Var:matrix(numeric) )
+  dg := u[Distances];
+  ns := u[Nodes];
+  n := length(ns);
+  
+  tot := 0;
+  for i to n do
+    if type(ns[i],posint) then
+      for j from i+1 to n do
+	if type(ns[j],posint) then
+	  tot := tot + (dg[i,j]-Dist[ns[i],ns[j]])^2 / Var[ns[i],ns[j]]
+	fi
+      od
+    fi
+  od;
+  tot
+end:
+
+TurnTree := proc (t: Tree, lbl: array(string))
+  description
+  'Returns a tree corresponding to t, but with its root being between
+  the subtree containing all labels in lbl and the other subtree.';
+  g := Graph (t);
+  t1 := FindLabeledSubtree (Tree (g), lbl);
+  inc := g[Incidences];
+  eds := g[Edges];
+  ns := g[Nodes];
+  e1 := eds[abs(t1[4])];
+  e2 := eds[abs(t1[5])];
+  i := {e1[2],e1[3]} intersect {e2[2],e2[3]};
+  if length (i) <> 1 then
+    error ('labels refer to entire tree')
+  fi;
+  m := {op (inc[i[1]])} minus {abs(t1[4]), abs(t1[5])};
+  m := m[1];
+  Tree (TurnTree_R (eds[m,2], m, eds[m,1]/2, inc, eds, ns, t), 0, 
+        TurnTree_R (eds[m,3], m, eds[m,1]/2, inc, eds, ns, t), -m, m)
+end:
+
+LeafRest_R := proc (lbl, t: Tree)
+  if type (t, Leaf) then
+    if t[1] = lbl then
+      res := t[3..-1]
+    else
+      res := NULL
+    fi
+  else
+    res := LeafRest_R (lbl, t[1]);
+    if res = NULL then
+      res := LeafRest_R (lbl, t[3])
+    fi
+  fi;
+  res
+end:
+
+TurnTree_R := proc( t, fr, ht, inc, eds, ns, t0 )
+  if length(inc[t]) = 1 then
+    Leaf( ns[t], -ht, LeafRest_R (ns[t], t0))
+  elif length(inc[t]) = 3 then
+    ch := {op(inc[t])} minus {fr};
+    a := op({eds[ch[1],2],eds[ch[1],3]} minus {t}):
+    b := op({eds[ch[2],2],eds[ch[2],3]} minus {t});
+    Tree(TurnTree_R(a, ch[1], ht+eds[ch[1],1], inc, eds, ns, t0), -ht,
+	 TurnTree_R(b, ch[2], ht+eds[ch[2],1], inc, eds, ns, t0), 
+	 If (t = eds[ch[1],2], ch[1], -ch[1]),
+	 If (t = eds[ch[2],2], ch[2], -ch[2]))
+  else
+    error('cannot convert graph to binary tree')
+  fi
+end:
+
+AppendPostScript := proc (fromfile: string, tofile: string, title: string)
+  global tmpfile;
+  t := ReadRawFile (fromfile);
+  p := CaseSearchString ('\n', t);
+  OpenAppending (tofile);
+  printf ('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending (tmpfile)
+end:
+
+DoAllAll := proc( commands: string )
+  global AllAll, DB, MinLen, prefix, prefix2, tmpfile;
+  description 'process a server request for all-against-all';
+
+  #str := sprintf('%d',trunc(Rand()*100));
+  #prefix2 := prefix . str . '.';
+  prefix2 := prefix ;
+
+  # Check for bases
+  nrB := 0;
+  for i to 4 do
+    p := SearchSeqDb (IntToN (i));
+    nrB := nrB + p[1,2] - p[1,1] + 1
+  od;
+  
+  if nrB > 0.9 * DB[TotAA] then
+    lprint ();
+    printf ('WARNING: SEQUENCES CONTAIN %d %% A, C, G, T\n',
+	    round (100*nrB/DB[TotAA]));
+    lprint ('         THIS SERVER IS NOT DESIGNED FOR NUCLEOTIDE ANALYSIS!');
+    lprint ()
+  fi;
+  
+
+  # analyze commands requested
+  pam   := SearchString( 'pamdata', commands ) >= 0;
+  phy   := (SearchString( 'createphylotree', commands ) >= 0 or SearchString( 'phylotree', commands ) >= 0) ;
+  roo   := SearchString( 'rootedtree', commands ) >= 0;
+  spld  := SearchString( 'splitdata', commands ) >= 0;
+  splt  := SearchString( 'splitgraph', commands ) >= 0;
+  twod  := SearchString( '2dplace', commands ) >= 0;
+  mula  := SearchString( 'mulalignment', commands ) >= 0;
+  proba := SearchString( 'probances', commands ) >= 0;
+  kwx   := SearchString( 'kwindex', commands ) >= 0;
+  prx   := SearchString( 'probindex', commands ) >= 0;
+  scx   := SearchString( 'scaleindex', commands ) >= 0;
+  sia   := SearchString( 'siapred', commands ) >= 0;
+  parse := SearchString( 'parsepred', commands ) >= 0; 
+  debug := SearchString( 'debug', commands ) >= 0;
+  setroot := SearchString ('setroot', commands);
+  
+ 
+  if not (pam or phy or roo or spld or splt or twod or mula or
+	  proba or kwx or prx or scx or sia or parse) then
+    printf('No commands requested.  You should request at least one\n' );
+    printf('of the following functions (following the sequences)\n' );
+    printf('PamData, CreatePhyloTree, RootedTree, SplitData, SplitGraph,\n' );
+    printf('2DPlacement, MulAlignment, ProbAncestral, KWIndex,\n');
+    printf('ProbIndex, ScaleIndex, SIAPrediction or ParsePrediction\n');
+    lprint('Error: no command specified');
+    return ()
+  fi;
+  req := nreq := NULL;
+  if pam then req := 'PamData' else nreq := 'PamData' fi;
+  if phy then req := req,'CreatePhyloTree' else nreq := nreq,'CreatePhyloTree' fi;
+  if roo then req := req,'RootedTree' else nreq := nreq,'RootedTree' fi;
+  if spld then req := req,'SplitData' else nreq := nreq,'SplitData' fi;
+  if splt then req := req,'SplitGraph' else nreq := nreq,'SplitGraph' fi;
+  if twod then req := req,'2DPlacement' else nreq := nreq,'2DPlacement' fi;
+  if mula then req := req,'MulAlignment' else nreq := nreq,'MulAlignment' fi;
+  if proba then req := req,'ProbAncestral' else nreq := nreq,'ProbAncestral' fi;
+  if kwx then req := req,'KWIndex' else nreq := nreq,'KWIndex' fi;
+  if prx then req := req,'ProbIndex' else nreq := nreq,'ProbIndex' fi;
+  if scx then req := req,'ScaleIndex' else nreq := nreq,'ScaleIndex' fi;
+  if sia then req := req,'SIAPrediction' else nreq := nreq,'SIAPrediction' fi;
+  if parse then req := req,'ParsePrediction' else nreq := nreq,'ParsePrediction' fi;
+  if length([nreq]) = 0 then
+    lprint('All commands requested')
+  else
+    lprint('commands requested:', req);
+    lprint('commands not requested:', nreq)
+  fi;
+  if setroot >= 0 then
+    lprint ('SetRoot requested')
+  fi;
+
+  # compute the all-against-all
+  ne := DB[TotEntries];
+  AllAll := CreateArray(1..ne,1..ne);
+  Dist := CreateArray(1..ne,1..ne);
+  Var := CreateArray(1..ne,1..ne);
+  ok := false;
+  for i to ne do
+    for j from i+1 to ne do
+      m := Match(Entry(i,j));
+      m := LocalAlignBestPam(m);
+      if m[Sim] < 80 then m[PamNumber] := 500;  m[PamVariance] := 10^8 
+      else ok := true fi;
+      AllAll[i,j] := AllAll[j,i] := m;
+      Dist[i,j] := Dist[j,i] := m[PamNumber];
+      Var[i,j] := Var[j,i] := m[PamVariance]
+    od
+  od;
+  if not ok then
+    OpenWriting (tmpfile);
+# OpenAppending ('~cbrg/AllAll/job.trace');
+    lprint ('Sorry, your AllAll request could not be processed,');
+    lprint ('because the similarities between sequences are too low.');
+    lprint ('There is no reasonable phylogenetic tree.');
+    return ()
+  fi;
+
+  Names := CreateArray(1..ne):
+  for i to ne do Names[i] := DB[Entry,i] od;
+  Names := CrossReference(Names):
+
+  if pam then
+    lprint ('Estimated pam distances and variances between sequence pairs:');
+    for i to ne do
+      for j from i + 1 to ne do
+	printf ('%2s-%-2s=', Names[i], Names[j]);
+	if Var[i,j] = 10^8 then printf ('(No homology)  ')
+	else printf ('%5.1f,%7.1f  ', Dist[i,j], Var[i,j]) fi;
+	if mod (j - i, 3) = 0 then printf ('\n') fi
+      od;
+      if mod (ne - i, 3) <> 0 then printf ('\n') fi
+    od
+  fi;
+
+  MinLen := 0.2;
+  tree := MinSquareTree(Dist,Var,Names);
+  if setroot >= 0 then
+    t := 8 + setroot + commands;
+    lbl := NULL;
+    do
+      l := sscanf (t, '%s');
+      if length (l) = 0 then break fi;
+      if SearchArray (l[1], Names) > 0 then
+	lbl := lbl, l[1]
+      fi;
+      t := CaseSearchString (l[1], t) + length (l[1]) + t
+    od;
+    t := traperror (TurnTree (tree, [lbl]));
+    if t = lasterror then
+      lprint ('Error setting root with labels', lbl, '('.t.').')
+    else
+      lprint ('Root set such that', lbl, 'are on the same side of the root.');
+      tree := t
+    fi
+  fi;
+  
+
+if phy then
+  plotfile := prefix2.'ps'; 
+  postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'tree.ps';
+  OpenWriting (postscriptfile); OpenAppending (tmpfile);
+  Set(plotoutput=plotfile);
+    printf('\nPick up your unrooted tree at:\n');
+    printf('http://cbrg.ethz.ch/Server/results/%stree.ps\n',5+prefix2);
+    printf('http://cbrg.ethz.ch/Server/results/%stree.pdf\n',5+prefix2);
+    printf('These files will be deleted after seven days!\n');
+    DrawUnrootedTree(tree);
+    AppendPostScript (plotfile, postscriptfile, 'phylogenetic tree');
+#    CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'tree.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df ');
+#    CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+  fi;
+
+  if roo then
+   plotfile := prefix2.'ps'; 
+   postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'roo.ps';
+   OpenWriting (postscriptfile); OpenAppending (tmpfile);
+   Set(plotoutput=plotfile);
+    printf('\nPick up your rooted tree at:\n');
+    printf('http://cbrg.ethz.ch/Server/results/%sroo.ps\n',5+prefix2);
+    printf('http://cbrg.ethz.ch/Server/results/%sroo.pdf\n',5+prefix2);
+    printf('These files will be deleted after seven days!\n');
+    DrawTree(tree);
+    AppendPostScript (plotfile, postscriptfile, 'rooted tree');
+#    CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'roo.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df ');
+#    CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+  fi;
+
+  if spld or splt then
+   plotfile := prefix2.'ps'; 
+   postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'split.ps';
+   OpenWriting (postscriptfile); OpenAppending (tmpfile);
+   Set(plotoutput=plotfile);
+    #ReadLibrary (dSplits);
+    splits := dSplits (Dist);
+    if length (splits) = 0 then
+      printf ('Distances do not define any d-splits (all isolation indices zero)\n')
+    else
+      lprint ();
+      printf ('Distances are %.1f %% splittable\n', 
+	      100 * dSplitIndex (Dist, splits));
+      for s in splits do
+	for i to length (s[2]) do
+	  s[2,i] := Names[s[2,i]] od od;
+      if spld then
+	for s in splits do printf ('%5.1f  %a\n', s[1], s[2]) od
+      fi;
+      #splt := false; #(fixed but with some ugly changes in the Graph lib. Marked with (rob))
+      if splt then
+        printf('\nPick up your dsplits at:\n');
+        printf('http://cbrg.ethz.ch/Server/results/%ssplit.ps\n',5+prefix2);
+	printf('http://cbrg.ethz.ch/Server/results/%ssplit.pdf\n',5+prefix2);
+	printf('These files will be deleted after seven days!\n');
+	DrawSplits (splits, {op (Names)});
+	AppendPostScript (plotfile, postscriptfile, 'splitgraph');
+#        CallSystem ('~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'split.ps');
+	CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df ');
+#	CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+
+      fi
+    fi
+  fi;
+  
+  if twod and ne>2 and ne<249 then
+    NBSol := traperror(NBody(Dist,Var,min(ne-1,4),2));
+    if NBSol = lasterror then
+      print('Error encountered in NBody; 2D placement skipped'); 
+      lprint();
+    else
+      plotfile := prefix2.'ps'; 
+      postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'twod.ps';
+      OpenWriting (postscriptfile); OpenAppending (tmpfile);
+      Set(plotoutput=plotfile);
+      printf('\nPick up your Two D Placement at:\n');
+      printf('http://cbrg.ethz.ch/Server/results/%stwod.ps\n',5+prefix2);
+      printf('http://cbrg.ethz.ch/Server/results/%stwod.pdf\n',5+prefix2);
+      printf('These files will be deleted after seven days!\n');
+      ToPlot := CreateArray(1..2*ne):
+      y := zip ((x->x[2])(NBSol));
+      pts := (max (y) - min (y)) / 500;
+      for i to ne do
+        ToPlot[2*i-1] := CIRCLE(NBSol[i,1],NBSol[i,2],7);
+        ToPlot[2*i] := CTEXT(NBSol[i,1],NBSol[i,2]-pts*4,Names[i])
+      od:
+      DrawPlot(ToPlot);
+      sumv := np := 0:
+      for i to ne do
+        for j from i+1 to ne do
+  	if type(AllAll[i,j],Match) then
+  	  sumv := sumv + (AllAll[i,j,PamNumber] -
+  			  sqrt( (NBSol[i,1]-NBSol[j,1])^2 +
+			       (NBSol[i,2]-NBSol[j,2])^2 ) )^2 /
+	   AllAll[i,j,PamVariance];
+	  np := np+1
+        fi
+       od
+      od;
+    printf('2D placement quality index: %.3f\n', sqrt(sumv/np) );
+    AppendPostScript (plotfile, postscriptfile, '2D placement');
+#    CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'twod.ps');
+    CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df > /dev/null' );
+#    CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+   fi;
+  fi;
+  if twod and ne<=2 then
+    printf('2DPlacement cannot be computed with less than 3 points\n')
+  fi;
+  if twod and ne>=249 then
+    printf('2DPlacement cannot be computed with more than 248 points\n')
+  fi;
+  
+  if sia and ne <= 2 then
+    printf ('SIA prediction cannot be computed with less than 3 sequences\n');
+    sia := false
+  fi;
+
+  if mula or proba or kwx or prx or scx or sia or parse then
+    tt := ConvertTree(tree):
+    Ptt := ProbTree(tt):
+    if mula then MultiplePrint(Ptt,[Infix(tree)]) fi;
+    printf('\n\n');
+    if proba then PrintPV(Ptt[1],0.05) fi;
+    if kwx or prx or scx then
+      if sia then
+        if parse then
+	  printf ('\nVariation Indices, SIA prediction, Parse Prediction:\n')
+        else
+          print ('\nVariation Indices, SIA prediction:\n')
+        fi
+      else
+        if parse then
+          printf ('\nVariation Indices, ParsePrediction:\n')
+        else
+	  printf ('\nVariation Indices:\n')
+        fi
+      fi
+    elif sia then
+      if parse then
+        printf ('\nSIA Prediction, Parse Prediction:\n')
+      else
+        printf ('\nSIA Prediction:\n')
+      fi;
+    fi;
+    if kwx or prx or scx or sia or parse then
+      Title2:= ' Pos ';
+      #ReadLibrary (VariationIndices);
+      for lbl in [Infix (tree)] do Title2:= Title2.sprintf ('%c', lbl[1]) od;
+      idx := NULL;
+      if kwx then
+	Title2:= Title2.'      KW';
+        kwxd := KWIndex (Ptt[2]);
+        idx := idx,kwxd
+      fi;
+      if prx then
+	Title2:= Title2.'    Prob';
+        prxd := ProbIndex (Ptt[2], tree);
+        idx := idx,prxd
+      fi;
+      if scx then
+	Title2:= Title2.'   Scale';
+        scxd := ScaleIndex (Ptt[2], tree);
+        idx := idx,scxd
+      fi;
+      #ReadLibrary (StructurePrediction);
+      if sia then
+        Title2:= Title2.' SIAPred';
+	sias := SurfIntActPred (Ptt[2], tree);
+	siad := CreateArray (1..length (sias), ' ');
+	for i to length (sias) do siad[i] := sias[i] od;
+	idx := idx,siad
+      fi;
+      if parse then
+        Title2:= Title2.'   Parse';
+	parses := ParsePred (Ptt[2], tree);
+	parsed := CreateArray (1..length (parses));
+        for i to length(parses) do
+	  parsed[i] := CreateString (CaseSearchString (parses[i], '12345') + 1, '*')
+        od;
+	idx := idx,parsed
+      fi;
+      printf ('\n%s\n', Title2);
+      PrintIndex (Ptt[2], idx);
+      lprint ();
+
+      if kwx then
+        plotfile := prefix2.'ps'; 
+        postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'kabat.ps';
+        OpenWriting (postscriptfile); OpenAppending (tmpfile);
+        Set(plotoutput=plotfile);
+        printf('\nPick up your Kabat & Wu variation at:\n');
+        printf('http://cbrg.ethz.ch/Server/results/%skabat.ps\n',5+prefix2);
+	printf('http://cbrg.ethz.ch/Server/results/%skabat.pdf\n',5+prefix2);
+	printf('These files will be deleted after seven days!\n');
+	PlotIndex (kwxd, 'Kabat & Wu variation index');
+	AppendPostScript (plotfile, postscriptfile, 
+			  'Kabat & Wu variation index');
+#        CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'kabat.ps');
+	CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df > /dev/null');
+#	CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+
+      fi;
+
+      if prx then
+        plotfile := prefix2.'ps'; 
+        postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'probvar.ps';
+        OpenWriting (postscriptfile); OpenAppending (tmpfile);
+        Set(plotoutput=plotfile);
+        printf('\nPick up your Probability variation index at:\n');
+        printf('http://cbrg.ethz.ch/Server/results/%sprobvar.ps\n',5+prefix2);
+	printf('http://cbrg.ethz.ch/Server/results/%sprobvar.pdf\n',5+prefix2);
+	printf('These files will be deleted after seven days!\n');
+	PlotIndex (prxd, 'Probability variation index');
+	AppendPostScript (plotfile, postscriptfile, 
+			  'Probability variation index');
+#        CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'probvar.ps');
+	CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df > /dev/null');
+#	CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+      fi;
+
+      if scx then
+        plotfile := prefix2.'ps'; 
+        postscriptfile := '~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'pamvar.ps';
+        OpenWriting (postscriptfile); OpenAppending (tmpfile);
+        Set(plotoutput=plotfile);
+        printf('\nPick up your PAM distance scale variation index at:\n');
+        printf('http://cbrg.ethz.ch/Server/results/%spamvar.ps\n',5+prefix2);
+	printf('http://cbrg.ethz.ch/Server/results/%spamvar.pdf\n',5+prefix2);
+	printf('These files will be deleted after seven days!\n');
+	PlotIndex (scxd, 'PAM distance scale variation index');
+	AppendPostScript (plotfile, postscriptfile, 
+			  'PAM distance scale variation index');
+#        CallSystem ('chmod 644 ~cbrg/WWWApache/share/public_html/Server/results/'.string(5+prefix2).'pamvar.ps');
+	CallSystem ('ps2pdf '.postscriptfile.' '.(postscriptfile-1).'df > /dev/null');
+#	CallSystem ('chmod 644 '.(postscriptfile-1).'df')
+
+      fi
+    fi
+  fi;
+
+end:
+
+#
+# MultiplePrint( Texts:array(string), Names:array(string) )
+#
+# Print the result of a multiple alignment (labeled by Names)
+#
+#                               Gaston H. Gonnet (Feb 15, 1991)
+#
+MultiplePrint := proc( Ptt:[array(array),array(string)], Names:array(string) )
+
+  PV := Ptt[1];  Texts := Ptt[2];  n := length(Texts);
+  lt := length(Texts[1]);
+  if n <> length(Names) then error('length mismatch') fi;
+  
+  # Compute the bottom line
+  botlin := CreateString(lt);
+  for i to lt do
+    for j from 2 to n while Texts[j,i] = Texts[1,i] do od;
+    if j>n then botlin[i] := '*'
+    elif MostProbAA(PV[i]/sum(PV[i])) <> '.' then botlin[i] := '.' fi
+  od;
+  
+  if assigned(MTitle) then printf('Multiple alignment for %s\n\n', MTitle) fi;
+  lprint(date());
+  width := Set(screenwidth=80);  Set(screenwidth=width);
+  width := width-6;
+  maxwidth := 0;
+  lines := 3;
+  for i to n do maxwidth := max(maxwidth,lt) od;
+  
+  for origoffs by width to maxwidth do
+    
+    printf('\n     %d ..%d\n',origoffs,origoffs+width-1);
+    for j to n do
+      printf('%2.2s - %s\n', Names[j],
+	     Texts[ j, origoffs .. min(origoffs+width-1,lt)] )
+    od;
+    printf('     %s\n', botlin[ origoffs..min(origoffs+width-1,lt) ] );
+    lines := lines + n + 2;
+    if lines >= 61-n and n <= 61 then printf('^L\n');  lines := 0 fi
+  od;
+  
+  NULL
+end:
+
+isspace := c -> c <= ' ':
+isaa := c->SearchString( c, 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0:
+isalpha := c->SearchString( c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ.,;:<>\\/' ) >= 0:
+
+init := proc ()
+  CreateDayMatrices();
+  #ReadLibrary ('ProbModel');
+  Set(printgc = false);
+end:
+
+job := proc ()
+  global msg, db, prefix, MainTitle;
+  option trace;
+  str := sprintf('%d',trunc(Rand()*100));
+  prefix := '/tmp/'.getpid ().str.'.';
+  db := prefix.'db';
+  CallSystem ('rm '.db.'*');
+  OpenWriting (db); 
+#  OpenAppending ('~cbrg/AllAll/job.trace');
+#  lprint('calling parsemsg:', msg);
+  cmds := ParseMsg (msg):
+  OpenWriting (terminal); 
+ # OpenAppending ('~cbrg/AllAll/job.trace');
+ # lprint('After Parsemsg in AllAll:', tmpfile);
+ # lprint('Commands:',cmds);
+ # lprint('DB:',DB);
+  res := 'error';
+  if type (cmds, string) or type(cmds, list) then
+    OpenWriting (tmpfile);	 
+# OpenAppending ('~cbrg/AllAll/job.trace');
+    printf ('\nTitle of your job: %s\n\n', MainTitle);
+    if type(cmds, string) then
+      if (cmds[1] = '?') then 
+        lprint ('Sorry, your request could not be processed,');
+        printf ('because %s', cmds[2..-1]);
+        lprint ()
+      else 
+#        OpenAppending ('~cbrg/AllAll/job.trace');
+#        lprint('Running DoAllAll AllAll:', tmpfile);
+        aa := traperror(DoAllAll (cmds)):
+        if aa=lasterror then
+          lprint ();
+          lprint ();
+          lprint ('Sorry, your request could not be processed');
+          lprint ('because an error was encountered.');
+          lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+          lprint ('Thank you, the cbrg team.');
+          lprint ();
+          lprint ();
+          printf ('%s', aa);
+          lprint ();
+        fi:
+      fi:
+    else
+      lprint ('Sorry, your request could not be processed,');
+      printf ('because the following errors occurred:\n');
+      for i to length(cmds) do
+        lprint (cmds[i]);
+      od:   
+    fi:
+    OpenWriting (terminal): 
+ OpenAppending ('~cbrg/AllAll/job.trace'):
+    res := ReadRawFile (tmpfile):
+    OpenAppending ('~cbrg/AllAll/job.trace'):
+    lprint('After Running DoAllAll AllAll:', res):
+    OpenWriting (terminal):
+  fi:
+  CallSystem ('rm '.prefix.'*'):
+  res
+end:
+
+# ReadLibrary ('Server/AllAll');init ();
+# ReadProgram ('~cbrg/AllAll/egland.txt');
+# cmds := ParseMsg (msg);
+# printlevel := 3;
+# res :=DoAllAll (cmds);
+  
+
+
+
+
+
+
+
+

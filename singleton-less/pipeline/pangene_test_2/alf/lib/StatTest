@@ -1,0 +1,402 @@
+#
+#   Purpose:  Statistical tests in Darwin.
+#   started:  Tue Oct 21 08:25:14 MEST 2003. Peter von Rohr
+#
+#   Independence added: Sun Oct 26 16:56:05 MET 2003. GhG.
+#
+#   ######################################################################
+
+
+### # data structure to store results from a StatTest
+TestStatResult := proc(
+	name:string,
+	TestStat:numeric,
+	pvalue:numeric,
+	pstd:numeric ) 
+	option polymorphic;
+	return(noeval(procname(args)));
+end:
+
+
+### # type
+TestStatResult_type := noeval(structure(anything,TestStatResult)):
+
+
+### # print method for TestStatResult
+TestStatResult_print := proc( tsr ) option internal;
+  ### # print common fields of TestStatResult first
+	printf('\n Summary of %s test:\n', tsr['name']);
+	printf(' %s test statistic: %f\n', tsr['name'], tsr['TestStat']);
+	if tsr['pvalue'] <= 0.999 then
+	     printf(' p-value:                   %g\n', tsr['pvalue']);
+	else printf(' p-value:                   1-%g\n',
+		0.5*erfc(tsr['pstd']/sqrt(2)) ) fi;
+	printf(' p-value in std:            %g\n', tsr['pstd']);
+  ### # loop through additional fields of type string=anything and print them
+	for i from 4 to length(tsr) do
+    if type(tsr[i], string=anything) then
+      ### # replace '_' with ' '
+      fie := '';
+      for p to length(tsr[i,1]) do
+        if tsr[i,1,p] = '_' then
+           fie := fie . ' ';
+        else
+           fie := fie . tsr[i,1,p];
+        fi;
+      od;
+      printf(' %s = %a\n', fie, tsr[i,2]);
+    fi;
+  od:
+end;
+
+
+### # additional selectors for TestStatResult, so far we
+### #  have only the CountMatrix in the case of a ChiSquare test
+TestStatResult_select := proc( tsr, sel, val )
+   if sel = CountMatrix and tsr['name'] = 'ChiSquare' then
+        return( tsr[5] );
+   elif sel = 'plog' then
+        if tsr['pvalue'] > 1e-300 then log(tsr['pvalue'])
+	else x := tsr['pstd'];
+	     # Approximation from Abramovitz & Stegun, 26.2.14
+	     -x^2/2 - .91893853320467274178 + ln( 1/(x+1/(x+2/(x+
+		3/(x+4/(x+5/(x+6/(x+7))))))) )
+	fi
+   else error(sel,' is an invalid selector for a TestStatResult.')
+   fi;
+end:
+
+
+### # converter of TestStatResult to a Table
+TestStatResult_Table := proc( tsr:TestStatResult )
+  tab := Table( center, border, ColAlign('l', 'r'),
+                Row( sprintf( '%s test statistic', tsr['name']), tsr['TestStat'] ),
+                Row( ' p-value', 
+                 If(tsr['pvalue'] <= 0.999,sprintf('%g',tsr['pvalue']),
+                    sprintf('1-%g', 0.5*erfc(tsr['pstd']/sqrt(2))) )),
+                Row( ' p-value in std', tsr['pstd'] ));
+  ### # loop through optional fields and extract those of type(string=anything)
+ 	for i from 4 to length(tsr) do
+    if type(tsr[i], string=anything) then
+      ### # replace '_' with ' '
+      fie := '';
+      for p to length(tsr[i,1]) do
+        if tsr[i,1,p] = '_' then
+           fie := fie . ' ';
+        else
+           fie := fie . tsr[i,1,p];
+        fi;
+      od;
+      tab := append(tab, Row(fie, tsr[i,2]));
+    fi;
+  od:
+	return(tab): 
+end:
+CompleteClass(TestStatResult);
+
+
+### # main function to do statistical tests
+StatTest := proc( test:string, data )	option polymorphic;
+	t := symbol( test . '_StatTest' );
+	if not type(t,procedure) then
+		error(test, ' is not implemented yet.');
+	fi;
+	return( t( args ) );
+end:
+
+
+### # function to do the chi-square test
+ChiSquare_StatTest := proc( name:string,
+	cdata:{list(list({0,posint})), list({0,posint}), table} )
+option internal;
+
+	# data is given as a table, has to convert to arrays or matrices
+	# The indices can be arbitrary integers or pairs of integers
+	if type(cdata,table) then
+	    inds := [];
+	    for z in Indices(cdata) do inds := append(inds,z) od;
+	    if type(inds,list([integer,integer])) then
+		 inds1 := { seq(z[1],z=inds) };
+		 inds2 := { seq(z[2],z=inds) };
+		 newdat := CreateArray(1..length(inds1),1..length(inds2));
+		 for i1 to length(inds1) do for i2 to length(inds2) do
+		     t := cdata[ [inds1[i1],inds2[i2]] ];
+		     if t='unassigned' then t := 0
+		     elif not type(t,{0,posint}) then
+			  error('data in input table is not natural number') fi;
+		     newdat[i1,i2] := t
+		 od od;
+		 return( procname( name, newdat ))
+	    elif type(inds,list(integer)) then
+		 inds := sort(inds);
+		 newdat := CreateArray(1..length(inds));
+		 for i to length(inds) do
+		     t := cdata[inds[i]];
+		     if t='unassigned' then t := 0
+		     elif not type(t,{0,posint}) then
+			  error('data in input table is not natural number') fi;
+		     newdat[i] := t
+		 od;
+		 return( procname( name, newdat ))
+	    else error(inds,
+		'table data must be indexed by integers or pairs of integers')
+	    fi
+	fi;
+
+	nrRow := length(cdata);
+
+	# One row of data -- assume the cells are equally probably
+	# One-dimensional chi-square test
+	if type(cdata,list(nonnegative)) then
+	     sumcdata := sum(cdata);
+	     if sumcdata <= 0 then error('no data collected') fi;
+	     E := sumcdata/nrRow;
+	     # computed this way to reduce truncation error
+	     chi2 := sum( (O-E)^2/E, O=cdata );
+	     df := nrRow-1
+
+	# Matrix of counts -- testing independence of rows/columns
+	# Two-dimensional chi-square test
+	else nrCol := length(cdata[1]);
+	     sumCol := sum(cdata);
+	     sumcdata := sum(sumCol);
+	     if sumcdata <= 0 then error('no data collected') fi;
+	     sumRow := zip(sum(cdata)) / sumcdata;
+	     chi2 := 0:
+	     for i to nrRow do
+	         for j to nrCol do
+		     E := sumRow[i] * sumCol[j]; 
+	     	     # computed this way to reduce truncation error
+		     if E>0 then chi2 := chi2 + (cdata[i,j] - E)^2 / E fi
+	         od;
+	     od;
+	     df := ( sum( If(sumRow[i]=0,0,1), i=1..nrRow ) - 1 ) *
+	           ( sum( If(sumCol[i]=0,0,1), i=1..nrCol ) - 1 );
+	fi;
+
+	if df=0 then TestStatResult( name, 0, 0.5, 0, cdata,
+		Degrees_of_freedom=0 )
+	else cumstd := CumulativeStd(ChiSquare(df),chi2);
+	     if cumstd < 5 then cum :=  1-Cumulative(ChiSquare(df),chi2)
+	     else cum := erfc(cumstd/sqrt(2)) / 2 fi;
+	     TestStatResult( name, chi2, cum, cumstd, cdata,
+		Degrees_of_freedom=df )
+	fi
+end:
+
+
+###   function to do a G test or likelihood-ratio or maximum likelihood
+###   statistical significance tests for tableaux of data
+###   Gaston H Gonnet (March 17th, 2009)
+G_StatTest := proc( name:string,
+	cdata:{list(list({0,posint})), list({0,posint}), table} )
+option internal;
+
+	# data is given as a table, has to convert to arrays or matrices
+	# The indices can be arbitrary integers or pairs of integers
+	if type(cdata,table) then
+	    inds := [];
+	    for z in Indices(cdata) do inds := append(inds,z) od;
+	    if type(inds,list([integer,integer])) then
+		 inds1 := { seq(z[1],z=inds) };
+		 inds2 := { seq(z[2],z=inds) };
+		 newdat := CreateArray(1..length(inds1),1..length(inds2));
+		 for i1 to length(inds1) do for i2 to length(inds2) do
+		     t := cdata[ [inds1[i1],inds2[i2]] ];
+		     if t='unassigned' then t := 0
+		     elif not type(t,{0,posint}) then
+			  error('data in input table is not natural number') fi;
+		     newdat[i1,i2] := t
+		 od od;
+		 return( procname( name, newdat ))
+	    elif type(inds,list(integer)) then
+		 inds := sort(inds);
+		 newdat := CreateArray(1..length(inds));
+		 for i to length(inds) do
+		     t := cdata[inds[i]];
+		     if t='unassigned' then t := 0
+		     elif not type(t,{0,posint}) then
+			  error('data in input table is not natural number') fi;
+		     newdat[i] := t
+		 od;
+		 return( procname( name, newdat ))
+	    else error(inds,
+		'table data must be indexed by integers or pairs of integers')
+	    fi
+	fi;
+
+	nrRow := length(cdata);
+
+	# One row of data -- assume the cells are equally probably
+	# One-dimensional chi-square test
+	if type(cdata,list(nonnegative)) then
+	     sumcdata := sum(cdata);
+	     if sumcdata <= 0 then error('no data collected') fi;
+	     E := sumcdata/nrRow;
+	     # computed this way to reduce truncation error
+	     G := sum( If(o=0,0,o*ln(o/E)), o=cdata );
+	     df := nrRow-1
+
+	# Matrix of counts -- testing independence of rows/columns
+	# Two-dimensional chi-square test
+	else nrCol := length(cdata[1]);
+	     sumCol := sum(cdata);
+	     sumcdata := sum(sumCol);
+	     if sumcdata <= 0 then error('no data collected') fi;
+	     sumRow := zip(sum(cdata)) / sumcdata;
+	     G := 0:
+	     for i to nrRow do
+	         for j to nrCol do
+		     E := sumRow[i] * sumCol[j]; 
+		     if E>0 and cdata[i,j] > 0 then
+	     	     # computed this way to reduce truncation error
+			G := G + cdata[i,j]*ln(cdata[i,j]/E) fi
+	         od;
+	     od;
+	     df := ( sum( If(sumRow[i]=0,0,1), i=1..nrRow ) - 1 ) *
+	           ( sum( If(sumCol[i]=0,0,1), i=1..nrCol ) - 1 );
+	fi;
+	G := 2*G;
+
+	if df=0 then TestStatResult( name, 0, 0.5, 0, cdata,
+		Degrees_of_freedom=0 )
+	else cumstd := CumulativeStd(ChiSquare(df),G);
+	     if cumstd < 5 then cum :=  1-Cumulative(ChiSquare(df),G)
+	     else cum := erfc(cumstd/sqrt(2)) / 2 fi;
+	     TestStatResult( name, G, cum, cumstd, cdata,
+		Degrees_of_freedom=df )
+	fi
+end:
+
+
+Independence_StatTest := proc( name:string, l1:list, l2:list )
+option internal;
+if nargs <> 3 or length(l1) <> length(l2) then
+     error(args,'invalid arguments')
+elif length(l1) < 2 then error(args,'not enough data') fi;
+
+
+Divide_Groups := proc( l:list, gr:posint )
+  if gr=1 then return( [ l[1]..l[length(l)] ] ) fi;
+  vs := {op(l)};
+  if length(vs) <= gr then return( [seq( i..i, i=vs )] ) fi;
+
+  # find a good break point for the first group
+  i1 := round( length(l)/gr );
+  for inc while i1 > length(l)/(3*gr) do 
+      if l[i1] <> l[i1+1] then
+	  return( [ l[1]..l[i1], op(procname(l[i1+1..-1],gr-1)) ] ) fi;
+      i1 := i1 + (2*mod(inc,2)-1)*inc
+      od;
+
+  # split at the end of group
+  for i1 to length(l)-1 while l[i1]=l[i1+1] do od;
+  [ l[1]..l[i1], op(procname(l[i1+1..-1],gr-1)) ]
+  end:
+
+n := length(l1);
+sl1 := sort(l1);
+sl2 := sort(l2);
+
+best := -DBL_MAX;
+for gr in [2,4,8,16] do
+    if gr > 2 and n < 4*gr^2 then break fi;
+    div1 := Divide_Groups( sl1, gr );
+    div2 := Divide_Groups( sl2, gr );
+    Counts := CreateArray( 1..length(div1), 1..length(div2) );
+    for i to n do
+	for i1 to length(div1) while l1[i] > div1[i1,2] do od;
+	for i2 to length(div2) while l2[i] > div2[i2,2] do od;
+	Counts[i1,i2] := Counts[i1,i2] + 1
+	od;
+
+    str := StatTest( ChiSquare, Counts );
+    # the following if has to be evaluated with >=, because otherwise
+    #  tests that return a str['pstd'] of -DBL_MAX will not have a 
+    #  beststr assigned. This corrects bug #176.
+    if str['pstd'] >= best then best := str['pstd'];  beststr := str fi;
+    od;
+
+beststr
+end:
+
+# Friedman, Rafsky (1979) "Multivariate Generalizations of the Wald-Wolfowitz
+# and Smirnov Two-Sample Tests
+#                                            cd, Dec 2006
+FriedmanRafsky_StatTest := proc(name:string,samples1:matrix,samples2:matrix)
+    option internal;
+    if length(samples1) = 0 or  length(samples1[1]) <> length(samples2[1]) then
+        error(args,'invalid arguments');
+    fi;
+    m := length(samples1);
+    n := length(samples2);
+    l := m+n;
+    if l <= 3 then error('sample size too small'); fi;
+    v := [op(samples1),op(samples2)];
+
+    # compute all n(n-1) squared distances and store them in edges
+    # (this could be improved by restricting the # of edges using
+    #   Delaunay triangulation)
+    e := Edges(seq(seq(Edge(sum(zip((v[i]-v[j])^2)),i,j),j=i+1..l),i=1..l)):
+    g := MST(Graph(e)):
+
+    # now, go through all edges, count R, the number of edges that
+    # link samples from different input set.
+    R := 0;
+    for e in g[Edges] do
+        if e[2] <= m then
+            if e[3] > m then
+                R := R+1;
+            fi;
+        else
+            if e[3] < m then
+                R := R+1;
+            fi;
+        fi;
+    od:
+    # we also need to compute C, the number of edge pair that share
+    # a common node. this can be computed as 1/2*sum(Deg(ci)*(Deg(ci)-1))
+    deg := sum(g[AdjacencyMatrix]);
+    C := 1/2*sum(deg[i]*(deg[i]-1),i=1..l);
+
+    # according to friedman and rafsky, the expected value and
+    # variance of the statistic w are
+    e_R := 2*m*n/l;
+    var_R := e_R/(l-1) * ((2*m*n - l)/l + ((C-l+2)/(l-2)/(l-3) *
+        (l*(l-1) - 4*m*n + 2)));
+    if var_R = 0 then error('sample size too small'); fi;
+    res := (R-e_R)/sqrt(var_R);
+    return(
+         TestStatResult('FriedmanRafsky',res,erfc(abs(res)/sqrt(2)),abs(res)));
+end:
+
+
+# This tests whether the number of outcomes of a binary event
+# falls or not within the expected probability.
+#
+# When p=1/2, then the most rare event is computed (either x<=n1 when n1<n2
+# or x>=n1 when n1>n2),
+# when p <> 1/2, the first event (n1) is assumed to have probability p
+# and the second (n2) (1-p), the test measures x<=n1.
+#
+# Gaston H. Gonnet (Dec 13th, 2013).
+Binomial_StatTest := proc( name:string, n1:{0,posint}, n2:{0,posint} ;
+	(p=0.5):positive )
+option internal;
+if p=0.5 and n1 > n2 then return( procname(name,n2,n1,p) ) fi;
+n := n1+n2;
+lnp := ln(p);  ln1p := ln(1-p);
+# the total probability is exp(lnpr1)*pr
+lnpr := 0;
+lnpr1 := LnGamma(n+1) - LnGamma(n1+1) - LnGamma(n2+1) + n1*lnp + n2*ln1p;
+pr := 1;
+for i1 from n1-1 by -1 to 0 do
+    lnpr := lnpr + ln(i1+1) - ln(n-i1) - lnp + ln1p;
+    pr := pr + exp(lnpr);
+    if lnpr < -36.0437 then break fi;
+od;
+lnpr := lnpr1 + ln(pr);
+if lnpr < -700 then error('very low probabilities not implemented yet') fi;
+pr := exp(lnpr);
+TestStatResult('Binomial',0,pr,sqrt(2)*erfcinv(pr),[n1,n2,p])
+end:

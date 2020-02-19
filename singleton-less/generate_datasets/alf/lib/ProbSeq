@@ -1,0 +1,9 @@
+#
+#	ProbSeq - class containing a probabilistic description of a sequence
+#
+#				Gaston H. Gonnet (Dec 5, 2001)
+#
+ProbSeq := proc( )
+end:
+
+

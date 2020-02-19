@@ -1,0 +1,1209 @@
+maplepath := '/usr/icos/bin/maple':
+datadirname := '/home/darwin/DB':
+
+assigned := proc( a ) option builtin;  1 end:
+traperror := proc( expr ) option builtin;  2 end:
+eval := proc( expr ) option builtin; 3 end:
+If := proc( cond, exprtrue, exprfalse ) option builtin; 4 end:
+time := proc( expr ) option builtin; 5 end:
+noeval := proc( expr ) option builtin;  6 end:
+evalb := proc( BooleanExpr ) option builtin; 7 end:
+return := proc( returnvalues ) option builtin;  8 end:
+ReadLibrary := proc( filename, funcname ) option builtin;  9 end:
+zip := proc( expr ) option builtin; 10 end:
+sum := proc( a ) option builtin;  11 end:
+UTCTime := proc ( expr ) option builtin; 12 end:
+seq := proc( e  ) option builtin;  13 end:
+remember := proc( f ) option builtin; 14 end:
+assert := proc( bool ) option builtin; 15 end:
+product := proc( a ) option builtin;  16 end:
+printf := proc( pattern:string ) option builtin; 50 end:
+prints := proc( ) for z in [args] do printf('%s\n',z) od end:
+error := proc( errormsgs ) option builtin; 51 end:
+iterate := proc( itervalue ) option builtin; 52 end:
+lprint := proc( toprint ) option builtin;  53 end:
+dprint := proc( toprint )
+    for i to nargs do
+	if i >= 2 then printf( ',' ) fi;
+	printf( '%A', args[i] ) od;
+    lprint()
+end:
+
+FindLongestRep := proc( db:database, len:{posint,0}, endbonus:integer )
+option builtin; 300 end:
+
+Match := proc( MatchParams ) option builtin; 55 end:
+
+max := proc( numbers ) option builtin, numeric; 56 end:
+
+min := proc( numbers ) option builtin, numeric; 57 end:
+
+CreateArray := proc( ranges, inivalue ) option builtin; 58 end:
+
+DrawPlot := proc() option builtin; 59 end:
+
+sort := proc( a:array, orderproc ) option builtin; 61 end:
+
+CreateString := proc( len:{posint,0}, inivalue:string ) option builtin; 301 end:
+
+op := proc( ) option builtin; 63 end:
+
+names := proc( typ:{type,'assigned'} ) option builtin; 302 end:
+
+ReadRawLine := proc( promptstring:string ) option builtin; 316 end:
+
+ReadLine := proc( promptstring:string ) option builtin; 303 end:
+
+CodonToInt := proc( UUU:string ) option builtin; 66 end:
+
+GetAllMatches := proc (m: Match, DM:DayMatrix, goal:numeric) option builtin; 169 end:
+
+sprintf := proc( pattern ) option builtin; 69 end:
+
+NucPepDynProg := proc( nuc: string, pep: string, DM: DayMatrix,
+    len1: integer, len2: integer, IntronScoring: list )
+  option builtin; 305 end:
+
+append := proc(l:{list,structure,set}) option builtin; 71 end:
+
+TimedCallSystem := proc( command:string, timeout:posint )
+option builtin; 307 end:
+
+LockFile := proc( filename:string, message:string ) option builtin; 308 end:
+
+MinSquareTree := proc( Dist: matrix(numeric), Var: matrix(numeric),
+	Labels: list, Initial: {Tree,'Random','NJRandom','Trials'=posint},
+	Keep:'KeepTopology' ) option builtin; 266 end:
+LeastSquaresTree := ":
+Synteny_Invert := proc( p:list, i1:posint, i2:posint,
+	mode:'InPlace' ) option builtin; 267 end:
+Synteny_FindOrders := proc( p:list ) option builtin; 268 end:
+Viterbi := proc( seq:list(posint), STS:{list(list(list(numeric))),SparsePFA},
+	S:list(numeric) ) option builtin;  270 end:
+ViterbiFast := proc( seq:list(posint), STS:{list(list(list(numeric))),SparsePFA},
+ 	S:list(numeric) ) option builtin;  271 end:
+ViterbiFast1 := proc( seq:list(posint), STS:{list(list(list(numeric))),SparsePFA},
+        S:list(numeric) ) option builtin;  272 end:
+SparsePFA_FixedPoint := proc( seq:list(list(posint)), spfa:SparsePFA )
+	option builtin;  273 end: 
+
+CallExternal := proc(prog:string) option builtin; 74 end:
+
+ReadOffsetLine := proc( file:string, ofs:{0,posint} ) option builtin; 196 end:
+
+GetOffset := proc( t:string, df: database ) option builtin; 309 end:
+
+
+NucPepBackDynProg := proc( nuc: string, pep: string, DM: DayMatrix,
+                        len1: integer, len2: integer, IntronScoring: list )
+  option builtin; 306 end:
+
+NBody := proc (dist:matrix(numeric), var:matrix(numeric),
+	k1:posint, k2:posint, rho1:numeric, rho2:numeric,
+	inipos: matrix(numeric))
+  option builtin; 310 end:
+
+GetEntryNumber := proc( offset:{integer,string}, df: database )
+option builtin; 311 end:
+
+type := proc( expr, typeval ) option builtin; 83 end:
+
+DynProgStrings := proc( m:{Match,Alignment}, dm:DayMatrix, noself:'NoSelf' )
+option builtin; 85 end:
+
+SmallAllAll := noeval(ReadLibrary(SmallAllAll)):
+AlignOneAll := proc( seq:{string,posint}, db:database, day:DayMatrix,
+  cutoff:numeric, entries: posint..posint ) option builtin; 314 end:
+Alignment := noeval(ReadLibrary(Align,Alignment)):
+Align := noeval(ReadLibrary(Align)):
+EstimateLogEvalue := noeval(ReadLibrary(Align,EstimateLogEvalue)):
+
+AToInt := proc( A:string ) option builtin; 100 end:
+IntToA := proc( P:posint ) option builtin; 101 end:
+
+AAAToInt := proc( AAA:string ) option builtin; 102 end:
+IntToAAA := proc( P:posint ) option builtin; 103 end:
+
+AminoToInt := proc( Amino:string ) option builtin; 104 end:
+
+IntToAmino := proc( P:posint ) option builtin; 105 end:
+
+type_type := proc(t) option internal;
+if t='type' then true else a := traperror(type(t,t)); a <> lasterror fi end:
+nonnegative_type := {0,positive}:
+DNA_type := {'A','C','G','T'}:
+RNA_type := {'A','C','G','U'}:
+
+# option zippable can be used for functions which do not have an interpretation
+# over matrices (other than zipping through).  E.g. exp(), ln()
+abs := proc( x:numeric ) option builtin, numeric, zippable, polymorphic;
+107 end:
+
+mod := proc( a:numeric, b:numeric ) option builtin, numeric, polymorphic;
+108 end:
+
+iquo := proc(a:integer,b:integer) option polymorphic; trunc(a/b) end:
+
+sqrt := proc( x:numeric ) option builtin, numeric, zippable; 109 end:
+
+exp := proc( x:{numeric,matrix(numeric)} ) option builtin,polymorphic; 110 end:
+ln := proc( x:{numeric,matrix(numeric)} ) option builtin,polymorphic; 111 end:
+log := proc( x:{numeric,matrix(numeric)} ) option builtin,polymorphic; 111 end:
+ln1x := noeval(ReadLibrary(ln1x)):
+expx1 := noeval(ReadLibrary(ln1x,expx1)):
+
+length := proc( x ) option builtin; 112 end:
+
+TextHead := proc(x:string) option builtin; 113 end:
+
+round := proc( x:numeric ) option builtin, numeric, zippable; 114 end:
+
+sin := proc( x:numeric ) option builtin,numeric,polymorphic,zippable; 115 end:
+cos := proc( x:numeric ) option builtin,numeric,polymorphic,zippable; 116 end:
+tan := proc( x:numeric ) option builtin,numeric,polymorphic,zippable; 117 end:
+arcsin := proc(x:numeric) option builtin,numeric,polymorphic,zippable; 118 end:
+arccos := x -> Pi/2-arcsin(x):
+
+Rand := noeval(ReadLibrary(Rand)):
+Normal_Rand := proc( nr:structure ) options builtin, numeric; 88 end:
+Graph_Rand := noeval(ReadLibrary(Graph,Graph_Rand)):
+SetRand := proc( seed:integer ) option builtin; 120 end:
+RandL := proc( x:{list,set,string}) x[ceil(Rand()*length(x))] end:
+RandomSelection := noeval(ReadLibrary(RandomSelection)):
+
+OpenAppending := proc( filename:string ) option builtin; 121 end:
+
+OpenWriting := proc( filename:string ) option builtin; 122 end:
+
+GaussElim := proc( A:array(array(numeric)), b:array(numeric) ) option builtin;
+123 end:
+
+SearchArray := proc( x, a:array ) option builtin; 124 end:
+
+sequal := proc( a, b ) option builtin; 125 end:
+
+CallSystem := proc( command:string ) option builtin; 126 end:
+
+ReadRawFile := proc( filename:string ) option builtin; 127 end:
+
+Set := proc( Option:{string,string=anything} ) option builtin; 128 end:
+
+parse := proc( x : string ) option builtin; 129 end:
+
+arctan := proc( y:numeric, x:numeric )
+option builtin,numeric,polymorphic; 84 end:
+
+log10 := proc( x:{numeric,matrix(numeric)} ) 
+t := ln(x);  0.0625*t + 0.0032055180967481723489*t; 0.5*t-" end:
+
+lg := proc( x:{numeric,matrix(numeric)} )
+t := ln(x);  0.5*t - 0.05730495911103659264*t; t+" end:
+
+gc := proc() option builtin; 130 end:
+
+member := proc( x, s:{set,list,structure,identical(intersect())} ) option builtin; 131 end:
+
+version := proc() option builtin; 148 end:
+copy := proc( x:anything, depth:posint ) option builtin; 317 end:
+
+ceil := proc( x:numeric ) option builtin, numeric, zippable; 132 end:
+erf := proc( x:numeric ) option builtin, numeric, zippable; 133 end:
+
+erfc := proc( x:numeric ) option builtin, numeric, zippable; 134 end:
+
+floor := proc( x:numeric ) option builtin, numeric, zippable; 135 end:
+trunc := proc( x:numeric ) option builtin, numeric, zippable; 136 end:
+
+
+sscanf := proc( t:string, pat:string ) option builtin; 137 end:
+
+matrix_inverse := proc( A:matrix(numeric) ) option builtin; 138 end:
+
+transpose := proc( A:matrix ) option builtin; 139 end:
+
+Cholesky := proc( A:matrix(numeric) ) option builtin; 140 end:
+
+erfcinv := proc(y:numeric) option builtin, numeric,zippable; 141 end:
+scalb := proc( x:numeric, n:integer ) option builtin,numeric; 142 end:
+ilogb := proc( x:numeric ) option builtin,numeric, zippable; 143 end:
+
+ReadDb2 := proc( FileName:string ) option builtin, internal; 151 end:
+ReadDb := proc( FileName:string ) global DB;
+    DB := remember( ReadDb2(FileName) ) end:
+
+CreateOrigDayMatrix := proc( Mutations:matrix(numeric),
+	AaCounts:array(numeric),
+	PamNumber:{numeric,1..posint} ) option builtin; 152 end:
+
+CaseSearchString := proc( pat:string, txt:string ) option builtin; 156 end:
+
+GetMostFrequentGrams := proc( n:posint, k:posint ) option builtin; 160 end:
+
+SearchDayMatrix := proc( PamNumber:numeric, DMS:array(DayMatrix) )
+  option builtin; 164 end:
+SearchDayIndex := noeval(ReadLibrary(SearchDayIndex)):
+
+CreateDayMatrix := proc( LogMutMatrix:matrix(numeric),
+    PamNumber:{numeric,1..posint} ) option builtin; 165 end:
+
+SearchString := proc( pattern: string, text:string ) option builtin; 166 end:
+SearchMultipleString := noeval(ReadLibrary(SearchMultipleString)):
+SearchDelim := noeval(ReadLibrary(SearchDelim)):
+
+EnterProfile := proc( blockname:string ) option builtin; 167 end:
+ExitProfile := proc( blockname:string ) option builtin; 168 end:
+
+BToInt := proc( B:string ) option builtin; 170 end:
+NToInt := eval(BToInt):
+
+IntToB := proc( P:posint ) option builtin; 171 end:
+IntToN := eval(IntToB):
+
+BBBToInt := proc( BBB:string ) option builtin; 172 end:
+NucToInt := eval(BBBToInt):
+
+IntToBBB := proc( P:posint ) option builtin; 173 end:
+IntToNuc := eval(IntToBBB):
+
+BaseToInt := proc( Base:string ) option builtin; 174 end:
+NucleicToInt := eval(BaseToInt):
+
+IntToBase := proc( P:posint ) option builtin; 175 end:
+IntToNucleic := eval(IntToBase):
+
+SearchSeqDb := proc( t:{string,string..string} ) option builtin; 176 end:
+
+ProbDynProg := proc (A:array(array(numeric)), B:array(array(numeric)),
+      f:array(numeric), w:posint,
+      FixedDel:numeric, IncDel:numeric) option builtin; 179 end:
+
+date := proc( ) option builtin; 180 end:
+hostname := proc( ) option builtin; 181 end:
+
+
+ApproxSearchString := proc( pat:string, text:string, k:posint ) option builtin;
+183 end:
+HammingSearchString := proc( pat:string, text:string, k:posint ) option builtin;
+197 end:
+
+GetAllNucPepMatches := proc( npm: NucPepMatch, D:DayMatrix, goal: numeric ) 
+	option builtin; 184 end:
+
+AlignNucPepMatch := proc( npm: NucPepMatch, dm:DayMatrix )
+	option builtin; 185 end:
+
+FindNucPepPam := proc( npm: NucPepMatch, DMS:array(DayMatrix) )
+	option builtin; 186 end:
+
+SearchOrderedArray := proc( x, a:{array,string,structure} ) option builtin; 187 end:
+
+getpid := proc() option builtin; 188 end:
+sleep := proc( n:posint ) option builtin; 189 end:
+getenv := proc(varname: string) option builtin; 198 end:
+setenv := proc( name:string, value:string ) option builtin; 234 end: 
+
+SearchTag := proc( tag:string, text:string ) option builtin; 190 end:
+SearchMassDb := proc( p:structure, n:integer ) option builtin; 191 end:
+
+DynProgMass := proc( p:{array, structure}, seq: string, stddev: numeric,
+	deb: numeric ) option builtin; 192 end:
+DynProgMassDb := proc( p:array, m: integer, term: string, df: database,
+	stddev: numeric, deb: numeric ) option builtin; 193 end:
+
+ReadProgram := proc( fname:string ) option builtin; 194 end:
+OpenReading := proc( fname:string ) option builtin; 195 end:
+
+union := proc(a:set,b:set) option builtin,polymorphic; 86 end:
+minus := proc(a:{set,identical(intersect())},b:{set,identical(intersect())})
+option builtin,polymorphic; 201 end:
+intersect := proc(a:set, b:set) option builtin,polymorphic; 87 end:
+
+subset := proc(a:{set,identical(intersect())},b:{set,identical(intersect())})
+option builtin; 203 end:
+
+OpenPipe := proc (cmd: string) option builtin; 106 end:
+
+hash := proc(s) option builtin; 149 end:
+hashstring := proc(s:string) option builtin; 150 end:
+has := proc(s,t) option builtin; 153 end:
+sha2 := proc(s:string) option builtin; 154 end:
+sha2f := proc(s:string) option builtin; 158 end:
+
+CurrentOff := proc () option builtin; 207 end:
+
+ConnectTcp := proc (path: string, slave: boolean) option builtin; 208 end:
+
+SendTcp := proc (data: string) option builtin; 209 end:
+
+ReceiveTcp := proc (timeout: {0, posint}) option builtin; 210 end:
+
+DisconnectTcp := proc () option builtin; 211 end:
+
+GetGramSiteScore := proc (n: string, S: GramSite) option builtin; 213 end:
+
+GetGramRegionScore := proc (n: string, S: GramRegion) option builtin; 214 end:
+
+EstimatePam := proc (s1: string, s2: string, DMS: array(DayMatrix))
+option builtin; 215 end:
+
+DynProgNucPepString := proc( npm: NucPepMatch ) option builtin; 216 end:
+
+ParallelAllNucPepMatches := proc (npm: list(NucPepMatch),
+    dm: {DayMatrix, list(DayMatrix)}, goal: numeric) option builtin; 224 end:
+
+antiparallel := proc (nuc: string) option builtin; 225 end:
+
+NucPepRegions := proc (npm: NucPepMatch) option builtin; 226 end:
+
+lowercase := proc(s: string) option builtin;  228 end:
+uppercase := proc(s: string) option builtin; 229 end:
+assemble := proc(s) option builtin; 230 end:
+disassemble := proc(s) option builtin; 231 end:
+display := noeval(ReadLibrary(display)):
+symbol := proc(s:{symbol,string}) option builtin; 232 end:
+warning := proc(s:string) option builtin; 233 end:
+
+ComputeTSP := noeval( ReadLibrary(ComputeTSP)):
+
+ComputeCubicTSP := proc( Dist:matrix, trials:posint, p1:list(posint) )
+ option builtin; 253 end:
+
+ComputeQuarticTSP := proc( Dist:matrix, trials:posint, p1:list(posint) )
+  option builtin; 254 end:
+
+Eigenvalues := proc( A:matrix, eigenvects:name ) option builtin; 252 end:
+
+VertexCover := proc( A:Graph ) option builtin; 255 end:
+
+VertexCover2 :=  proc( A:Graph, k : integer ) option builtin; 256 end:
+
+CliqueK := proc( A:Graph ) option builtin,internal; 257 end:
+Clique := noeval( ReadLibrary(Clique)):
+MaxEdgeWeightClique := proc( A:Graph ) option builtin; 265 end:
+MaxCut := noeval( ReadLibrary(MaxCut, MaxCut)):
+MinCut := noeval( ReadLibrary(MinCut)):
+MinimumCut := proc(g:Graph,trials:posint) option builtin; 274 end:
+NearestNeighbor_LOOV_Correct := proc( A:matrix(numeric),
+                b01:matrix({0,1}), inds:list(posint), diams:list(positive) )
+                option builtin; 275 end:
+NearestNeighbor_LOOV_CorrectN := proc( A:matrix(numeric), b:list(numeric),
+                inds:list(posint), diams:list(positive) ) option builtin; 276 end:
+
+factorial := proc(n:numeric) option builtin,numeric, zippable; 144 end:
+IntToAscii := proc (i:posint) option builtin; 155 end:
+AsciiToInt := proc (s:string) option builtin; 157 end:
+size := proc(s) option builtin; 147 end:
+Gamma := noeval( ReadLibrary(IncompleteGamma,Gamma)):
+LnGamma := noeval( ReadLibrary(IncompleteGamma,LnGamma)):
+Lngamma := noeval( ReadLibrary(IncompleteGamma,Lngamma)):
+
+debug := proc( arg:string ) option builtin;  315 end:
+
+assign := proc( a,v ) 
+a := v; NULL end:
+
+CodonToA := proc () 
+  p := If (nargs = 3, CodonToInt(args[1], args[2], args[3]),
+    CodonToInt(args[1]));
+  If (p = 22, '$', IntToA(p))
+end:
+
+enum := proc(n:{integer,integer..integer})
+  m := If (type (n, integer), 1..n, n);
+  res := CreateArray (1..m[2]-m[1]+1);
+  for i from m[1] to m[2] do res[i - m[1] + 1] := i od; res
+end:
+
+ReceiveDataTcp := noeval(ReadLibrary(IPC,ReceiveDataTcp)):
+ReadTcp := noeval(ReadLibrary(IPC,ReadTcp)):
+ReadData := noeval(ReadLibrary(ReadData,ReadData)):
+Readability := noeval(ReadLibrary(Readability)):
+SendDataTcp := noeval(ReadLibrary(IPC,SendDataTcp)):
+GetAaCount := noeval(ReadLibrary(AaCount,GetAaCount)):
+GetAaFrequency := noeval(ReadLibrary(AaFrequency)):
+CalculateScore := noeval(ReadLibrary(CalculateScore)):
+print := noeval(ReadLibrary(print)):
+Document := noeval(ReadLibrary(Document)):
+Table := noeval(ReadLibrary(Document,Table)):
+Code := noeval(ReadLibrary(Document,Code)):
+List := noeval(ReadLibrary(Document,List)):
+printtext := noeval(ReadLibrary(DBTools,printtext)):
+Paragraph := noeval(ReadLibrary(Document,Paragraph)):
+TextBlock := noeval(ReadLibrary(Document, TextBlock)):
+DocEl := noeval(ReadLibrary(Document, DocEl)):
+Indent := noeval(ReadLibrary(Document,Indent)):
+ConvertToEntityName := noeval(ReadLibrary(Document,ConvertToEntityName)):
+convolve := noeval(ReadLibrary(convolve)):
+GimpFigure := noeval(ReadLibrary(Document,GimpFigure)):
+PostscriptFigure := noeval(ReadLibrary(Document,PostscriptFigure)):
+PrintMatrix := noeval(ReadLibrary(print,PrintMatrix)):
+Primes := noeval(ReadLibrary(Iterators)):
+Indets := noeval(ReadLibrary(Iterators)):
+Infix := noeval(ReadLibrary(Iterators)):
+Prefix := noeval(ReadLibrary(Iterators)):
+Postfix := noeval(ReadLibrary(Iterators)):
+Leaves := noeval(ReadLibrary(Iterators)):
+Lines := noeval(ReadLibrary(Iterators)):
+Match_print := noeval(ReadLibrary(print,Match_print)):
+CreateDayMatrices := noeval(ReadLibrary(CreateDayMatrices)):
+DayMatrix := noeval(ReadLibrary(CreateDayMatrices,DayMatrix)):
+Identity := noeval(ReadLibrary(Identity)):
+SearchDb := noeval(ReadLibrary(SearchDF,SearchDb)):
+SearchID := noeval(ReadLibrary(SearchDF,SearchID)):
+SearchAC := noeval(ReadLibrary(SearchDF,SearchAC)):
+GetEntryInfo := noeval(ReadLibrary(EntryInfo)):
+PrintInfo := noeval(ReadLibrary(EntryInfo,PrintInfo)):
+PatEntry := noeval(ReadLibrary(Entries,PatEntry)):
+Entry := noeval(ReadLibrary(Entries,Entry)):
+Entries := noeval(ReadLibrary(Entries)):
+Sequence := noeval(ReadLibrary(Entries,Sequence)):
+Sequences := noeval(ReadLibrary(Entries,Sequences)):
+SequenceComplexity := noeval(ReadLibrary(SequenceComplexity)):
+string := noeval(ReadLibrary(Entries,string)):
+table := noeval(ReadLibrary(table)):
+SplitLines := noeval(ReadLibrary(SplitLines)):
+ID := noeval(ReadLibrary(Entries,ID)):
+atoi := noeval(ReadLibrary(atoi)):
+CreateRandPermutation := noeval(ReadLibrary(RandomPermut)):
+Permutation := noeval(ReadLibrary(Permutation)):
+Shuffle := noeval(ReadLibrary(RandomPermut,Shuffle)):
+SetRandSeed := noeval(ReadLibrary(RandomPermut,SetRandSeed)):
+Mutate := noeval(ReadLibrary(RandomPermut,Mutate)):
+CreateRandSeq := noeval(ReadLibrary(RandomPermut,CreateRandSeq)):
+Stat := noeval(ReadLibrary(Stat)):
+Counter := noeval(ReadLibrary(Counter)):
+StatTest := noeval(ReadLibrary(StatTest)):
+TestGradHessian := noeval(ReadLibrary(TestGradHessian)):
+Zscore := noeval(ReadLibrary(Zscore)):
+ZscorePercent := noeval(ReadLibrary(Zscore,ZscorePercent)):
+avg := noeval(ReadLibrary(Stat,avg)):
+var := noeval(ReadLibrary(Stat,var)):
+std := noeval(ReadLibrary(Stat,std)):
+CollectStat := noeval(ReadLibrary(Stat,CollectStat)):
+Polar := noeval(ReadLibrary(Polar)):
+UpdateStat := noeval(ReadLibrary(Stat,UpdateStat)):
+OutsideBounds := noeval(ReadLibrary(OutsideBounds)):
+LinearRegression := noeval(ReadLibrary(Stat,LinearRegression)):
+Covariance := noeval(ReadLibrary(Covariance)):
+Cumulative := noeval(ReadLibrary(Cumulative)):
+CumulativeStd := noeval(ReadLibrary(Cumulative,CumulativeStd)):
+Std_Score := noeval(ReadLibrary(Cumulative,Std_Score)):
+ExpFit := noeval(ReadLibrary(Stat,ExpFit)):
+ExpFit2 := noeval(ReadLibrary(Stat,ExpFit2)):
+MaxLikelihoodSize := noeval(ReadLibrary(Stat,MaxLikelihoodSize)):
+ProbBallsBoxes := noeval(ReadLibrary(ProbBallsBoxes)):
+lnProbBallsBoxes := noeval(ReadLibrary(ProbBallsBoxes,lnProbBallsBoxes)):
+ProbCloseMatches := noeval(ReadLibrary(ProbBallsBoxes,ProbCloseMatches)):
+PerIdentToPam := noeval(ReadLibrary(PItoPam)):
+PamToPerIdent := noeval(ReadLibrary(PItoPam,PamToPerIdent)):
+DrawGraph := noeval(ReadLibrary(Graph,DrawGraph)):
+DrawHistogram := noeval(ReadLibrary(Histogram)):
+DrawDistribution := noeval(ReadLibrary(Histogram,DrawDistribution)):
+DrawDotplot := noeval(ReadLibrary(Histogram,DrawDotplot)):
+DrawPointDistribution := noeval(ReadLibrary(Histogram,DrawPointDistribution)):
+SmoothData := noeval(ReadLibrary(Histogram,SmoothData)):
+DrawStackedBar := noeval(ReadLibrary(Histogram,DrawStackedBar)):
+ViewPlot := noeval(ReadLibrary(Histogram,ViewPlot)):
+Plot2Gif := noeval(ReadLibrary(Plot2Gif)):
+View := noeval(ReadLibrary(View)):
+SystemCommand := noeval(ReadLibrary(SystemCommand)):
+StartOverlayPlot := noeval(ReadLibrary(Histogram,StartOverlayPlot)):
+StopOverlayPlot := noeval(ReadLibrary(Histogram,StopOverlayPlot)):
+GetColorMap := noeval(ReadLibrary(Histogram,GetColorMap)):
+DrawTree := noeval(ReadLibrary(DrawPackage,DrawTree)):
+string_RGB := noeval(ReadLibrary(Color,string_RGB)):
+RGB_string := noeval(ReadLibrary(Color,RGB_string)):
+ColorPalette := noeval(ReadLibrary(Color,ColorPalette)):
+BrightenColor := noeval(ReadLibrary(Color,BrightenColor)):
+CrossReference := noeval(ReadLibrary(CrossReference)):
+ShortNames := noeval(ReadLibrary(CrossReference,ShortNames)):
+CollapseNodes := noeval(ReadLibrary(SummarizeTree)):
+PrintTreeSeq := noeval(ReadLibrary(SummarizeTree,PrintTreeSeq)):
+SearchFrag := noeval(ReadLibrary(SearchFrag)):
+GetMolWeight := noeval(ReadLibrary(MolWeight,GetMolWeight)):
+NucPepMatch := noeval(ReadLibrary(NPMatch)):
+NucPepMatch_print := noeval(ReadLibrary(NPMatch, NucPepMatch_print)):
+LocalNucPepAlign := noeval(ReadLibrary(NPMatch,LocalNucPepAlign)):
+GlobalNucPepAlign := noeval(ReadLibrary(NPMatch,GlobalNucPepAlign)):
+LocalNucPepAlignBestPam := noeval(ReadLibrary(NPMatch,LocalNucPepAlignBestPam)):
+GetPeptides := noeval(ReadLibrary(NPMatch,GetPeptides)):
+GetIntrons := noeval(ReadLibrary(NPMatch,GetIntrons)):
+AlignNucPepAll := noeval(ReadLibrary(NPMatch,AlignNucPepAll)):
+VisualizeGene := noeval(ReadLibrary(NPMatch,VisualizeGene)):
+NucID := noeval(ReadLibrary(NPMatch,NucID)):
+MaximizeFunc := noeval(ReadLibrary(Maximize)):
+MaximizeRD := noeval(ReadLibrary(Maximize)):
+BestSearchString := noeval(ReadLibrary(BestStringMatch)):
+PrintStringMatch := noeval(ReadLibrary(BestStringMatch,PrintStringMatch)):
+Matrices := noeval(ReadLibrary(Matrices)):
+FindEntropy := noeval(ReadLibrary(Matrices,FindEntropy)):
+DayMatrixScale := noeval(ReadLibrary(Matrices,DayMatrixScale)):
+ParExecuteIPC := noeval(ReadLibrary(ParExec2)):
+GetMachineUsage := noeval(ReadLibrary(ParExec2,GetMachineUsage)):
+ParExecuteTest := noeval(ReadLibrary(ParExec2,ParExecuteTest)):
+ParExecSlave := noeval(ReadLibrary(ParExecSlave)):
+MinimizeFunc := noeval(ReadLibrary(Minimize)):
+DisconMinimize := noeval(ReadLibrary(Minimize,DisconMinimize)):
+BFGSMinimize := noeval(ReadLibrary(BFGSMinimize,BFGSMinimize)):
+Minimize2DFunc := noeval(ReadLibrary(Minimize,Minimize2DFunc)):
+MinimizePWC := noeval(ReadLibrary(Minimize,MinimizePWC)):
+MinimizeSD := noeval(ReadLibrary(Minimize,MinimizeSD)):
+MinimizeBrent := noeval(ReadLibrary(Minimize,MinimizeBrent)):
+DbToDarwin := noeval(ReadLibrary(ConvertToDF)):
+SpToDarwin := noeval(ReadLibrary(ConvertSP)):
+sign := noeval(ReadLibrary(sign)):
+Zeta := noeval(ReadLibrary(Zeta)):
+Graph := noeval(ReadLibrary(Graph)):
+TetrahedronGraph := noeval(ReadLibrary(Graph,TetrahedronGraph)):
+HexahedronGraph := noeval(ReadLibrary(Graph,HexahedronGraph)):
+CubeGraph := noeval(ReadLibrary(Graph,CubeGraph)):
+OctahedronGraph := noeval(ReadLibrary(Graph,OctahedronGraph)):
+IcosahedronGraph := noeval(ReadLibrary(Graph,IcosahedronGraph)):
+DodecahedronGraph := noeval(ReadLibrary(Graph,DodecahedronGraph)):
+PetersenGraph := noeval(ReadLibrary(Graph,PetersenGraph)):
+BipartiteGraph := noeval(ReadLibrary(Graph,BipartiteGraph)):
+BipartiteMatching := noeval(ReadLibrary(BipartiteMatching)):
+Complete := noeval(ReadLibrary(Graph,Complete)):
+RegularGraph := noeval(ReadLibrary(Graph,RegularGraph)):
+Edge := noeval(ReadLibrary(Graph,Edge)):
+EdgeComplement := noeval(ReadLibrary(Graph,EdgeComplement)):
+ShortestPath := noeval(ReadLibrary(Graph,ShortestPath)):
+InduceGraph := noeval(ReadLibrary(Graph,InduceGraph)):
+FindConnectedComponents := noeval(ReadLibrary(Graph,FindConnectedComponents)):
+ParseDimacsGraph := noeval(ReadLibrary(Graph, ParseDimacsGraph)):
+Tree := noeval(ReadLibrary(Tree)):
+TreeResult := noeval(ReadLibrary(TreeResult)):
+RellTree := noeval(ReadLibrary(TreeResult)):
+AllAllResult := noeval(ReadLibrary(TreeResult,AllAllResult)):
+AlSumm := noeval(ReadLibrary(TreeResult,AlSumm)):
+GetTreeLabels := noeval(ReadLibrary(Tree,GetTreeLabels)):
+DigestSeq := noeval(ReadLibrary(MassProfile,DigestSeq)):
+DigestWeights := noeval(ReadLibrary(MassProfile,DigestWeights)):
+Gene := noeval(ReadLibrary(Gene)):
+GetComplement := noeval(ReadLibrary(Gene,GetComplement)):
+ComplementSequence := noeval(ReadLibrary(Gene,ComplementSequence)):
+Complement := noeval(ReadLibrary(Gene,Complement)):
+Reverse := noeval(ReadLibrary(Gene,Reverse)):
+help := noeval(ReadLibrary(help)):
+IntronModel := noeval(ReadLibrary(IntronScores,IntronModel)):
+LinearIntron := noeval(ReadLibrary(IntronScores,LinearIntron)):
+Intron := noeval(ReadLibrary(IntronScores,Intron)):
+Fold := noeval(ReadLibrary(Fold)):
+ReadBrk := noeval(ReadLibrary(Fold,ReadBrk)):
+ReadDssp := noeval(ReadLibrary(Fold,ReadDssp)):
+CreateCProgram := noeval(ReadLibrary(ExtCallFrame)):
+PredictGenes := noeval(ReadLibrary(PredictGenes)):
+PamWindows := noeval(ReadLibrary(StructurePrediction,PamWindows)):
+SurfIntActPred := noeval(ReadLibrary(StructurePrediction,SurfIntActPred)):
+ParsePred := noeval(ReadLibrary(StructurePrediction,ParsePred)):
+PrintPV := noeval(ReadLibrary(ProbModel,PrintPV)):
+MostProbAA := noeval(ReadLibrary(ProbModel,MostProbAA)):
+ProbTree := noeval(ReadLibrary(ProbModel,ProbTree)):
+ConvertTree := noeval(ReadLibrary(ProbModel,ConvertTree)):
+
+# Added 05.02.97, Chantal Korostensky
+WriteFasta := noeval(ReadLibrary(FileConv, WriteFasta)):
+ReadMap    := noeval(ReadLibrary(FileConv, ReadMap)):
+ReadFasta  := noeval(ReadLibrary(FileConv, ReadFasta)):
+ReadPir    := noeval(ReadLibrary(FileConv, ReadPir)):
+ReadPima   := noeval(ReadLibrary(FileConv, ReadPima)):
+ReadMsa  := noeval(ReadLibrary(FileConv, ReadMsa)):
+IdenticalTrees   := noeval(ReadLibrary(TreeUtil, IdenticalTrees)):
+GetMATreeNew   := noeval(ReadLibrary(TreeUtil, GetMATreeNew)):
+UnlabelLeaves   := noeval(ReadLibrary(TreeUtil, UnlabelLeaves)):
+AddSpecies := noeval(ReadLibrary(TreeUtil, AddSpecies)):
+FindRules  := noeval(ReadLibrary(TreeUtil, FindRules)):
+FindSpeciesViolations := noeval(ReadLibrary(TreeUtil, FindSpeciesViolations)):
+GetPathDistance    := noeval(ReadLibrary(TreeUtil, GetPathDistance)):
+TotalTreeWeight    := noeval(ReadLibrary(TreeUtil, TotalTreeWeight)):
+FindCircularOrder  := noeval(ReadLibrary(Tree, FindCircularOrder)):
+CircularTour := noeval(ReadLibrary(CircularTour)):
+Clusters := noeval(ReadLibrary(CircularTour,Clusters)):
+Species_Entry  := noeval(ReadLibrary(Species,Species_Entry)):
+SP_Species  := noeval(ReadLibrary(Species,SP_Species)):
+SPCommonName  := noeval(ReadLibrary(Species,SPCommonName)):
+Orthologues  := noeval(ReadLibrary(Orthologues)):
+PhylogeneticTree  := noeval(ReadLibrary(PhylogeneticTree)):
+GapTree  := noeval(ReadLibrary(GapTree)):
+OptimizeTree  := noeval(ReadLibrary(PhylogeneticTree,OptimizeTree)):
+RBFS_Tree  := noeval(ReadLibrary(RBFS_tree)):
+ComputeDimensionlessFit := noeval(ReadLibrary(RBFS_tree,ComputeDimensionlessFit)):
+RemoveUnchanged  := noeval(ReadLibrary(PhylogeneticTree,RemoveUnchanged)):
+Synteny  := noeval(ReadLibrary(Synteny)):
+SignedSynteny  := noeval(ReadLibrary(SignedSynteny)):
+dSplits  := noeval(ReadLibrary(dSplits)):
+KWIndex  := noeval(ReadLibrary(VariationIndices,KWIndex)):
+ProbIndex  := noeval(ReadLibrary(VariationIndices,ProbIndex)):
+ScaleIndex  := noeval(ReadLibrary(VariationIndices,ScaleIndex)):
+PrintIndex  := noeval(ReadLibrary(VariationIndices,PrintIndex)):
+PlotIndex  := noeval(ReadLibrary(VariationIndices,PlotIndex)):
+ParseNewickTree := noeval(ReadLibrary(Newick2Darwin, ParseNewickTree)):
+BinaryNewick2Darwin := noeval(ReadLibrary(Newick2Darwin, BinaryNewick2Darwin)):
+
+# Added 10.02.97, Chantal Korostensky
+HTMLC  := noeval(ReadLibrary(HTMLCTools, HTMLC)):
+HTML  := noeval(ReadLibrary(HTMLCTools, HTML)):
+HyperLink  := noeval(ReadLibrary(HTMLCTools, HyperLink)):
+PlusMin  := noeval(ReadLibrary(HTMLCTools, PlusMin)):
+HTMLColor  := noeval(ReadLibrary(HTMLTools, HTMLColor)):
+Center := noeval(ReadLibrary(HTMLCTools,Center)):
+WeightObservations := noeval(ReadLibrary(WeightObservations)):
+SVD := noeval(ReadLibrary(SVD)):
+SvdResult := noeval(ReadLibrary(SvdAnalysis,SvdResult)):
+SvdAnalysis := noeval(ReadLibrary(SvdAnalysis)):
+SvdBestBasis := noeval(ReadLibrary(SvdBestBasis)):
+LinearClassify := noeval(ReadLibrary(LinearClassify)):
+LinearClassification := noeval(ReadLibrary(LinearClassify,LinearClassification)):
+LinearProgramming := noeval(ReadLibrary(LinearProgramming)):
+CreateDB := noeval(ReadLibrary(DBTools, CreateDB)):
+Description := noeval(ReadLibrary(Description)):
+HelpEntry := noeval(ReadLibrary(Description,HelpEntry)):
+Descriptions := noeval(ReadLibrary(Descriptions)):
+mselect := noeval(ReadLibrary(AlgManipulation,mselect)):
+hastype := noeval(ReadLibrary(AlgManipulation,hastype)):
+indets := noeval(ReadLibrary(AlgManipulation,indets)):
+algebraic_type := noeval(ReadLibrary(AlgManipulation,algebraic_type)):
+subs := noeval(ReadLibrary(AlgManipulation,subs)):
+coeff := noeval(ReadLibrary(AlgManipulation,coeff)):
+lcoeff := noeval(ReadLibrary(AlgManipulation,lcoeff)):
+gcd := noeval(ReadLibrary(AlgManipulation,gcd)):
+PartialFraction := noeval(ReadLibrary(AlgManipulation,PartialFraction)):
+LongInteger := noeval(ReadLibrary(LongInteger)):
+Complex := noeval(ReadLibrary(Complex)):
+Inherit := noeval(ReadLibrary(Inherit)):
+ExtendClass := noeval(ReadLibrary(Inherit,ExtendClass)):
+Protect := noeval(ReadLibrary(Inherit,Protect)):
+GetMethods := noeval(ReadLibrary(Inherit,GetMethods)):
+CompleteClass := noeval(ReadLibrary(Inherit,CompleteClass)):
+Introspection := noeval(ReadLibrary(Inherit,Introspection)):
+list_power := noeval(ReadLibrary(list_power)):
+set_power := noeval(ReadLibrary(set_power)):
+GramSchmidt := noeval(ReadLibrary(GramSchmidt)):
+GivensElim := noeval(ReadLibrary(GivensElim)):
+gigahertz := noeval(ReadLibrary(gigahertz)):
+LSBestSum := noeval(ReadLibrary(LSBestSum)):
+LSBestDelete := noeval(ReadLibrary(LSBestSum,LSBestDelete)):
+LSBestSumDelete := noeval(ReadLibrary(LSBestSum,LSBestSumDelete)):
+ContinuedFraction := noeval(ReadLibrary(ContinuedFraction)):
+
+# *** ADDED FROM CH.K, 3.8.98 ***
+MSAMethod := noeval(ReadLibrary(MSAParameters, MSAMethod)):
+MSAStatistics := noeval(ReadLibrary(MSAParameters, MSAStatistics)):
+MSA_CT := noeval(ReadLibrary(MSA_CT)):
+Gap := noeval(ReadLibrary(GapH, Gap)):
+GapHeuristic := noeval(ReadLibrary(GapH, GapHeuristic)):
+DoGapHeuristic := noeval(ReadLibrary(GapH, DoGapHeuristic)):
+TreeConstruction := noeval(ReadLibrary(TreeParameters, TreeConstruction)):
+rawprint := noeval(ReadLibrary(TreeParameters, rawprint)):
+TreeStatistics := noeval(ReadLibrary(TreeParameters, TreeStatistics)):
+Partitions := noeval(ReadLibrary(Partitions, Partitions)):
+ResolveConflicts := noeval(ReadLibrary(Partitions, ResolveConflicts)):
+GetConflicts := noeval(ReadLibrary(Partitions, GetConflicts)):
+GetTree := noeval(ReadLibrary(Tree, GetTree)):
+ChangeLeafLabels := noeval(ReadLibrary(Tree, ChangeLeafLabels)):
+GetPartitions := noeval(ReadLibrary(Partitions, GetPartitions)):
+#CreateRandMultAlign := noeval(ReadLibrary(RandomMSA, CreateRandMultAlign)):
+CreateRandMultAlign := noeval(ReadLibrary(RandomMSA)):
+LLL := noeval(ReadLibrary(LLL)):
+GapMatch := noeval(ReadLibrary(DynProgGap, GapMatch)):
+DynProgGap := noeval(ReadLibrary(DynProgGap, DynProgGap)):
+Roman := noeval(ReadLibrary(Roman)):
+Alphabetical := noeval(ReadLibrary(Roman,Alphabetical)):
+Alphanumerical := noeval(ReadLibrary(Roman,Alphanumerical)):
+Ordinal := noeval(ReadLibrary(Roman,Ordinal)):
+# ***
+
+Parsimony_merge_e := proc( x, y ) option builtin, internal; 241 end:
+Parsimony_cost_e := proc( x, y ) option builtin, internal; 242 end:
+compress := proc( x ) option builtin; 243 end:
+decompress := proc( x ) option builtin; 244 end:
+DynProgRowSpecial := proc( rf:array(list,2),
+	rf1:array(list,2), iSeq2:list, sco:list, C0:numeric,
+	C1:numeric, minscore:numeric ) option builtin; 245 end:
+ServerSocket_internal := proc( socket_path:string ) option builtin, internal; 246 end:
+ServerSocket := proc( socket_path:string; (gcf=10^10):posint ) 
+   Set(quiet=true); 
+   Set(batch=true);
+   Set(gc=gcf);
+   ServerSocket_internal( args );
+end:
+
+exit := proc(e:{0,posint}) option builtin; 247 end:
+
+FileStat := noeval(ReadLibrary(FileStat)):
+NormalizePath := noeval(ReadLibrary(FileStat, NormalizePath)):
+
+LinearClassify_X0 := proc( AX:list(numeric), wneg:numeric,
+	wpos:numeric, sb:posint, b:list, ind0:name )
+	option builtin; 259 end:
+DynProgScore := proc( seq1:{string,structure}, seq2:{string,structure},
+	dm:DayMatrix, modif:{string,structure,set({string,structure})} )
+	option builtin; 260 end:
+DynProgBoth := proc( seq1:string, seq2:string,
+	dm:DayMatrix, modif:{string,structure,set({string,structure})} )
+	option builtin; 269 end:
+TPIDistr := proc( m1:{0,posint}, m2:{0,posint}, m3:{0,posint}, m4:{0,posint} )
+	option builtin; 261 end:
+LinearClassification_DirOpt2 := proc( AX:list, Adx:list, wneg:numeric,
+	wpos:numeric, sb:posint, b:list(integer) ) option builtin; 262 end: 
+LinearClassification_DirOpt3 := proc( AX:list, Adx:list, wneg:numeric,
+	wpos:numeric, sb:posint, b:list(integer) ) option builtin; 263 end: 
+LinearClassification_DirOpt4 := proc( AX:list, Adx:list, wneg:numeric,
+	wpos:numeric, sb:posint, b:list(integer) ) option builtin; 264 end: 
+ComputeTPI := noeval(ReadLibrary(ComputeTPI)):
+
+TotalAlign := proc( m:Match, DM:DayMatrix, goal:numeric ) option builtin;
+178 end:
+
+
+#from florida Marcel Turcotte
+ExpandFileName := noeval(ReadLibrary(MBA_Toolkit, ExpandFileName)):
+ReadFastaWithNames := noeval(ReadLibrary(MBA_Toolkit, ReadFastaWithNames)):
+WriteDarwinDb := noeval(ReadLibrary(MBA_Toolkit,WriteDarwinDb)):
+FastaToDarwinDb := noeval(ReadLibrary(MBA_Toolkit,FastaToDarwinDb)):
+
+# Stefan Zoller, Aug 2011
+ReadPhylip := noeval(ReadLibrary(MBA_Toolkit, ReadPhylip)):
+#codon stuff gmc Aug 2, 2001
+
+AToCodon := noeval(ReadLibrary(CodonTools, AToCodon)):
+IntToCodon := noeval(ReadLibrary(CodonTools, IntToCodon)):
+#CodonToInt := noeval(ReadLibrary(CodonTools, CodonToInt)):
+CIntToInt := noeval(ReadLibrary(CodonTools, CIntToInt)):
+CIntToA := noeval(ReadLibrary(CodonTools, CIntToA)):
+CodonToAAA := noeval(ReadLibrary(CodonTools, CodonToAAA)):
+CIntToAAA := noeval(ReadLibrary(CodonTools, CIntToAAA)):
+CodonToAmino := noeval(ReadLibrary(CodonTools, CodonToAmino)):
+CIntToAmino := noeval(ReadLibrary(CodonTools, CIntToAmino)):
+AltGenCode := noeval(ReadLibrary(CodonTools, AltGenCode)):
+CodonToCInt := noeval(ReadLibrary(CodonTools, CodonToCInt)):
+SetuptRNA := noeval(ReadLibrary(SetuptRNA)):
+NucToCode := noeval(ReadLibrary(CodonTools,NucToCode)):
+CodeToNuc := noeval(ReadLibrary(CodonTools,CodeToNuc)):
+CIntToCodon := noeval(ReadLibrary(CodonTools,CIntToCodon)):
+AToCInt := noeval(ReadLibrary(CodonTools,AToCInt)):
+IntToCInt := noeval(ReadLibrary(CodonTools,IntToCInt)):
+
+#dna stuff gmc Aug 5, 2002
+CheckDNA := noeval(ReadLibrary(DNATools, CheckDNA)):
+CreateDNAAlignFromProtein := noeval(ReadLibrary(DNATools, CreateDNAAlignFromProtein)):
+CreateUngappedSequence := noeval(ReadLibrary(DNATools, CreateUngappedSequence)):
+CreateProteinAlignFromDNA := noeval(ReadLibrary(DNATools, CreateProteinAlignFromDNA)):
+ConsistentGenome := noeval(ReadLibrary(ConsistentGenome, ConsistentGenome)):
+GenomeSummary := noeval(ReadLibrary(GenomeSummary, GenomeSummary)):
+
+#counting bases, SearchAllArray, PvR, Feb 20, 2003
+BaseCount := noeval(ReadLibrary(CodonCountsLib,BaseCount)):
+SearchAllArray := noeval(ReadLibrary(SearchAllArray)):
+#
+# Number of accepted point mutations, from:
+#  A Model of Evolutionary Change in Proteins by
+#  M.O. Dayhoff, R.M. Schwartz and B.C. Orcutt.
+Mutations1978 := [
+  [  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 30,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [109, 17,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [154,  0,532,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 33, 10,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 93,120, 50, 76,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [266,  0, 94,831,  0,422,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [579, 10,156,162, 10, 30,112,  0,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 21,103,226, 43, 10,243, 23, 10,  0,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 66, 30, 36, 13, 17,  8, 35,  0,  3,  0,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 95, 17, 37,  0,  0, 75, 15, 17, 40,253,  0,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 57,477,322, 85,  0,147,104, 60, 23, 43, 39,  0,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 29, 17,  0,  0,  0, 20,  7,  7,  0, 57,207, 90,  0,  0,  0,  0, 0, 0, 0, 0],
+  [ 20,  7,  7,  0,  0,  0,  0, 17, 20, 90,167,  0, 17,  0,  0,  0, 0, 0, 0, 0],
+  [345, 67, 27, 10, 10, 93, 40, 49, 50,  7, 43, 43,  4,  7,  0,  0, 0, 0, 0, 0],
+  [772,137,432, 98,117, 47, 86,450, 26, 20, 32,168, 20, 40,269,  0, 0, 0, 0, 0],
+  [590, 20,169, 57, 10, 37, 31, 50, 14,129, 52,200, 28, 10, 73,696, 0, 0, 0, 0],
+  [  0, 27,  3,  0,  0,  0,  0,  0,  3,  0, 13,  0,  0, 10,  0, 17, 0, 0, 0, 0],
+  [ 20,  3, 36,  0, 30,  0, 10,  0, 40, 13, 23, 10,  0,260,  0, 22,23, 6, 0, 0],
+  [365, 20, 13, 17, 33, 27, 37, 97, 30,661,303, 17, 77, 10, 50, 43,186,0,17,0]]:
+DBL_EPSILON := 2.2204460492503131*10^(-16):
+DBL_MAX := 1.7976931348623147*10^308:
+Pi := -0.32584135910528735661672e-06 + 3294199/1048576:
+# Matrix generated on Mon Nov  4 05:29:35 MET 1991
+# from sample with PAM from 6.4 to 100.0 extrapolated to 116.5
+# random vs random gives -0.62196 similarity
+NewLogPAM1 := [[ -94849167.5024, 4544331.5392, 3950895.7642, 5075559.2685,
+    10509486.6552, 7821215.6793, 9284867.4577, 10208268.6773,
+    4128730.4460, 2088402.6725, 3942030.3556, 5544102.9591,
+    7873192.1288, 2081786.9806, 8933017.3353, 25463979.0926,
+    12087687.9616, 938717.6754, 1816599.3219, 14779792.0604],
+   [ 3088606.9019, -79929382.8416, 4269239.6312, 1655233.1266,
+    1736199.9907, 13919517.8286, 3630902.6919, 2602718.2624,
+    6947846.1049, 926558.7304, 1807263.7386, 25753650.3430,
+    1710966.8045, 350093.8734, 2237195.6388, 4166759.1691,
+    3978330.3745, 3253232.5391, 2289634.0815, 1544649.7457],
+   [ 2290927.3283, 3642282.6431, -96451119.9812, 15734455.2696,
+    1516899.1156, 7178694.2982, 4353788.4775, 4771506.9422,
+    11545580.2546, 1102105.6247, 656762.2820, 8464648.9678,
+    1137719.5856, 878876.5516, 1538902.9216, 11023119.2471,
+    6900696.3646, 570925.9280, 2766153.3106, 743887.8388],
+   [ 3470266.3186, 1665119.6347, 18553031.1074, -81923956.4087,
+    276028.4793, 6226313.0607, 24312537.5194, 4134242.6743,
+    5282013.4703, 188341.4823, 131158.4714, 4149263.8609,
+    236419.6850, 223657.2420, 2479252.1442, 6226729.7105,
+    4557332.3643, 77176.2019, 1205027.7108, 179487.3608],
+   [ 2522064.2915, 613030.0599, 627791.7545, 96883.4602,
+    -46823529.9064, 216095.4307, 43613.4399, 489113.7805,
+    995254.8196, 447266.9547, 570876.9633, 71989.8710,
+    1127983.9013, 1033868.3428, 73686.9290, 2295153.6442,
+    1121976.9695, 928124.3635, 1279520.8909, 1884650.4311],
+   [ 3754699.1282, 9831786.5667, 5943340.3069, 4371725.9675,
+    432286.6396, -124298615.8968, 15604785.8586, 1690312.4338,
+    12104211.9812, 843586.2680, 2606859.1297, 12493678.3810,
+    5420375.2816, 755560.3559, 3509155.2648, 4707458.9403,
+    4148983.1610, 1264258.7211, 1249105.6978, 1313424.8190],
+   [ 6901386.7806, 3970842.3038, 5581002.8430, 26430905.7693,
+    135084.7585, 24161149.5137, -95466922.2113, 2105215.6424,
+    5809977.3792, 952630.9241, 906956.1549, 12697999.5654,
+    2157145.3021, 276111.1317, 3465447.4123, 5784171.0817,
+    4183806.0648, 556528.0589, 958942.6584, 2712747.7789],
+   [ 9555577.7381, 3584589.1700, 7702730.0356, 5660071.5590,
+    1907831.9028, 3295876.7633, 2651189.5986, -41190659.0280,
+    2465528.1371, 211987.5938, 491124.0624, 2569041.9933,
+    1091377.8601, 377442.8186, 2051441.8768, 8478517.4003,
+    1831897.2059, 1404167.8359, 688481.4858, 704639.7340],
+   [ 1236548.8172, 3061627.1303, 5963411.2455, 2313744.1798,
+    1242093.7478, 7551450.4635, 2341038.2998, 788859.8300,
+    -90660120.4886, 588718.8936, 732377.8326, 2803016.8479,
+    1554270.9098, 1775938.6189, 1066164.1001, 1921603.5205,
+    2153123.2181, 1046731.2440, 7786680.5888, 447060.1420],
+   [ 1543249.4441, 1007400.6166, 1404524.6535, 203558.3731,
+    1377254.0280, 1298525.5848, 947078.3419, 167350.6781,
+    1452563.4971, -105165666.0254, 18851556.4458, 1878072.3685,
+    22933389.7197, 5722207.3179, 885057.0022, 1172267.0207,
+    4582762.4974, 1465194.3072, 2107443.0141, 36788470.9311],
+   [ 4735652.4519, 3194396.0762, 1360668.4663, 230450.3133,
+    2857772.9813, 6523438.0370, 1465836.3636, 630298.4116,
+    2937651.7630, 30646803.3616, -70057672.5190, 2984548.3113,
+    41990207.1426, 19031758.3366, 3378475.8298, 2163507.1296,
+    3252921.6763, 4222106.5048, 4605829.1937, 16061545.5607],
+   [ 4152442.7343, 28380401.2191, 10933660.2953, 4545320.5538,
+    224682.4288, 19492242.5698, 12795198.0861, 2055600.4789,
+    7009763.0300, 1903543.4708, 1860763.2506, -100965731.1416,
+    4352426.8576, 470289.9972, 3370756.0739, 5565187.5825,
+    7473159.9932, 435422.0564, 1721791.4731, 1965467.6037],
+   [ 2286382.4161, 731049.8231, 569793.5322, 100415.9623,
+    1364979.9529, 3278887.3660, 842784.9318, 338585.4592,
+    1507058.1294, 9012481.4582, 10150470.6780, 1687551.9006,
+    -122250535.0004, 4432083.6764, 149239.9440, 1329648.9217,
+    2331130.0096, 1018524.1197, 1055358.4070, 3460802.9081],
+   [ 1080457.2558, 267339.5323, 786653.4267, 169775.6359,
+    2235948.9789, 816844.8685, 192794.4640, 209275.1254,
+    3077545.7446, 4018953.6882, 8222243.9644, 325885.2310,
+    7921022.2187, -66575606.6139, 385382.2694, 546638.3440,
+    1161001.0985, 9013061.4954, 23971713.5077, 2358959.7055],
+   [ 5187462.7012, 1911472.9004, 1541176.1992, 2105710.2259,
+    178308.7342, 4244812.5339, 2707418.9482, 1272656.4091,
+    2067217.2896, 695514.4604, 1633118.7637, 2613435.4097,
+    298430.9531, 431198.4966, -49432932.9748, 5421906.4901,
+    4429139.5737, 241454.6074, 844692.9784, 1353701.1962],
+   [ 19589024.4498, 4716201.0426, 14624307.2847, 7005959.9761,
+    7357387.8850, 7543487.9401, 5986417.6133, 6967894.9909,
+    4935777.6656, 1220369.0856, 1385431.3541, 5716023.1857,
+    3522293.1905, 810243.0773, 7182601.1733, -119150506.2689,
+    27955884.4072, 1515129.0644, 3323057.5421, 1912272.3447],
+   [ 9500142.4571, 4600394.6942, 9353282.5694, 5238641.4917,
+    3674482.3830, 6792469.0774, 4423823.2151, 1538094.8555,
+    5650163.6266, 4874076.4730, 2128142.1131, 7841854.7268,
+    6308924.7995, 1758118.7508, 5994451.2590, 28561010.8460,
+    -104950600.4902, 717314.3721, 1760999.6535, 10434752.8601],
+   [ 156259.3029, 796770.7189, 163898.4750, 18789.5071,
+    643787.3073, 438375.1885, 124634.2181, 249703.7416,
+    581770.0213, 330053.4075, 585032.7973, 96771.8284,
+    583827.0101, 2890759.2177, 69213.3028, 327849.0859,
+    151926.5032, -38106197.0662, 3439097.9644, 154814.9186],
+   [ 757720.7584, 1405152.5941, 1989805.1163, 735136.8110,
+    2223938.4753, 1085296.3624, 538123.5728, 306787.3482,
+    10844453.2596, 1189553.5260, 1599182.4235, 958866.6753,
+    1515835.2069, 19265390.3976, 606725.3087, 1801778.3322,
+    934592.7996, 8617547.7310, -65919093.5252, 1441395.6510],
+   [ 13040296.2262, 2005194.5764, 1131907.2743, 231618.9579,
+    6929075.4620, 2413923.3304, 3220089.1130, 664173.2866,
+    1317013.8687, 43924717.9500, 11796321.7380, 2315328.7151,
+    10514726.4429, 4010221.4303, 2056767.1888, 2193220.7099,
+    11714248.2474, 820580.2399, 3048964.0446, -100242523.5904]
+    ] / (2048*2048*2048):
+logPAM1 := NewLogPAM1:
+
+# Human mitochondrial DNA count matrix (based on very short PAM evolution)
+#  taken from 86 full mtDNA genomes (also used for Eve's tree)
+HumanMtDNA := [
+[438851,0,0,0,74,0,0,997,0,0,0,0,0,0,0,0,56.5,0,0,0],
+[0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[74,0,0,0,444246,0,0,16.5,0,0,0,0,0,0,0,0,1199,0,0,0],
+[0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[997,0,0,0,16.5,0,0,186126,0,0,0,0,0,0,0,0,4,0,0,0],
+[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0],
+[56.5,0,0,0,1199,0,0,4,0,0,0,0,0,0,0,0,350736,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]]:
+
+# RNA viruses.  Count matrix taken from 50 RNA viruses
+ViralRNA := [
+[72271,0,0,0,10471,0,0,14868.5,0,0,0,0,0,0,0,0,11546.5,0,0,0],
+[0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[10471,0,0,0,45021,0,0,6789,0,0,0,0,0,0,0,0,13742,0,0,0],
+[0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[14868.5,0,0,0,6789,0,0,57924,0,0,0,0,0,0,0,0,7237.5,0,0,0],
+[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0],
+[11546.5,0,0,0,13742,0,0,7237.5,0,0,0,0,0,0,0,0,73792,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]]:
+
+BacterialtRNA:=[
+[4641,0,0,0,139.5,0,0,1247.5,0,0,0,0,0,0,0,0,187.5,0,0,0],
+[0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[139.5,0,0,0,6175,0,0,157.5,0,0,0,0,0,0,0,0,911.5,0,0,0],
+[0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0,0,0],
+[1247.5,0,0,0,157.5,0,0,8287,0,0,0,0,0,0,0,0,151.5,0,0,0],
+[0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0],
+[187.5,0,0,0,911.5,0,0,151.5,0,0,0,0,0,0,0,0,5700,0,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,0],
+[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1]]:
+
+
+latex := noeval(ReadLibrary(LaTeXCTools, latex)):
+LaTeX := noeval(ReadLibrary(LaTeXCTools, LaTeX)):
+LaTeXC := noeval(ReadLibrary(LaTeXCTools, LaTeXC)):
+MAlign := noeval(ReadLibrary(MSA, MAlign)):
+MAlignment := noeval(ReadLibrary(MSA, MAlignment)):
+
+PartialOrder := noeval(ReadLibrary(PartialOrder)):
+PartialOrderMSA := noeval(ReadLibrary(PartialOrder, PartialOrderMSA)):
+PartialOrderMSA_MAlign := noeval(ReadLibrary(PartialOrder, PartialOrderMSA_MAlign)):
+SeqThread := noeval(ReadLibrary(PartialOrder, SeqThread)):
+DynProgBoth_PartOrd_G := noeval(ReadLibrary(DynProgBoth_PartOrd)):
+DynProgBoth_PartOrd_D := noeval(ReadLibrary(DynProgBoth_PartOrd_D)):
+
+# Codon Transition Matrices
+# Adrian Schneider, 2004
+# edited April 2005 and August 2006
+CreateCodonMatrices := noeval(ReadLibrary(CodonMatrix,CreateCodonMatrices)):
+CreateSynMatrices := noeval(ReadLibrary(CodonMatrix,CreateSynMatrices)):
+CodonPamToPam := noeval(ReadLibrary(CodonMatrix,CodonPamToPam)):
+PamToCodonPam := noeval(ReadLibrary(CodonMatrix,PamToCodonPam)):
+CodonAlign := noeval(ReadLibrary(CodonAlign,CodonAlign)):
+CodonDynProgStrings := noeval(ReadLibrary(CodonAlign,CodonDynProgStrings)):
+PrintCodonAlignment := noeval(ReadLibrary(CodonAlign,PrintCodonAlignment)):
+CodonMutate := noeval(ReadLibrary(CodonMutate,CodonMutate)):
+ScoreAlignment := noeval(ReadLibrary(CodonScore,ScoreAlignment)):
+EstimateSynPAM := noeval(ReadLibrary(CodonScore,EstimateSynPAM)):
+EstimateCodonPAM := noeval(ReadLibrary(CodonScore,EstimateCodonPAM)):
+EstimateNG86 := noeval(ReadLibrary(NeiGojobori,EstimateNG86)):
+EstimatePB93 := noeval(ReadLibrary(PamiloBianchi,EstimatePB93)):
+
+# Boostrapping trees, added by AS
+BootstrapTree := noeval(ReadLibrary(BootstrapTree,BootstrapTree)):
+ShowBootstrap := noeval(ReadLibrary(BootstrapTree,ShowBootstrap)):
+
+# Gene Ontologies, added by AS, Sept 2005
+GOdownload := noeval(ReadLibrary(Ontology,GOdownload)):
+GOdefinition := noeval(ReadLibrary(Ontology,GOdefinition)):
+GOname := noeval(ReadLibrary(Ontology,GOname)):
+GOsubclass := noeval(ReadLibrary(Ontology,GOsubclass)):
+GOsubclassR := noeval(ReadLibrary(Ontology,GOsubclassR)):
+GOsuperclassR := noeval(ReadLibrary(Ontology,GOsuperclassR)):
+GOsuperclass := noeval(ReadLibrary(Ontology,GOsuperclass)):
+GOnumber := noeval(ReadLibrary(Ontology,GOnumber)):
+
+# Rotate Trees, added by CD, Oct 2005
+RotateTree := noeval(ReadLibrary(RotateTree,RotateTree)):
+AllRootedTrees := noeval(ReadLibrary(RotateTree,AllRootedTrees)):
+AllTernaryRoots := noeval(ReadLibrary(RotateTree,AllTernaryRoots)):
+
+# SearchAllString, added by AR, Nov 2005
+SearchAllString := noeval(ReadLibrary(SearchAllString,SearchAllString)):
+HammingSearchAllString := noeval(ReadLibrary(SearchAllString,HammingSearchAllString)):
+
+# DNA <-> Protein tools, added by AR, Nov 2005
+CodonCount := noeval(ReadLibrary(Translate,CodonCount)):
+CodonUsage := noeval(ReadLibrary(Translate,CodonUsage)):
+Translate := noeval(ReadLibrary(Translate,Translate)):
+BackTranslate := noeval(ReadLibrary(Translate,BackTranslate)):
+ReplaceString := noeval(ReadLibrary(Translate,ReplaceString)):
+Transcribe := noeval(ReadLibrary(Translate,Transcribe)):
+BackTranscribe := noeval(ReadLibrary(Translate,BackTranscribe)):
+
+# Codon Bias Tools. Added by AR (Dec 2005 - April 2007)
+RSCU := noeval(ReadLibrary(CodonIndices,RSCU)):
+ComputeCAI := noeval(ReadLibrary(CodonIndices,ComputeCAI)):
+ComputeCAIVector := noeval(ReadLibrary(CodonIndices,ComputeCAIVector)):
+SetupRA := noeval(ReadLibrary(CodonIndices,SetupRA)):
+ComputeCarboneRA := noeval(ReadLibrary(CodonIndices,ComputeCarboneRA)):
+RelativeAdaptiveness := noeval(ReadLibrary(CodonIndices,RelativeAdaptiveness)):
+FindHighlyExpressedGenes := noeval(ReadLibrary(CodonIndices,FindHighlyExpressedGenes)):
+ComputeFop := noeval(ReadLibrary(CodonIndices,ComputeFop)):
+ComputeNEC := noeval(ReadLibrary(CodonIndices,ComputeNEC)):
+NucleotideContent := noeval(ReadLibrary(CodonIndices,NucleotideContent)):
+ComputeGC3syn := noeval(ReadLibrary(CodonIndices,ComputeGC3syn)):
+
+
+# Ancestor package, addded by AS, Dec 22, 2005
+ProbSeq := noeval(ReadLibrary(Ancestor,ProbSeq)):
+ProbAncestor := noeval(ReadLibrary(Ancestor,ProbAncestor)):
+PASfromMSA := noeval(ReadLibrary(Ancestor,PASfromMSA)):
+PASfromTree := noeval(ReadLibrary(Ancestor,PASfromTree)):
+PSDynProg := noeval(ReadLibrary(Ancestor,PSDynProg)):
+
+# Added by AR (Jan 2006)
+WriteData := noeval(ReadLibrary(ReadData,WriteData)):
+
+# Global variable functions by AS, Feb 2006
+Globals := noeval(ReadLibrary(Globals,Globals)):
+UnassignGlobals := noeval(ReadLibrary(Globals,UnassignGlobals)):
+
+# Webtools, added by AS, June 6, 2006
+ReadURL := noeval(ReadLibrary(WebTools,ReadURL)):
+DownloadURL := noeval(ReadLibrary(WebTools,DownloadURL)):
+
+# MST, added by CD, Dec 2006
+MST := noeval(ReadLibrary(Graph,MST)):
+
+# Center the "root" of unrooted trees.  AR, April 2007
+CenterTreeRoot := noeval(ReadLibrary(CenterTreeRoot,CenterTreeRoot)):
+TreeSize := noeval(ReadLibrary(CenterTreeRoot,TreeSize)):
+
+ReadLibrary('Wrappers/wrapperinit'):
+
+# Romberg, added by CD, Dec 2007
+Romberg := noeval(ReadLibrary(Integrate)):
+
+# UnionFind, added by AA, March 2008
+UnionFind := noeval(ReadLibrary(UnionFind)):
+
+# ConcatStrings, added by CD, May 2008
+ConcatStrings := noeval(ReadLibrary(ConcatStrings)):
+trim := noeval(ReadLibrary(StringManipulation, trim)):
+
+# RobinsonFoulds, added by AA, Jul 2008
+RobinsonFoulds := noeval(ReadLibrary(RobinsonFoulds)):
+IntraDistance := noeval(ReadLibrary(IntraDistance)):
+BipartiteSquared := noeval(ReadLibrary(BipartiteSquared)):
+
+EvolutionaryOptimization := noeval(ReadLibrary(EvolutionaryOptimization)):
+EvoMinimize := noeval(ReadLibrary(EvoMinimize)):
+ProbabilisticFA := noeval(ReadLibrary(ProbabilisticFA)):
+CompressedPFA := noeval(ReadLibrary(ProbabilisticFA,CompressedPFA)):
+SparsePFA := noeval(ReadLibrary(ProbabilisticFA,SparsePFA)):
+
+# RedoCompletion, added by CD, Aug 2008
+RedoCompletion := noeval(ReadLibrary(RedoCompletion)):
+
+# TaxonID - 5letter mapping
+SpeciesCode := noeval(ReadLibrary(TaxTools, SpeciesCode)):
+TaxonId := noeval(ReadLibrary(TaxTools, TaxonId)):
+UpdateSpeciesCode := noeval(ReadLibrary(TaxTools, UpdateSpeciesCode)):
+Tax2Five := noeval(ReadLibrary(TaxTools,Tax2Five)): # backward compatibility
+Five2Tax := noeval(ReadLibrary(TaxTools,Five2Tax)): # backward compatibility
+
+# PruneTree, added by AA, Jan 06, 2009
+PruneTree := noeval(ReadLibrary(Tree, PruneTree)):
+
+# ReconcileTree, added by AA, Jan 06, 2009
+ReconcileTree := noeval(ReadLibrary(Reconcile,ReconcileTree)):
+
+MLBranches := noeval(ReadLibrary(MLBranches)):
+
+# Rank, added by AA, Feb 18. 2009
+Rank := noeval(ReadLibrary(Rank, Rank)):
+# cor, added by AA, Feb 18 2009
+cor := noeval(ReadLibrary(Stat,cor)):
+
+# MySql wrapper, added by AA, May 13, 2009
+MySql := noeval(ReadLibrary(MySQL, MySql)):
+MySqlResult := noeval(ReadLibrary(MySQL, MySqlResult)):
+
+# BirthDeathTree, added by DD, May 26 2010
+BirthDeathTree := noeval(ReadLibrary(BirthDeathTree, BirthDeathTree)):
+ScaleTree := noeval(ReadLibrary(BirthDeathTree, ScaleTree)):
+ScaleTreeLength := noeval(ReadLibrary(BirthDeathTree, ScaleTreeLength)):
+AddDeviation := noeval(ReadLibrary(BirthDeathTree, AddDeviation)):
+
+LoadMatrixFile := noeval(ReadLibrary(LoadMatrixFile, LoadMatrixFile)):
+CreateCodonModelMatrices := noeval(ReadLibrary(YangModels, CreateCodonModelMatrices)):
+CreateParametricQMatrix := noeval(ReadLibrary(YangModels, CreateParametricQMatrix)):
+GammaRates := noeval(ReadLibrary(GammaRates)):
+
+CreateNucleotideMatrices := noeval(ReadLibrary(NucleotideMatrix, CreateNucleotideMatrices)):
+NucToNInt := noeval(ReadLibrary(NucleotideMatrix, NucToNInt)):
+NIntToNuc := noeval(ReadLibrary(NucleotideMatrix, NIntToNuc)):
+NucleotideMutate := noeval(ReadLibrary(NucleotideMatrix, NucleotideMutate)):
+
+WriteSeqXML := noeval(ReadLibrary(DBConverters, WriteSeqXML)):
+RenderTemplate := noeval(ReadLibrary(RenderTemplate, RenderTemplate)):
+
+Graph_XGMML := noeval(ReadLibrary(Graph,Graph_XGMML)):
+Tag := noeval(ReadLibrary(Tag,Tag)):
+TagNV := noeval(ReadLibrary(Tag,TagNV)):
+TagTable := noeval(ReadLibrary(Tag,TagTable)):
+
+# KHTest by Wang Bo, Dec 2011
+KHTest := noeval(ReadLibrary(KHTest, KHTest)):
+ReadFastaIntoMAlignment := noeval(ReadLibrary(KHTest, ReadFastaIntoMAlignment)):
+MLTopoTest := noeval(ReadLibrary(KHTest, MLTopoTest)):
+
+# Ancestral Recombination Graph
+ARG := noeval(ReadLibrary(AncestralRecombinationGraph)):
+RecombinationNode := noeval(ReadLibrary(AncestralRecombinationGraph, RecombinationNode)):
+CoalescentNode := noeval(ReadLibrary(AncestralRecombinationGraph, CoalescentNode)):
+LeafNode := noeval(ReadLibrary(AncestralRecombinationGraph, LeafNode)):
+GraphViz_ARG := noeval(ReadLibrary(AncestralRecombinationGraph, GraphViz_ARG)):
+
+# Scientific Databases
+SDB_Usage := noeval(ReadLibrary(SDB,SDB_Usage)):
+SDB_Store := noeval(ReadLibrary(SDB,SDB_Store)):
+SDB_StoreAttribute := noeval(ReadLibrary(SDB,SDB_StoreAttribute)):
+SDB_Retrieve := noeval(ReadLibrary(SDB,SDB_Retrieve)):
+SDB_RetrieveFile := noeval(ReadLibrary(SDB,SDB_RetrieveFile)):
+SDB_EraseFile := noeval(ReadLibrary(SDB,SDB_EraseFile)):
+SDB_Output := noeval(ReadLibrary(SDB,SDB_Output)):
+SDB_Flush := noeval(ReadLibrary(SDB,SDB_Flush)):
+
+MatchRegex := proc( pattern:string, txt:string) option builtin; 248 end:
+ZmqRequest := proc( endpoint:string, msg:string) option builtin; 249 end:
+
+TaxonomyEntry := noeval(ReadLibrary('Taxonomy',TaxonomyEntry)):
+TaxonomyDownload := noeval(ReadLibrary('Taxonomy',TaxonomyDownload)):
+json := noeval(ReadLibrary('json',json)):
+
+DetectRepeats := noeval(ReadLibrary(DetectRepeats,DetectRepeats)):
+DetectRepeatsInSeqs := noeval(ReadLibrary(DetectRepeats,DetectRepeatsInSeqs)):
+WriteTreks := noeval(ReadLibrary(DetectRepeats,WriteTreks)):
+

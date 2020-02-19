@@ -1,0 +1,184 @@
+#
+#
+#  Compute a multivariate linear regresion
+#	LinRegr( Y, X1, X2, ... ) -->  [a0,a1,a2,...]
+#
+#       where Y[i] ~ a0 + a1*X1[i] + a2*X2[i] + ...
+#	  approximated by least squares
+#	(leaves in SumSq the sum of the squares of the errors)
+#
+#				Gaston H. Gonnet
+#
+LinRegr := proc( y:array(numeric), x1:array(numeric) )
+  global SumSq;
+  description
+  'Computes a linear regression y = a1*x1 + a2*x2 + ... by least squares.';
+
+n := length(y);
+if length(x1) <> n then ERROR('non-matching dimensions') fi;
+for i from 3 to nargs do
+    if not type(args[i],array(numeric,n)) then
+	ERROR('invalid arguments') fi
+    od;
+X := NewArray(1..nargs);
+X[1] := NewArray(1..n,1);
+for i from 2 to nargs do X[i] := args[i] od;
+
+LHS := NewArray(1..nargs,1..nargs);
+RHS := NewArray(1..nargs);
+for i to nargs do
+    RHS[i] := y*X[i];
+    for j from i to nargs do
+	LHS[i,j] := LHS[j,i] := X[i]*X[j] od
+    od;
+
+a := gausselim(LHS,RHS);
+SumSq := y*y;
+for i to nargs do
+    SumSq := SumSq + a[i]*a[i]*LHS[i,i] - 2*a[i]*RHS[i];
+    for j from i+1 to nargs do
+	SumSq := SumSq + 2*a[i]*a[j]*LHS[i,j] od
+    od;
+
+a
+end:
+#
+#  ExponFit( y:array(numeric), x:array(numeric) ):
+#
+#  Compute a least squares fit of the type:
+#	y[i] ~ a + b * exp(c*x[i])
+#
+#  Output: the vector: [a,b,c,sumsq]
+#   where a,b and are the parameters of the approximation
+#   and sumsq is the sum of the squares of the errors of
+#   the approximation.
+#
+#                               Gaston H. Gonnet (Oct 1991)
+#
+ExponFit := proc( y:array(numeric), x:array(numeric) )
+  description
+  'Compute a least squares fit of the type y[i] ~ a + b * exp(c*x[i]).';
+
+if length(y) <> length(x) then ERROR('mismatched dimensions of y and x') fi;
+if length(y) < 3 then ERROR('not enough data points to approximate') fi;
+
+n := length(y);
+Sumy := sum(y);
+Sumy2 := y*y;
+x2 := copy(x);  xy := copy(x);
+for i to n do x2[i] := x[i]^2;  xy[i] := x[i]*y[i] od;
+e := NewArray(1..n);
+e2 := NewArray(1..n);
+maxx := 0;
+for i to n do if abs(x[i]) > maxx then maxx := abs(x[i]) fi od;
+ln(DBL_MAX)/4;
+limvals := [ -0.01, -0.03, -0.1, -0.3, -1, -3, -10, -",
+	      0.01, 0.03, 0.1, 0.3, 1, 3, 10, "] / maxx;
+eqvals := NewArray(1..length(limvals));
+for k to length(limvals) do
+    c := limvals[k];
+    Sumx2ey := 0;
+    for i to n do
+	e[i] := exp(c*x[i]);
+	e2[i] := "^2;
+	Sumx2ey := Sumx2ey + x2[i]*e[i]*y[i]
+	od;
+    Sume := sum(e);
+    Sumxe := x*e;
+    Sume2 := sum(e2);
+    Sumxey := xy*e;
+    Sumey := e*y;
+    Sumxe2 := x*e2;
+
+    eqvals[k] := Sumxey*Sume**2-Sumxey*Sume2*n-Sumxe*Sume*Sumey+
+	Sumxe*Sumy*Sume2+Sumxe2*Sumey*n-Sumxe2*Sumy*Sume;
+    if k>1 and (eqvals[k-1]*eqvals[k] <= 0 and
+		limvals[k-1]*limvals[k] > 0) then
+	loc := limvals[k-1];  hic := limvals[k];
+	signlo := eqvals[k-1];
+	break
+	fi
+    od:
+
+if loc='loc' then  ERROR('cannot find least squares point') fi;
+c := (hic+loc)/2;
+
+for k while abs(hic-loc) > 1000*DBL_EPSILON*abs(max(hic,loc)) do
+    Sumx2ey := 0;
+    for i to n do
+	e[i] := exp(c*x[i]);
+	e2[i] := "^2;
+	Sumx2ey := Sumx2ey + x2[i]*e[i]*y[i]
+	od;
+    Sume := sum(e);
+    Sumxe := x*e;
+    Sume2 := sum(e2);
+    Sumxey := xy*e;
+    Sumey := e*y;
+    Sumxe2 := x*e2;
+    fval := Sumxey*Sume**2-Sumxey*Sume2*n-Sumxe*Sume*Sumey+
+	Sumxe*Sumy*Sume2+Sumxe2*Sumey*n-Sumxe2*Sumy*Sume;
+    if fval=0 then break fi;
+    if fval*signlo > 0 then loc := c else hic := c fi;
+    if mod(k,10) < 5 then c := (loc+hic)/2;  next fi;
+
+    Sumx2e := x2*e;
+    Sumx2e2 := x2*e2;
+    incc := - fval /
+	(Sumx2ey*Sume**2+Sumxey*Sume*Sumxe-Sumx2ey*Sume2*n-
+	Sumxe2*Sumxey*n-Sumx2e*Sume*Sumey-Sumxe**2*Sumey+Sumx2e*Sumy*Sume2+
+	Sumxe2*Sumy*Sumxe+2*Sumey*n*Sumx2e2-2*Sumy*Sume*Sumx2e2);
+    c := c + incc;
+    if abs(incc) < 100*n*DBL_EPSILON*abs(c) then break fi;
+    if c < loc or c > hic then c := (loc+hic)/2 fi;
+    od:
+
+ a := (-Sume*Sumey+Sumy*Sume2)/(-Sume**2+Sume2*n);
+ b := -1/(-Sume**2+Sume2*n)*(-Sumey*n+Sumy*Sume);
+ [a,b,c,Sumy2-2*a*Sumy-2*b*Sumey+a**2*n+2*b*a*Sume+b**2*Sume2]
+end:
+
+
+ExponFit2 := proc (xy: array([numeric,numeric]), ab0: [numeric, numeric], 
+		   maxiter: posint)
+  description
+  'Compute the least squares fit of the type y[i] ~ exp (a + b * x[i])
+  starting from optional initial values ab0 and doing at most maxiter
+  (or infinite) Newton iterations. Returns [a, b, RMS].';
+
+  if nargs > 1 then
+    ab := copy (ab0)
+  else
+    # Estimate a, b by least squares on ln (y[i]) ~ a + b * x[i]
+    x := zip ((x->x[1])(xy)); sx := sum (x); sxx := x*x;
+    y := zip ((x->ln(x[2]))(xy)); sy := sum (y); sxy := x*y;
+    n := length (x); d := n * sxx - sx * sx;
+    ab := [sy * sxx - sx * sxy, n * sxy - sy * sx] / d
+  fi;
+  for i to If (nargs > 2, maxiter, DBL_MAX) do
+    f := 0;
+    gradient := NewArray (1..2);
+    Hessian := NewArray (1..2, 1..2);
+    for x in xy do
+      t1 := exp (ab[1] + x[1] * ab[2]);
+      t2 := t1 - x[2];
+      f := f + t2*t2;
+      t3 := t2 * t1;
+      gradient[1] := gradient[1] + t3;
+      gradient[2] := gradient[2] + t3 * x[1];
+      t4 := t1^2 + t3;
+      Hessian[1,1] := Hessian[1,1] + t4;
+      Hessian[1,2] := Hessian[1,2] + t4 * x[1];
+      Hessian[2,2] := Hessian[2,2] + t4 * x[1]^2
+    od;
+    Hessian[2,1] := Hessian[1,2];
+    dab := gausselim (Hessian, gradient);
+    ab := ab - dab;
+    if abs(dab[1]) < 100*DBL_EPSILON*abs(ab[1]) and
+      abs(dab[2]) < 100*DBL_EPSILON*abs(ab[2]) then break fi
+  od;
+  if nargs > 2 and i > maxiter then
+    ERROR ('Did not converge')
+  fi;
+  [ab[1], ab[2], f]
+end:

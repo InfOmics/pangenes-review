@@ -1,0 +1,149 @@
+#
+#  Functions which mimic algebraic manipulation on
+#   noeval'd expressions.  Names are taken from their Maple
+#   counterparts.
+#					Gaston H. Gonnet (June 1998)
+
+
+# has is now internal
+
+
+hastype := proc( s, t )
+if type(s,t) then true
+elif type(s,{string,numeric,Match,DayMatrix,database}) then false
+else for z in [op(s)] do if hastype(z,t) then return(true) fi od;
+     false fi
+end:
+
+
+indets := proc( s, t )
+if nargs=1 then return(indets(s,symbol))
+elif type(s,t) then r := {s}
+else r := {} fi;
+if type(s,{string,numeric,Match,DayMatrix,database}) then return(r) fi;
+for z in [op(s)] do r := r union indets(z,t) od;
+r
+end:
+
+
+algebraic_type := {numeric,symbol,plus(algebraic),power(algebraic),
+	times(algebraic),structure}:
+
+subs := proc( p, r )
+if nargs=0 then error('invalid arguments')
+elif nargs=1 then args[1]
+elif nargs > 2 then
+     t := args[nargs];
+     for s in [args[1..-2]] do t := subs(s,t) od;
+     t
+elif not type(p,equal) then error('substitution argument must be an equation')
+elif p[1]=r then p[2]
+elif type(r,{string,numeric,Match,DayMatrix,database}) then r
+elif not has(r,p[1]) then r
+else r2 := r;
+     if type(r,structure) and op(0,r)=p[1] then r2 := p[2](op(r)) fi;
+     for i to length(r) do
+	t := subs(p,r[i]);
+	# sequal is important due to uses of Protect
+	if not sequal(t,r[i]) then
+	     if sequal(r2,r) then r2 := copy(r) fi;
+	     r2[i] := t
+	fi
+     od;
+     r2
+fi
+end:
+
+
+coeff := proc( s:algebraic, v:symbol )
+if nargs <> 2 then error('invalid arguments')
+elif not has(s,v) then 0
+elif type(s,plus) then
+     t := NULL;
+     for z in s do
+	z := coeff(z,args[2..nargs]);
+	t2 := traperror(eval(z));
+        if t2 = lasterror then t2 := z fi;
+	if t2 <> 0 then t := t, t2 fi
+	od;
+     if t=NULL then 0 elif length([t])=1 then t else assemble(plus(t)) fi
+elif type(s,times) then
+     t := NULL;
+     pow := 0;
+     terms := [op(s)];
+     for i while i <= length(terms) do
+	 z := terms[i];
+	 if z=v then pow := pow+1
+	 elif type(z,times) then terms := [op(terms),op(z)];  next
+	 elif type(z,power) and type(op(2,z),integer) and op(1,z)=v then
+	      pow := pow+op(2,z)
+	 elif has(z,v) then error('unable to handle unexpanded expression')
+	 else t2 := traperror(eval(z));
+	      if t2=lasterror then t := t, z else t := t, t2 fi
+	      fi
+	 od;
+     if pow <> 1 or t=NULL then 0 elif
+     length([t])=1 then t
+     else assemble(times(t)) fi
+elif type(s,symbol) and s=v then 1
+else error(s,'is an invalid argument')
+     fi
+end:
+
+
+gcd := proc( a:integer, b:integer )
+if nargs=0 then 0
+elif nargs=1 then a
+elif nargs>2 then
+     r := gcd(a,b);
+     for z in [args[3..nargs]] do r := gcd(r,z) od;
+     r
+elif a<0 or b<0 then gcd(abs(a),abs(b))
+else if a<b then t1 := a;  t2 := b else t1 := b;  t2 := a fi;
+     while t1 > 0 do t3 := mod(t2,t1);  t2 := t1;  t1 := t3 od;
+     t2 fi
+end:
+
+
+PartialFraction := proc( r:numeric, eps:numeric )
+if nargs=1 then procname( r, 1.0e-5 )
+elif r<0 then t := procname( -r, eps );  [-t[1],t[2]]
+elif r*eps > 1 then [round(r),1]
+elif r < eps then [0,1]
+elif type(r,integer) then [r,1]
+else t2 := floor(r);
+     if r-t2 < eps then [t2,1]
+     else t := procname( 1/(r-t2), r^2*eps );
+	  [ t2*t[1]+t[2], t[1] ] fi
+     fi
+end:
+
+
+lcoeff := proc( s:algebraic )
+if nargs <> 1 then error('invalid arguments')
+elif type(s,{plus,times}) then lcoeff(op(1,s))
+elif type(s,numeric) then s
+else 1 fi
+end:
+
+
+#
+#  mselect function (similar to Maple's select)
+#   (select alone cannot be used as it clashes with assemble/disassemble)
+#
+#				Gaston H. Gonnet (May 1998)
+#
+mselect := proc( f, obj )
+if f=assigned then error('external mselect cannot handle assigned')
+elif type(obj,list) then
+     r := [];
+     for z in obj do if f(z,args[3..nargs]) then r := append(r,z) fi od
+elif type(obj,set) then
+     r := {};
+     for z in obj do if f(z,args[3..nargs]) then r := r union {z} fi od
+elif type(obj,structure) then
+     r := (op(0,obj))();
+     for z in obj do if f(z,args[3..nargs]) then r := append(r,z) fi od
+else error('not implemented yet') fi;
+r
+end:

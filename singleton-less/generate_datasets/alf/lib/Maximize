@@ -1,0 +1,148 @@
+# Purpose: Maximize a convex function x->f(x) using Brent's algorithm
+# Author:  Lukas Knecht
+# Created:  1 Jun 1992
+#
+MaximizeFunc := proc (f: procedure, r: numeric..numeric, tol)
+
+  gr := (sqrt (5) + 1) / 2 + 1;
+  x0 := r[1];  y0 := -DBL_MAX;
+  x1 := r[1] + (r[2] - r[1]) / gr;  y1 := f (x1);
+  x2 := r[2] - (r[2] - r[1]) / gr;  y2 := f (x2);
+  x3 := r[2];  y3 := -DBL_MAX;
+  t := If (nargs > 2, tol, 0);
+  while x1 < x2-t do
+    if y2 > y1 or y2 = y1 and y3 > y0 then
+      losty := y0;
+      x0 := x1;  y0 := y1;
+      x1 := x2;  y1 := y2;
+      x2 := x3 - (x1 - x0);  y2 := f (x2)
+    else
+      losty := y3;
+      x3 := x2;  y3 := y2;
+      x2 := x1;  y2 := y1;
+      x1 := x0 + (x3 - x2);  y1 := f (x1)
+    fi;
+    if printlevel > 3 then
+      lprint ('  Maximize: x =', If (y1 > y2, x1, x2), '  y =', max (y1, y2))
+    fi;
+    if min (y1, y2) < losty then
+      error (sprintf ('Concavity detected between %g and %g', x1, x2))
+    fi
+  od;
+  if y1 > y2 then
+    [x1, y1]
+  else
+    [x2, y2]
+  fi
+end:
+
+
+#
+#
+# MaximizeRD - maximize a function using random directions
+#
+#	The method of random directions is an iterative
+#	maximization procedure that proceeds from point
+#	point along a random direction.  If along the
+#	direction, the functional improves, a new point
+#	is chosen.
+#
+#	Input:
+#	
+#	ini:  Initial solution (this is an arbitrary type,
+#		not defined by this function, but which is
+#		the accepted by the functional and it has
+#		to be linear)
+#
+#	f:    Function to be optimized.  It takes a single
+#		argument of type(ini) and it returns a numerical
+#		value.  f(ini) is the initial value.  The function
+#		f does not need to be continuous.  It is common to
+#		have f returning -DBL_MAX when the argument is out
+#		of the valid range.
+#
+#	ran:  A procedure which returns an object of type(ini) and
+#		provides a random direction in the space of the
+#		arguments.  ran is called with an argument which
+#		is the most recent optimal point.  This is useful
+#		when the generation of the random direction requires
+#		information about the point.  Let
+#
+#		d := ran( pt );
+#		f( pt + h*d ) are the points that will be explored,
+#		   that is starting from pt following the direction
+#		   d.  It is clear that pt + h*d has to be computable
+#		   or in other words (h is numeric) that type(ini)
+#		   is an object which accepts linear operations.
+#		   (type(ini) could be numerical, list(numerical),
+#		   matrix(numerical) or anything which accepts
+#		   addition of similar objects and multiplication by
+#		   numerical constants).
+#
+#	MaxHours:  (Optional, default 1) maximum number of hours
+#		that the optimization will run.
+#		
+#
+#			Gaston H. Gonnet (Nov 26th, 2007)
+#
+
+
+
+MaximizeRD := proc( ini, f:procedure, ran:procedure ;
+	(MaxHours=1):positive )
+parm1 := 1.50;  parm2 := 0.9653;  parm3 := 1.55;
+parm4 := 0.893;  parm5 := 6;  parm6 := 2.34;
+
+pts := [ini]:
+fs := [f(ini)];
+fevals := 1;
+maxb := ceil(ln(10000)/ln(parm6))+1;
+damp := [1,seq(0.01,i=2..maxb)]:
+b := CreateArray(1..maxb,1):
+for i from 2 to maxb do b[i] := max(b[i-1]+1,round(parm6^(i-1))) od:
+damp0 := 1;
+
+st := time();
+to 10000 while time()-st < MaxHours*3600 do
+    i := length(fs):
+
+    # try linear extrapolation of the points i-2^j
+    for j while i-b[j] > 0 do
+	d := damp[j] * (pts[i] - pts[i-b[j]]);
+	t1 := f( pts[i] + d );
+	fevals := fevals+1;
+	if t1 > fs[i] then
+	     pts := append(pts,pts[i]+d);
+	     fs := append(fs,t1);
+	     damp[j] := parm1*damp[j];
+	     break
+	else damp[j] := max(1e-6,damp[j]*parm2)
+	fi
+    od:
+    if damp[1] > 2 and Rand() < 0.1 then damp[1] := 2 fi;
+
+    # no success, try random direction
+    to parm5 while i = length(fs) do
+	d := damp0*ran(pts[i]);
+	t1 := f(pts[i]+d);
+	fevals := fevals+1;
+	if t1 > fs[i] then
+	     pts := append(pts,pts[i]+d);
+	     fs := append(fs,t1);
+	     damp0 := parm3*damp0
+	else t2 := f(pts[i]-d);
+	     fevals := fevals+1;
+	     if t2 > fs[i] then
+		  pts := append(pts,pts[i]-d);
+		  fs := append(fs,t2);
+		  damp0 := parm3*damp0
+	     else damp0 := damp0*parm4
+	     fi
+	fi
+    od:
+    if printlevel > 3 then
+	printf( 'MaximizeRD: %d pts, %d evals, func improv: %.g\n',
+	   length(fs), fevals, fs[-1]-fs[1] ) fi;
+od:
+pts[-1]
+end:

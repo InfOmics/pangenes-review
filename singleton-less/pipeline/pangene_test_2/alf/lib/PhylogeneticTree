@@ -1,0 +1,1898 @@
+#
+#   PhylogeneticTree: Interface to phylogenetic tree construction
+#		functions.
+#
+#					Gaston H. Gonnet (Dec 17, 2001)
+#							 (Jan 16, 2003)
+
+
+
+
+module external PhylogeneticTree;
+
+PhylogeneticTree := proc( Seqs:list, Ids:{procedure,list} ;
+	(Mode=Distance):symbol, allall:matrix({0,Alignment}),
+	(IniTree=OptInsertion):{'NJRandom','CircularTour','NeighJoin',
+                'DynProgr','OptInsertion','Random','LowerBound',
+                'EvoOpt', 'SemiOptInsertion',Tree,DynProgr(posint),
+                SemiOptInsertion(positive)},
+	msa:MAlignment )
+global MST_Qual, DimensionlessFit, printlevel;
+
+n := length(Seqs);
+if nargs >= 3 then
+     if not member(uppercase(Mode),{DISTANCE,PARSIMONY,LIKELIHOOD,LINEAGE,
+	STRICTCHARACTERCOMPATIBILITY}) then
+	  error(Mode,'is an invalid mode') fi;
+     fi;
+
+if type(Ids,list) then
+     if length(Ids) <> n then
+	  error('Seqs and Ids do not have the same length') fi;
+     Ids2 := Ids
+else Ids2 := [];
+     for z in Seqs do Ids2 := append(Ids2,Ids(z)) od
+     fi;
+
+if uppercase(Mode)=DISTANCE then
+     if not assigned(DMS) then CreateDayMatrices() fi;
+     if DM['Mapping']=AToInt then Seqs2 := zip( Sequence(Seqs) )
+     else Seqs2 := Seqs fi;
+
+     dist := CreateArray(1..n,1..n);
+     var := CreateArray(1..n,1..n);
+     st1 := st := time();  nal := 0;
+     for i1 to n do for i2 from i1+1 to n do
+	 if assigned(allall) then al := allall[i1,i2]
+         else al := Align(Seqs2[i1],Seqs2[i2],DMS,Local) fi;
+         dist[i1,i2] := dist[i2,i1] := al[PamDistance];
+         var[i1,i2] := var[i2,i1] := al[PamVariance];
+	 nal := nal+1;
+	 if printlevel > 4 and time()-st > 300 then
+	      printf( '... matched %d against %d, %.1f mins left\n',
+		i1, i2, (time()-st1)*(n*(n-1)/2/nal-1)/60 );
+	      st := time();
+	      fi;
+         od od;
+
+     # return the best of 10 trees and one try of RBFS_Tree
+     oldpr := printlevel;  printlevel := 0;
+     bestt := MinSquareTree( dist, var, Ids2, Trials=10 );
+     bestt := RBFS_Tree( bestt, dist, var );
+     printlevel := oldpr;
+     DimensionlessFit := bestt[1,1];
+     bestt[1,2]
+
+
+elif uppercase(Mode)=PARSIMONY then
+     if assigned(msa) then
+	  Seqs2 := msa['AlignedSeqs']
+     elif type(Seqs,list(string)) and length({ seq(length(z),z=Seqs) }) = 1 then
+	  Seqs2 := Seqs
+     else Seqs2 := zip( Sequence(Seqs) );
+	  if length( { op(zip( length(Seqs2) ))} ) > 1 then
+		msa := MAlign(Seqs,'circ');
+		Seqs2 := msa['AlignedSeqs'] fi
+	  fi;
+     Seqs3 := [op( {op(Seqs2)} )];	# remove duplicates
+     t := OptimizeTree( Seqs3, Parsimony, IniTree );
+     if IniTree = 'LowerBound' then return(t) fi;
+     MST_Qual := t[2];
+
+     # add exact duplicates that may have been removed from Seqs2 --> Seqs3
+     # add labels to the leaves
+     AddExactDuplicates( t[1], Seqs3, Seqs2, Ids2 )
+
+
+elif uppercase(Mode)=STRICTCHARACTERCOMPATIBILITY then
+     if not (type(Seqs,list(string)) and length({ seq(length(z),z=Seqs) }) = 1)
+	 then error('Seqs must be strings of characters of the same length') fi;
+     m := length(Seqs[1]);
+     t := { seq( length( {seq( z[j], z=Seqs )} ), j=1..m ) };
+     if t minus {1,2} <> {} then error('some characters are not binary') fi;
+     Seqs3 := [op( {op(Seqs)} )];	# remove duplicates
+     t := OptimizeTree( Seqs3, Parsimony, 'SemiOptInsertion' );
+
+     # The following test is not strictly correct, as it ignores characters
+     # which are uninformative
+     if t[2] > m then
+	 for i1 to m do for i2 from i1+1 to m do
+	     if length({ seq( [z[i1],z[i2]], z=Seqs3 ) }) > 3 then
+		error( 'characters', i1, i2, 'are incompatible') fi
+	 od od;
+	 error('Internal error: characters appear incompatible')
+     fi;
+     MST_Qual := t[2];
+     AddExactDuplicates( t[1], Seqs3, Seqs, Ids2 )
+
+
+elif uppercase(Mode)=LINEAGE then
+     if not type(Seqs,list(list)) then
+	  error('Seqs must be an array of lists of lineages')
+     elif min(seq( length(i), i=Seqs )) < 1 then
+	  error('lineages should not be empty lists')
+	  fi;
+     AppearsIn := table({});
+     for j to n do
+	  for i to length(Seqs[j]) do
+	      for w in AppearsIn[Seqs[j,i]] do
+		  if Seqs[w,1..i] <> Seqs[j,1..i] then
+			error( 'class', Seqs[j,i],
+			    'appears preceeded by different classes in', 
+			    Seqs[w], Seqs[j], Ids[w], Ids[j] ) fi
+		  od;
+	      AppearsIn[Seqs[j,i]] := AppearsIn[Seqs[j,i]] union {j}
+	      od
+	  od;
+     SpeciesTreeR( sort( [seq( [Seqs[i],Ids[i]], i=1..n )]), 1 )
+
+
+else error(Mode,'method not implemented yet') fi
+end:
+
+
+  AddExactDuplicates := proc( t:Tree, Seqs3:list(string), Seqs2:list(string),
+	Ids:list )
+  if op(0,t)=Leaf then
+       if type(t[1],integer) or length(t) >= 3 and type(t[3],integer) then
+	    j := If( type(t[1],integer), |t[1]|, |t[3]| );
+	    k := SearchAllArray( copy(Seqs3[j]), Seqs2 );
+	    if k=[] then error('internal inconsistency',Seqs3,Seqs2,j) fi;
+	    r := Leaf( Ids[k[1]], t[2], k[1], t[4..-1] );
+            for i from 2 to length(k) do
+		 r := Tree( r, t[2], Leaf( Ids[k[i]], t[2], k[i], t[4..-1] ) )
+		 od;
+            r
+       else t fi
+  else Tree( AddExactDuplicates(t[1],Seqs3,Seqs2,Ids), t[2],
+	     AddExactDuplicates(t[3],Seqs3,Seqs2,Ids) ) fi
+  end:
+
+
+  SpeciesTreeR := proc( l, lev )
+  if length(l)=0 then error('null tree')
+  elif length(l)=1 then Leaf(l[1,2],length(l[1,1])+1)
+  elif lev > min( seq(length(r[1]), r=l )) then
+       Tree( Leaf(l[1,2],length(l[1,1])+1), lev, procname( l[2..-1], lev ))
+  else card := { seq( r[1,lev], r=l ) };
+       if length(card)=1 then return( procname(l,lev+1) ) fi;
+       for hi from 2 while l[1,1,lev] = l[hi,1,lev] do od;
+       Tree( procname( l[1..hi-1], lev+1 ), lev, procname( l[hi..-1], lev ))
+       fi
+  end:
+
+end:
+
+#
+#        Unrooted Tree (n leaves) representation:
+#
+#        IntNodes[n-2,3]
+#                posint: internal node number (1..n-2)
+#                negint: leaf number (-1..-n)
+#
+#        IntValues[n-2,3] (parallel to IntNodes)
+#                Value associated with the subtree up to that internal node.
+#                   (type is optimization dependent)
+#                0 - when no value has been computed yet
+#
+#        Branches[n-2,3] (parallel to IntNodes)
+#                numeric: branch length
+#                    (this value is duplicated at both ends of the branch)
+#
+#
+#        An internal node is identified by an integer 1..n-2
+#
+#        An external node is identified by a negative integer -1..-n
+#                                                                             a
+#        A directed edge is identified by i,j, its entry in IntNodes         /
+#           For example, the subtree rooted at x with subtrees a,b      y---x
+#           is identified by x,j, where IntNodes[x,j] = y                    \
+#        A directed edge towards a leaf is identified by x,-j                 b
+#	    (for example, if y were a leaf, again with IntNodes[x,j] = y)
+#	 A directed edge is used to identify the subtrees.
+#
+#	 A duet or a cherry or a Y (a single pair) is sometimes identified
+#	    with an entry in IntNodes: [-a,-b,0], where a and b are the
+#	    indices of the leaves.
+#
+#                                        Gaston H. Gonnet (Dec 2nd, 2002)
+
+
+
+module external OptimizeTree;
+local currentcost, n, IntNodes, IntValues, Branches, Merge, Cost,
+	PreProcess, NJnodes, Seqs2, BranchesInSubtree;
+
+  R := remember;
+
+  ############################################################################
+  # Select the left subtree from a directed edge (return as a directed edge) #
+  ############################################################################
+  LeftNode := proc(i,j) ReverseEdge(i,op(j,[2,1,1])) end:
+
+
+  #############################################################################
+  # Select the right subtree from a directed edge (return as a directed edge) #
+  #############################################################################
+  RightNode := proc(i,j) ReverseEdge(i,op(j,[3,3,2])) end:
+
+
+  ##################################################################
+  # Reverse the edge (for a given edge point to the other subtree) #
+  ##################################################################
+  ReverseEdge := proc(i,j)
+  if j<0 then return(i,-j) fi;
+  k := IntNodes[i,j];
+  if k < 0 then i,-j
+  elif IntNodes[k,1]=i then k,1
+  elif IntNodes[k,2]=i then k,2
+  elif IntNodes[k,3]=i then k,3
+  else error(i,j,'inconsistent tree') fi
+  end:
+
+
+
+
+
+  #####################################################################
+  # Compute necessary IntValues for the subtree under a directed edge #
+  #####################################################################
+  ComputeValues := proc( i, j )
+  external IntValues;
+  if j<0 and IntNodes[i,-j] < 0 then Seqs2[-IntNodes[i,-j]]
+  elif IntValues[i,j] <> 0 then IntValues[i,j]
+  else IntValues[i,j] := R(Merge( ComputeValues(LeftNode(i,j)),
+          ComputeValues(RightNode(i,j)) )) fi
+  end:
+
+
+
+  #################################################
+  # Swap the subtrees given by the directed edges #
+  #################################################
+  #
+  #       \                         \
+  #        \             xi          \             yi
+  #      i1 o-j1------xj-o         i2 o-j2------yj-o
+  #        /                         /
+  #       /                         /
+  #
+  Swap := proc( i1, j1, i2, j2 )
+  external IntNodes;
+  if j1<0 then xi := i1;  xj := -j1;  b := IntNodes[xi,xj]
+  else xi := IntNodes[i1,j1];  xj := SearchArray(i1,IntNodes[xi]);  b := i1 fi;
+  if j2<0 then yi := i2;  yj := -j2;  c := IntNodes[yi,yj]
+  else yi := IntNodes[i2,j2];  yj := SearchArray(i2,IntNodes[yi]);  c := i2 fi;
+
+  IntNodes[xi,xj] := c;
+  IntNodes[yi,yj] := b;
+
+  if b > 0 then IntNodes[i1,j1] := yi fi;
+  if c > 0 then IntNodes[i2,j2] := xi fi;
+
+  EraseIntValues( xi, SearchArray(yi,IntNodes[xi]) );
+  EraseIntValues( yi, SearchArray(xi,IntNodes[yi]) );
+  if IntValues[xi] <> [0,0,0] or IntValues[yi] <> [0,0,0] then
+          error('should not happen') fi;
+
+  end:
+
+
+
+  ##############################
+  # Reconstruct a 5-optim tree #
+  ##############################
+  FiveRebuild := proc( ai,aj, bi,bj, ci,cj, di,dj, ei,ej, x, w, y )
+  global IntNodes;
+
+  newx := [ai,bi,w];
+  neww := [x,ci,y];
+  newy := [w,di,ei];
+
+  if aj < 0 then newx[1] := IntNodes[ai,-aj]
+  else IntNodes[ai,aj] := x fi;
+
+  if bj < 0 then newx[2] := IntNodes[bi,-bj]
+  else IntNodes[bi,bj] := x fi;
+
+  if cj < 0 then neww[2] := IntNodes[ci,-cj]
+  else IntNodes[ci,cj] := w fi;
+
+  if dj < 0 then newy[2] := IntNodes[di,-dj]
+  else IntNodes[di,dj] := y fi;
+
+  if ej < 0 then newy[3] := IntNodes[ei,-ej]
+  else IntNodes[ei,ej] := y fi;
+
+  IntNodes[x] := newx;
+  IntNodes[w] := neww;
+  IntNodes[y] := newy;
+
+  EraseIntValues( x,3 );  EraseIntValues( y,1 );
+  end:
+
+
+
+  ##############################
+  # Reconstruct a 6-optim tree #
+  ##############################
+  SixRebuild := proc( ai,aj, bi,bj, ci,cj, di,dj, ei,ej, fii,fj, w )
+  global IntNodes;
+
+  x := IntNodes[w,1];
+  v := IntNodes[w,2];
+  y := IntNodes[w,3];
+
+  newx := [ai,bi,w];
+  newv := [di,ci,w];
+  newy := [w,ei,fii];
+  neww := [x,v,y];
+
+  if aj < 0 then newx[1] := IntNodes[ai,-aj]
+  else IntNodes[ai,aj] := x fi;
+
+  if bj < 0 then newx[2] := IntNodes[bi,-bj]
+  else IntNodes[bi,bj] := x fi;
+
+  if cj < 0 then newv[2] := IntNodes[ci,-cj]
+  else IntNodes[ci,cj] := v fi;
+
+  if dj < 0 then newv[1] := IntNodes[di,-dj]
+  else IntNodes[di,dj] := v fi;
+
+  if ej < 0 then newy[2] := IntNodes[ei,-ej]
+  else IntNodes[ei,ej] := y fi;
+
+  if fj < 0 then newy[3] := IntNodes[fii,-fj]
+  else IntNodes[fii,fj] := y fi;
+
+  IntNodes[x] := newx;
+  IntNodes[v] := newv;
+  IntNodes[y] := newy;
+  IntNodes[w] := neww;
+
+  EraseIntValues( x,3 );   EraseIntValues( v,3 );  EraseIntValues( y,1 );
+  end:
+
+
+  ##################################################
+  # Erase all IntValues upwards of a directed edge #
+  ##################################################
+  EraseIntValues := proc( i, j )
+  global IntValues;
+  if j < 0 then
+	IntValues[i,-j] := 0;
+	for xj to 3 do if xj <> -j then EraseIntValues(i,xj) fi od;
+	return() fi;
+  IntValues[i,j] := 0;
+  xi := IntNodes[i,j];
+  if xi > 0 then for xj to 3 do if IntNodes[xi,xj] <> i then
+          EraseIntValues(xi,xj) fi od fi;
+  end:
+
+
+  ################################################
+  # Make a tree from the internal representation #
+  ################################################
+  MakeTree := proc( i, j, h )
+  if nargs=0 then
+       for k1 to n-2 do if member(n-2,IntNodes[k1]) then break fi od;
+       k2 := SearchArray(n-2,IntNodes[k1]);
+       h2 := Branches[k1,k2] / 2;
+       Tree( MakeTree(k1,k2,h2), 0,
+             MakeTree(n-2,SearchArray(k1,IntNodes[n-2]),h2) )
+  elif j<0 then Leaf(IntNodes[i,-j],h)
+  elif IntNodes[i,j] < 0 then Leaf(IntNodes[i,j],h)
+  else le := LeftNode(i,j);
+       ri := RightNode(i,j);
+       Tree( MakeTree(le,Branches[le[1],|le[2]|]+h), h,
+	     MakeTree(ri,Branches[ri[1],|ri[2]|]+h) ) fi
+  end:
+
+
+  ######################################
+  # Install a given tree into IntNodes #
+  ######################################
+  LastUsedIntNode := 0;
+  InstallTree := proc( t:Tree )
+  external IntNodes, LastUsedIntNode;
+       # The initial tree should have as leaves integers from 1..n or
+       #  the sequences
+  if op(0,t)=Leaf then
+	if type(t[1],posint) and t[1] <= n then return( -t[1] )
+	elif not type(t[1],string) then error(t,'invalid Leaf') fi;
+	i1 := SearchArray( t[1], Seqs2 );
+	if i1<1 then error(t[1],'Leaf sequence not found in sequences') fi;
+	-i1
+  else	i1 := InstallTree( t[1] );
+	i2 := InstallTree( t[3] );
+	LastUsedIntNode := LastUsedIntNode+1;
+	if LastUsedIntNode > n then error('InitialTree has too many nodes') fi;
+	IntNodes[LastUsedIntNode,1] := i1;
+	IntNodes[LastUsedIntNode,2] := i2;
+	if i1>0 then IntNodes[i1,3] := LastUsedIntNode fi;
+	if i2>0 then IntNodes[i2,3] := LastUsedIntNode fi;
+	LastUsedIntNode
+	fi
+  end:
+
+
+  ###########################################
+  ###########################################
+  # Evolutionary Optimization for Parsimony #
+  ###########################################
+  ###########################################
+  NJRandom_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, NJRandom );  [r[2],r] end:
+  CircularTour_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, CircularTour );  [r[2],r] end:
+  NeighJoin_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, NeighJoin );  [r[2],r] end:
+  DynProgr_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, DynProgr );  [r[2],r] end:
+  OptInsertion_Constr := proc()  # do not repeat
+	global OptInsertion_Constr_used;
+	if OptInsertion_Constr_used = true then return(FAIL) fi;
+	OptInsertion_Constr_used := true;
+	r := OptimizeTree( Seqs2, Parsimony, OptInsertion );  [r[2],r] end:
+  Random_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, Random );  [r[2],r] end:
+  SemiOptInsertion_Constr := proc() 
+	r := OptimizeTree( Seqs2, Parsimony, SemiOptInsertion );  [r[2],r] end:
+
+  EvoOpt_Parsimony := proc()
+	global OptInsertion_Constr_used;
+
+  ToMinimize := proc( a:[numeric,[Tree,integer]] ) a[1] end:
+  # as long as we do not Mutate or Merge, there is no point in
+  # finding similar topologies.
+  OptInsertion_Constr_used := false;
+  sols := EvolutionaryOptimization(
+        [ NJRandom_Constr, CircularTour_Constr, NeighJoin_Constr,
+	  DynProgr_Constr, OptInsertion_Constr, Random_Constr,
+	  SemiOptInsertion_Constr ], [ ], [ ],
+        ToMinimize, MaxTime=3600, MaxIter=DBL_MAX, TimeExponent=1/2,
+        PopulationSize=30, IniPopulation={}, MaxNoImprov=10 ):
+
+  sols[1,2]
+  end:
+
+
+  ###############################
+  ###############################
+  #  Main optimization function #
+  ###############################
+  ###############################
+
+  OptimizeTree := proc(
+        Seqs:{list,MAlignment},
+        Method:symbol,
+        InitialTree:{Tree,string,structure}
+        )
+  external currentcost, n, IntNodes, IntValues, Branches, Merge, Cost,
+	PreProcess, LastUsedIntNode, Seqs2;
+
+  PreProcess := noeval(PreProcess);
+  PreProcess := eval( symbol( Method . '_preprocess' ));
+
+  if type(Seqs,MAlignment) then
+       Seqs2 := PreProcess(Seqs[AlignedSeqs])
+  elif type(Seqs,list(Parsimonious)) then Seqs2 := [Seqs,0]
+  else Seqs2 := PreProcess(Seqs) fi;
+  Seqs1 := Seqs2[2];  Seqs2 := Seqs2[1];
+
+  if Method = Parsimony and InitialTree = 'EvoOpt' then
+	return( EvoOpt_Parsimony() ) fi;
+
+  # unassign first to prevent warning messages
+  Merge := noeval(Merge);  Merge := eval( symbol( Method . '_merge' ));
+  Cost := noeval(Cost);  Cost := eval( symbol( Method . '_cost' ));
+
+  n := length(Seqs2);
+  if length({op(Seqs2)}) <> n then
+	error('Seqs are not unique, invalid arguments') fi;
+
+  # process trivial trees
+  if n <= 0 then error('tree has no sequences')
+  elif n=1 then return( [Leaf(-1,0),0] )
+  elif n=2 then
+	t := max( If(type(MinLen,positive),MinLen,0.1),
+		Cost(Seqs2[1],Seqs2[2])[2] );
+	return( [Tree(Leaf(-1,t/2),0,Leaf(-2,t/2)),t] )
+  elif n=3 then
+	ml := If(type(MinLen,positive),MinLen,0.1);
+	l1 := Cost(Seqs2[1],Merge(Seqs2[2],Seqs2[3]));
+	l2 := Cost(Seqs2[2],Merge(Seqs2[1],Seqs2[3]))[2];
+	l3 := Cost(Seqs2[3],Merge(Seqs2[1],Seqs2[2]))[2];
+	return( [Tree( Leaf(-1,l1[2]/2), 0, Tree( Leaf(-2,l1[2]/2+l2), l1[2]/2,
+		Leaf(-3,l1[2]/2+l3) )), l1[1]] )
+	fi;
+
+  remember('erase');
+  IntNodes := CreateArray( 1..n-2, 1..3 );
+  IntValues := CreateArray( 1..n-2, 1..3 );
+  Branches := CreateArray( 1..n-2, 1..3, 1 );
+
+
+  if nargs=2 or InitialTree='OptInsertion' then OptInsertion(DBL_MAX)
+
+  elif InitialTree = 'SemiOptInsertion' then OptInsertion(10)
+  elif type(InitialTree,SemiOptInsertion(positive)) then
+       OptInsertion(InitialTree[1])
+
+  elif member(InitialTree,{'NJRandom','CircularTour','NeighJoin','DynProgr'}) or
+	type(InitialTree,{Tree,DynProgr(posint)}) then
+       if type(InitialTree,Tree) then t := InitialTree
+       elif InitialTree='CircularTour' then t := GenericNJ( CircularTour)
+       elif InitialTree='NeighJoin' then t := GenericNJ( NeighJoin )
+       elif InitialTree='DynProgr' then t := DynamicProg( 10 )
+       elif type(InitialTree,DynProgr(posint)) then
+	    t := DynamicProg( InitialTree[1] )
+       else t := GenericNJ( NJRandom ) fi;
+       nl := 0;  for w in Leaves(t) do nl := nl+1 od;
+       if nl <> n then
+	    error(t,n,'InitialTree does not have the right number of nodes') fi;
+       LastUsedIntNode := 0;
+       i1 := InstallTree( t[1] );
+       i2 := InstallTree( t[3] );
+       IntNodes[i1,3] := i2;
+       IntNodes[i2,3] := i1;
+       if LastUsedIntNode <> n-2 then
+	    lprint( LastUsedIntNode, n-2 );
+	    error(t,n,'InitialTree does not have the right number of nodes') fi;
+
+  elif InitialTree='Random' then
+       # create a random tree to start
+       leaves := {seq(-i,i=1..n)};
+       for i to n-2 do
+           IntNodes[i,1] := leaves[ round(Rand()*length(leaves)+0.5) ];
+           leaves := leaves minus {IntNodes[i,1]};
+           if IntNodes[i,1] > 0 then IntNodes[IntNodes[i,1],3] := i fi;
+           IntNodes[i,2] := leaves[ round(Rand()*length(leaves)+0.5) ];
+           leaves := leaves minus {IntNodes[i,2]};
+           if IntNodes[i,2] > 0 then IntNodes[IntNodes[i,2],3] := i fi;
+           leaves := leaves union {i}
+           od;
+       if leaves[1] > 0 then IntNodes[leaves[1],3] := leaves[2] fi;
+       if leaves[2] > 0 then IntNodes[leaves[2],3] := leaves[1] fi;
+
+  elif InitialTree='LowerBound' then
+	LB0 := n-1;
+	m := length(Seqs1[1]);
+	difs := l -> length( {seq( [seq(w[k],k=l)], w=Seqs1 )} ) - 1:
+	to 10 do
+	    LB1 := 0;
+	    pos := Shuffle([seq(i,i=1..m)]);
+	    LB3 := difs(pos[1..1]);
+	    for i to m do
+	        for k from i+1 to m do
+		    LB4 := difs(pos[i..k]);
+		    LB5 := difs(pos[k..k]);
+		    if LB4 <= LB3+LB5 then
+		         LB1 := LB1+LB3;  i := k-1;  LB3 := LB5;  break
+		    else LB3 := LB4 fi
+	        od;
+	    od;
+	    LB0 := max(LB0,LB1);
+	od:
+	LB2 := 0;
+	for i to length(Seqs2[1,1]) do
+	    LB2 := LB2 + length( { seq( Seqs2[j,1,i], j=1..n ) } ) - 1 od;
+	return( max(LB0,LB2) )
+
+  else error(InitialTree,'invalid arguments') fi;
+
+
+  #  Main optimization loop  #
+  OptimizeTreeAtNode(1);
+  VerifyTree('at end of optimization loop');
+
+  # if the method is Parsimony, compute Branch lengths = Cost
+  if Method=Parsimony then
+	for w to n-2 do for j to 3 do Branches[w,j] := -1 od od;
+	for w to n-2 do for j to 3 do
+	    if Branches[w,j] > 0 then next
+	    elif IntNodes[w,j] < 0 then
+		 Branches[w,j] :=
+		     op(2,R(Cost( Seqs2[-IntNodes[w,j]], ComputeValues(w,j) )))
+	    else x := ReverseEdge(w,j);
+		 Branches[w,j] := Branches[x] :=
+			op(2,R(Cost( ComputeValues(x), ComputeValues(w,j) )))
+		 fi
+	    od od;
+	ml := If(type(MinLen,positive),MinLen,0.1);
+	for w to n-2 do for j to 3 do
+	    Branches[w,j] := max(ml,Branches[w,j]) od od;
+	fi;
+
+  [MakeTree(),currentcost]
+  end:
+
+
+  #####################################################
+  # Optimize the tree given by the internal node intn #
+  #####################################################
+  OptimizeTreeAtNode := proc( intn:posint, regraft:boolean )
+  external currentcost;
+
+  currentcost := -1;
+  intns := InternalNodesAt(intn);
+
+  improved := true;
+  while improved do
+	improved := false;
+
+	# 4-optim phase, go through all the internal edges
+	for i1 in intns while not improved do
+	    for j1 to 3 while not improved do if IntNodes[i1,j1] > i1 then
+		improved := FourOptim( i1, j1 );
+		fi od od;
+	if improved then
+	    if printlevel>4 then
+		printf( '4-optim cost improved to %g\n', currentcost ) fi;
+	     next fi;
+
+
+	# 5-optim phase
+	# Go through all the internal nodes (w) with at least two
+	#  neighbours which are also internal nodes
+	for w in intns while not improved do
+	    i := sum( If( IntNodes[w,j] > 0, 1, 0 ), j=1..3 );
+            if i >= 2 then
+		if i = 2 then
+		     improved := FiveOptim( w, If( IntNodes[w,1] < 0, 1,
+			If( IntNodes[w,2] < 0, 2, 3 )) )
+		else for j to 3 while not improved do
+		     improved := FiveOptim( w, j ) od
+		     fi
+		fi
+            od;
+	if improved then
+	    if printlevel>4 then
+		printf( '5-optim cost improved to %g\n', currentcost ) fi;
+	    next fi;
+
+
+	# 6-optim phase
+	# Go through all the internal nodes (w) with three neighbours
+	#  which are also internal nodes
+	for w in intns while not improved do
+            if IntNodes[w,1]>0 and IntNodes[w,2]>0 and IntNodes[w,3]>0 then
+		 improved := SixOptim( w )
+		 fi
+            od;
+	if improved then
+	    if printlevel>4 then
+		printf( '6-optim cost improved to %g\n', currentcost ) fi;
+	    next fi;
+	if length(intns) <= 5 or nargs=2 and not regraft then break fi;
+
+	# re-graft duet
+	# Attempt to place every duet in some other part of the tree
+	for w in intns do
+	    if IntNodes[w,1] < 0 and ( IntNodes[w,2] < 0 or IntNodes[w,3] < 0 )
+		or IntNodes[w,2] < 0 and IntNodes[w,3] < 0 then
+		if ReGraftDuet(w) then improved := true fi
+	    fi od;
+	if improved then next fi;
+
+	# re-graft leaf
+	# Attempt to place a leaf in some other part of the tree
+	for w in intns do for i to 3 do
+	    if IntNodes[w,i] < 0 and ReGraftLeaf(w,i) then improved := true fi
+	    od od;
+	if improved then next fi;
+
+	# re-graft subtrees
+	# Attempt to place every subtree in some other part of the tree
+	for w in intns do for i to 3 do
+	    if IntNodes[w,i] > w and ReGraftSubtree(w,i) then
+		improved := true fi
+	    od od;
+
+	od;
+  end:
+
+
+  #
+  # 4-optim phase
+  #
+  #        4-optim -- code to optimize a tree based on the 4-optim
+  #                strategy
+  #
+  # Four subtree case:
+  #
+  #   a                  c
+  #    \                /
+  #    1\              /4
+  #      \     3      /
+  #       o----------o
+  #      /x          y\
+  #    2/              \5
+  #    /                \
+  #   b                  d
+  #
+  #
+  # Go through all the internal edges, select the first one
+  FourOptim := proc( i1, j1 )
+  external currentcost;
+        x := i1,j1;
+        i2 := IntNodes[x];
+        j2 := SearchArray(i1,IntNodes[i2]);
+        y := i2,j2;
+
+        a := ComputeValues( LeftNode(x) );
+        b := ComputeValues( RightNode(x) );
+        c := ComputeValues( LeftNode(y) );
+        d := ComputeValues( RightNode(y) );
+        ab := ComputeValues( x );
+        cd := ComputeValues( y );
+
+        c1 := R(Cost( ab, cd ));
+        if currentcost <> c1[1] then
+             if currentcost = -1 then currentcost := c1[1]
+             else error(currentcost,c1,'cost of tree not maintained') fi fi;
+        c2 := R(Cost( R(Merge(a,c)), R(Merge(b,d)) ));
+        c3 := R(Cost( R(Merge(a,d)), R(Merge(b,c)) ));
+
+        if c2[1] < c1[1] and c2[1] <= c3[1] then
+             # change tree to be (a,c) -- (b,d),  swap b  <-->  c
+             Swap( RightNode(x), LeftNode(y) );
+             currentcost := c2[1];
+             return( true )
+        elif c3[1] < c1[1] then
+             # change tree to be (a,d) -- (b,c),  swap b  <-->  d
+             Swap( RightNode(x), RightNode(y) );
+             currentcost := c3[1];
+             return( true )
+        else # no change for this edge
+             return( false )
+             fi;
+
+  end:
+
+  #
+  # 5-optim phase
+  #
+  #
+  #   a              c              d
+  #    \             |             /
+  #    1\           4|            /6
+  #      \     3     |     5     /
+  #       o----------o----------o
+  #      /x          w          y\
+  #    2/                         \7
+  #    /                           \
+  #   b                             e
+  #
+  #
+  # Go through all the internal nodes (w) with two neighbours
+  #  which are also internal nodes
+
+  FiveOptim := proc( w, j )
+  external currentcost;
+
+             x := LeftNode(w,j);
+               a := ComputeValues(LeftNode(x));
+               b := ComputeValues(RightNode(x));
+             y := RightNode(w,j);
+               e := ComputeValues(LeftNode(y));
+               d := ComputeValues(RightNode(y));
+             c := ComputeValues(ReverseEdge(w,j));
+
+             # (a,b),c,(d,e)
+             ab := ComputeValues(x);
+             de := ComputeValues( y );
+             c1 := R(Cost( R(Merge(ab,c)), de ));
+             if c1[1] <> currentcost then
+                  error(currentcost,c1,'cost of the tree not maintained') fi;
+
+             # (a,b),e,(c,d)
+             cd := R(Merge(c,d));
+             c1 := R(Cost( R(Merge(ab,e)), cd ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),RightNode(x),LeftNode(y),
+                      ReverseEdge(w,j),RightNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,b),d,(c,e)
+             ce := R(Merge(c,e));
+             c1 := R(Cost( R(Merge(ab,d)), ce ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),RightNode(x),RightNode(y),
+                      ReverseEdge(w,j),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,c),e,(b,d)
+             ac := R(Merge(a,c));
+             bd := R(Merge(b,d));
+             c1 := R(Cost( R(Merge(ac,e)), bd ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),ReverseEdge(w,j),LeftNode(y),
+                      RightNode(x),RightNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,c),d,(b,e)
+             be := R(Merge(b,e));
+             c1 := R(Cost( R(Merge(ac,d)), be ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),ReverseEdge(w,j),RightNode(y),
+                      RightNode(x),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,c),b,(d,e)
+             c1 := R(Cost( R(Merge(ac,b)), de ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),ReverseEdge(w,j),RightNode(x),
+                      RightNode(y),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,d),e,(b,c)
+             ad := R(Merge(a,d));
+             bc := R(Merge(b,c));
+             c1 := R(Cost( R(Merge(ad,e)), bc ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),RightNode(y),LeftNode(y),
+                      RightNode(x),ReverseEdge(w,j),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,d),c,(b,e)
+             c1 := R(Cost( R(Merge(ad,c)), be ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),RightNode(y),ReverseEdge(w,j),
+                      RightNode(x),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,d),b,(c,e)
+             c1 := R(Cost( R(Merge(ad,b)), ce ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),RightNode(y),RightNode(x),
+                      ReverseEdge(w,j),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,e),d,(b,c)
+             ae := R(Merge(a,e));
+             c1 := R(Cost( R(Merge(ae,d)), bc ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),LeftNode(y),RightNode(y),
+                      RightNode(x),ReverseEdge(w,j),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,e),c,(b,d)
+             c1 := R(Cost( R(Merge(ae,c)), bd ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),LeftNode(y),ReverseEdge(w,j),
+                      RightNode(x),RightNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (a,e),b,(c,d)
+             c1 := R(Cost( R(Merge(ae,b)), cd ));
+             if c1[1] < currentcost then
+                  FiveRebuild(LeftNode(x),LeftNode(y),RightNode(x),
+                      ReverseEdge(w,j),RightNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (b,c),a,(d,e)
+             c1 := R(Cost( R(Merge(bc,a)), de ));
+             if c1[1] < currentcost then
+                  FiveRebuild(RightNode(x),ReverseEdge(w,j),LeftNode(x),
+                      RightNode(y),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (b,d),a,(c,e)
+             c1 := R(Cost( R(Merge(bd,a)), ce ));
+             if c1[1] < currentcost then
+                  FiveRebuild(RightNode(x),RightNode(y),LeftNode(x),
+                      ReverseEdge(w,j),LeftNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+             # (b,e),a,(c,d)
+             c1 := R(Cost( R(Merge(be,a)), cd ));
+             if c1[1] < currentcost then
+                  FiveRebuild(RightNode(x),LeftNode(y),LeftNode(x),
+                      ReverseEdge(w,j),RightNode(y),x[1],w,y[1]);
+                  currentcost := c1[1];  return( true ) fi;
+
+	false
+  end:
+
+
+  #
+  # 6-optim phase
+  #
+  #              c       d
+  #               \     /
+  #               5\   /6
+  #                 \ /
+  #   a              ov             e
+  #    \             |             /
+  #    1\           4|            /8
+  #      \     3     |     7     /
+  #       o----------o----------o
+  #      /x          w          y\
+  #    2/                         \9
+  #    /                           \
+  #   b                             f
+  #
+  #
+  # Go through all the internal nodes (w) with three neighbours
+  #  which are also internal nodes
+  #
+  #  (build with the aid of 6-optim.drw)
+
+  SixOptim := proc( w )
+  external currentcost;
+
+	x := ReverseEdge(w,1);
+	  a := ComputeValues(LeftNode(x));  b := ComputeValues(RightNode(x));
+	v := ReverseEdge(w,2);
+	  d := ComputeValues(LeftNode(v));  c := ComputeValues(RightNode(v));
+	y := ReverseEdge(w,3);
+	  f := ComputeValues(LeftNode(y));  e := ComputeValues(RightNode(y));
+
+        # (a,b),(c,d),(e,f)
+        ab := R(Merge(a,b));
+        cd := R(Merge(c,d));
+        ef := R(Merge(e,f));
+        c1 := R(Cost( R(Merge(ab,cd)), ef ));
+        if c1[1] <> currentcost then
+                error(currentcost,c1,'cost of the tree not maintained') fi;
+
+	# (a,c),(b,e),(d,f)
+	ac := R(Merge(a,c));
+	be := R(Merge(b,e));
+	df := R(Merge(d,f));
+	c1 := R(Cost( R(Merge(ac,be)), df ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),RightNode(v),RightNode(x),
+		    RightNode(y),LeftNode(v),LeftNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,c),(b,f),(d,e)
+	bf := R(Merge(b,f));
+	de := R(Merge(d,e));
+	c1 := R(Cost( R(Merge(ac,bf)), de ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),RightNode(v),RightNode(x),
+		    LeftNode(y),LeftNode(v),RightNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,d),(b,e),(c,f)
+	ad := R(Merge(a,d));
+	cf := R(Merge(c,f));
+	c1 := R(Cost( R(Merge(ad,be)), cf ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),LeftNode(v),RightNode(x),
+		    RightNode(y),RightNode(v),LeftNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,d),(b,f),(c,e)
+	ce := R(Merge(c,e));
+	c1 := R(Cost( R(Merge(ad,bf)), ce ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),LeftNode(v),RightNode(x),
+		    LeftNode(y),RightNode(v),RightNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,e),(b,c),(d,f)
+	ae := R(Merge(a,e));
+	bc := R(Merge(b,c));
+	c1 := R(Cost( R(Merge(ae,bc)), df ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),RightNode(y),RightNode(x),
+		    RightNode(v),LeftNode(v),LeftNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,e),(b,d),(c,f)
+	bd := R(Merge(b,d));
+	c1 := R(Cost( R(Merge(ae,bd)), cf ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),RightNode(y),RightNode(x),
+		    LeftNode(v),RightNode(v),LeftNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,f),(b,c),(d,e)
+	af := R(Merge(a,f));
+	c1 := R(Cost( R(Merge(af,bc)), de ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),LeftNode(y),RightNode(x),
+		    RightNode(v),LeftNode(v),RightNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+	# (a,f),(b,d),(c,e)
+	c1 := R(Cost( R(Merge(af,bd)), ce ));
+	if c1[1] < currentcost then
+		SixRebuild(LeftNode(x),LeftNode(y),RightNode(x),
+		    LeftNode(v),RightNode(v),RightNode(y),w);
+		currentcost := c1[1];  return(true) fi;
+
+
+  #   Alternatively, rebuild the 6 nodes with the following topology
+  #
+  #
+  #   a              oc        od           e
+  #    \             |         |           /
+  #    1\           4|        6|          /8
+  #      \     3     |    5    |    7    /
+  #       o----------o---------o--------o
+  #      /x          w                  y\
+  #    2/                                 \9
+  #    /                                   \
+  #   b                                     f
+  #
+  #  (code removed)
+	false
+  end:
+
+
+  #####################################################
+  # Re-graft every subtree into every possible branch #
+  #####################################################
+  ReGraftSubtree := proc( a:posint, ia:posint )
+  external currentcost, IntNodes, IntValues;
+  # o a1                    o b1
+  #  \          |          /
+  #   \         |         /
+  #    \        |        /
+  #     a-------|-------o b
+  #    /        |        \
+  #   /         |         \
+  #  /          |          \
+  # o a2                    o b2
+  #
+  b := IntNodes[a,ia];
+  ib := SearchArray(a,IntNodes[b]);
+  ia1 := op(ia,[2,1,1]);  ia2 := op(ia,[3,3,2]);
+  a1 := IntNodes[a,ia1];  a2 := IntNodes[a,ia2];
+  ib1 := op(ib,[2,1,1]);  ib2 := op(ib,[3,3,2]);
+  b1 := IntNodes[b,ib1];  b2 := IntNodes[b,ib2];
+  if a1<0 and a2<0 or b1<0 and b2<0 then return(false) fi;
+  EraseIntValues(a,ia);  EraseIntValues(b,ib);
+  sidea := InternalNodesAt(b,ib) minus {a};
+  sideb := InternalNodesAt(a,ia) minus {b};
+
+  # Reattach a1-a2 and b1-b2
+  if a1 > 0 then t1 := ReverseEdge(a,ia1);  IntNodes[t1] := a2 fi;
+  if a2 > 0 then t2 := ReverseEdge(a,ia2);  IntNodes[t2] := a1 fi;
+  if b1 > 0 then t3 := ReverseEdge(b,ib1);  IntNodes[t3] := b2 fi;
+  if b2 > 0 then t4 := ReverseEdge(b,ib2);  IntNodes[t4] := b1 fi;
+
+  # compute Merge values for every branch
+  branches := CreateArray(1..n-2,1..3);
+  for i in sidea union sideb do for j to 3 do if i > IntNodes[i,j] then
+	branches[i,j] := R(Merge(ComputeValues(i,j),
+		ComputeValues(ReverseEdge(i,j))))
+	fi od od;
+
+  # find a better cost
+  for ja in sidea do
+    for ka to 3 do if branches[ja,ka] <> 0 then
+      for jb in sideb do
+	for kb to 3 do if branches[jb,kb] <> 0 then
+	    c := Cost(branches[ja,ka],branches[jb,kb]);
+	    if c[1] < currentcost then
+		currentcost := c[1];
+		if printlevel>5 then
+		    printf( 'ReGraftSubtree: cost improved to %g\n',
+			currentcost ) fi;
+		#  ja                  jb
+		#   \                 /
+		#    \               /
+		#   a o-------------o b
+		#    /               \
+		#   /                 \
+		#  la                  lb
+		la := IntNodes[ja,ka];  lb := IntNodes[jb,kb];
+		IntNodes[a] := [ja,la,b];  IntNodes[b] := [jb,lb,a];
+		if la > 0 then IntNodes[ReverseEdge(ja,ka)] := a fi;
+		if lb > 0 then IntNodes[ReverseEdge(jb,kb)] := b fi;
+		IntNodes[ja,ka] := a;  IntNodes[jb,kb] := b;
+		EraseIntValues(a,3);  EraseIntValues(b,3);
+		return(true) fi
+	fi od od fi od od;
+
+  # Reattach a1,a2 to a and b1,b2 to be
+  if a1 > 0 then IntNodes[t1] := a fi;
+  if a2 > 0 then IntNodes[t2] := a fi;
+  if b1 > 0 then IntNodes[t3] := b fi;
+  if b2 > 0 then IntNodes[t4] := b fi;
+  EraseIntValues(a,ia);  EraseIntValues(b,ib);
+  false
+  end:
+
+
+  #####################################################
+  # Re-graft a duet in every possible internal branch #
+  #####################################################
+  ReGraftDuet := proc( a:posint )
+  external currentcost, IntNodes, IntValues;
+  #  [x]                   o b1
+  #    \        |         /
+  #     \       |        /
+  #      \  ia  |       /
+  #     a o-----|------o b
+  #      /      |       \
+  #     /       |        \
+  #    /        |         \
+  #  [y]                   o b2
+  #
+  if IntNodes[a,1] > 0 then ia := 1;  x := IntNodes[a,2];  y := IntNodes[a,3]
+  elif IntNodes[a,2] > 0 then ia := 2;  x := IntNodes[a,1];  y := IntNodes[a,3]
+  else ia := 3;  x := IntNodes[a,1];  y := IntNodes[a,2] fi;
+  EraseIntValues(a,ia);
+  b := IntNodes[a,ia];
+  ib := SearchArray(a,IntNodes[b]);
+  b1 := If( ib=1, IntNodes[b,2], IntNodes[b,1] );
+  b2 := If( ib=3, IntNodes[b,2], IntNodes[b,3] );
+  sideb := InternalNodesAt(a,ia) minus {b};
+
+  if b1 > 0 then ib1 := SearchArray(b,IntNodes[b1]);  IntNodes[b1,ib1] := b2 fi;
+  if b2 > 0 then ib2 := SearchArray(b,IntNodes[b2]);  IntNodes[b2,ib2] := b1 fi;
+
+  #    \
+  #     \             /
+  #    w o--j--------o z
+  #     /             \
+  #    /
+  xy := R(Merge(Seqs2[-x],Seqs2[-y]));
+  for w in sideb do
+    for j to 3 do if IntNodes[w,j] < w then
+	z := IntNodes[w,j];
+	vw := ComputeValues(w,j);
+	vz := ComputeValues(ReverseEdge(w,j));
+	if currentcost > R(Cost( xy, R(Merge(vw,vz)) ))[1] then
+	     #                 [x]
+	     #                  |
+	     #                  a---[y]
+	     #    \            /
+	     #     \          /
+	     #    w o--j-----o b
+	     #     /          \
+	     #    /            \
+	     #                  z
+	     currentcost := R(Cost( xy, R(Merge(vw,vz)) ))[1];
+	     if z > 0 then IntNodes[ReverseEdge(w,j)] := b fi;
+	     IntNodes[w,j] := b;  IntNodes[b,1] := w;
+	     IntNodes[b,2] := z;  IntNodes[b,3] := a;
+	     EraseIntValues(b,-3);
+	     IntValues[b,1] := IntValues[b,2] := IntValues[b,3] := 0;
+	     IntValues[a,1] := IntValues[a,2] := IntValues[a,3] := 0;
+	     IntNodes[a,ia] := b;
+	     if printlevel>5 then
+		printf( 'ReGraftDuet: cost improved to %g\n', currentcost ) fi;
+	     VerifyTree('ReGraftDuet after reducing cost');
+	     return(true);
+	     fi;
+	fi od od;
+
+  if b1 > 0 then IntNodes[b1,ib1] := b fi;
+  if b2 > 0 then IntNodes[b2,ib2] := b fi;
+  EraseIntValues(a,ia);
+  false
+  end:
+
+
+  #####################################################
+  # Re-graft a leaf in every possible internal branch #
+  #####################################################
+  ReGraftLeaf := proc( b:posint, ib:posint )
+  external currentcost, IntNodes, IntValues;
+  #                     o b1
+  #         |          /
+  #         |         /
+  # Leaf    |        /
+  # [a]-----|-------o b
+  #         |        \
+  #         |         \
+  #         |          \
+  #                     o b2
+  #
+  a := IntNodes[b,ib];
+  b1 := If( ib=1, IntNodes[b,2], IntNodes[b,1] );
+  b2 := If( ib=3, IntNodes[b,2], IntNodes[b,3] );
+  sideb := InternalNodesAt(b) minus {b};
+
+  EraseIntValues(b,-ib);
+  if b1 > 0 then ib1 := SearchArray(b,IntNodes[b1]);  IntNodes[b1,ib1] := b2 fi;
+  if b2 > 0 then ib2 := SearchArray(b,IntNodes[b2]);  IntNodes[b2,ib2] := b1 fi;
+
+  #    \
+  #     \             /
+  #    w o--j--------o z
+  #     /             \
+  #    /
+  va := ComputeValues(ReverseEdge(b,ib));
+  for w in sideb do for j to 3 do if IntNodes[w,j] < w then
+	z := IntNodes[w,j];
+	vw := ComputeValues(w,j);
+	vz := ComputeValues(ReverseEdge(w,j));
+	if currentcost > R(Cost( va, R(Merge(vw,vz)) ))[1] then
+	     #                 [a]
+	     #    \            /
+	     #     \          /
+	     #    w o--j-----o b
+	     #     /          \
+	     #    /            \
+	     #                  z
+	     currentcost := R(Cost( va, R(Merge(vw,vz)) ))[1];
+	     if z > 0 then IntNodes[ReverseEdge(w,j)] := b fi;
+	     IntNodes[w,j] := b;  IntNodes[b,1] := w;
+	     IntNodes[b,2] := z;  IntNodes[b,3] := a;
+	     EraseIntValues(b,-3);
+	     IntValues[b,1] := IntValues[b,2] := IntValues[b,3] := 0;
+	     if printlevel>5 then
+		printf( 'ReGraftLeaf: cost improved to %g\n', currentcost ) fi;
+	     return(true);
+	     fi;
+	fi od od;
+
+  if b1 > 0 then IntNodes[b1,ib1] := b fi;
+  if b2 > 0 then IntNodes[b2,ib2] := b fi;
+  EraseIntValues(b,-ib);
+  false
+  end:
+
+
+  #################################################
+  # set of internal nodes for subtree rooted at i #
+  #################################################
+  InternalNodesAt := proc( i:posint, j:integer )
+  if nargs=1 then {i} union procname(i,1) union procname(i,2) union procname(i,3)
+  else w := IntNodes[args];
+       if w<0 then {}
+       else r := {w};
+	    for k to 3 do
+		if IntNodes[w,k] <> i then r := r union procname(w,k) fi od;
+	    r fi
+       fi
+  end:
+
+  #######################################
+  # Generic Neighbour-Joining procedure #
+  #######################################
+  GenericNJ := proc( WhichToJoin )
+  global NJnodes;
+
+  parts := { seq( [Leaf(i,0),Seqs2[i]], i=1..length(Seqs2)) };
+  NJnodes := [];
+
+  while length(parts) > 4 do
+      n := length(parts);
+      # returns an EXPSEQ of pairs of parts to join
+      wtj := [WhichToJoin( parts )];
+      for i by 2 to length(wtj) while length(parts) > 4 do
+          t := [ Tree(wtj[i,1],0,wtj[i+1,1]), R(Merge( wtj[i,2], wtj[i+1,2] )) ];
+          parts := ( parts minus {wtj[i],wtj[i+1]} ) union {t}:
+	  od;
+      od:
+
+  # Find the best one out of the 4-tuple left
+  s := parts;
+  if length(s) <> 4 then error(length(s),'length must be 4') fi;
+  c1 := R(Cost( R(Merge(s[1,2],s[2,2])), R(Merge(s[3,2],s[4,2])) ));
+  c2 := R(Cost( R(Merge(s[1,2],s[3,2])), R(Merge(s[2,2],s[4,2])) ));
+  c3 := R(Cost( R(Merge(s[1,2],s[4,2])), R(Merge(s[2,2],s[3,2])) ));
+  if c1[1] <= c2[1] and c1[1] <= c3[1] then
+	t := Tree( Tree(s[1,1],0,s[2,1]), 0, Tree(s[3,1],0,s[4,1]) )
+  elif c2[1] <= c3[1] then
+	t := Tree( Tree(s[1,1],0,s[3,1]), 0, Tree(s[2,1],0,s[4,1]) )
+  else  t := Tree( Tree(s[1,1],0,s[4,1]), 0, Tree(s[2,1],0,s[3,1]) ) fi;
+
+  proc( t:Tree, lev )
+	t[2] := lev;
+	if not type(t,Leaf) then procname(t[1],lev+1);  procname(t[3],lev+1) fi
+  end( t, 0 );
+  t
+  end:
+
+
+  #############################################
+  # OptInsertion: Insert each leaf or subtree #
+  #	in its optimal place		      #
+  #############################################
+  OptInsertion := proc( maxtime )
+  external currentcost, IntNodes, IntValues, BranchesInSubtree;
+  BranchesInSubtree := CreateArray(1..n-2,{});
+  parts := {seq(-i,i=1..n)};
+  partsind := table();
+  ind := CreateArray(1..n);
+  CostMatrix := CreateArray(1..n,1..n);
+  for i to n do partsind[parts[i]] := i od;
+  ni := 0;
+  erasetime := 0;
+
+  # A duet will be represented with an internal node: [-a,-b,0]
+  while length(parts) > 1 do
+
+	st := time();
+	bestgraft := [[DBL_MAX]];
+	nn := length(parts);
+	if st > erasetime then remember('erase');  erasetime := st+300 fi;
+	for i to nn do ind[i] := partsind[parts[i]] od;
+
+	# this version maintains the CostMatrix from iteration to
+	# iteration.  The parts set will change, and the invalidated
+	# entries are made 0.  The indexing is done through the table
+	# partsind.
+	tot1 := tot2 := 0;
+	stopt := time()+maxtime;
+	for i in Shuffle([seq(i,i=1..nn)]) do
+	    ii := ind[i];
+	    for j from i+1 to nn do
+		jj := ind[j];
+	        if CostMatrix[ii,jj]=0 then
+		    if time() > stopt then tot2 := tot2+1;  next fi;
+		    tot1 := tot1+1;
+		    CostMatrix[ii,jj] := CostMatrix[jj,ii] :=
+			OptGraftTwoParts(parts[i],parts[j]) fi;
+		t := CostMatrix[ii,jj];
+		if t[1] < bestgraft[1,1] then bestgraft := [t];
+		elif t[1] = bestgraft[1,1] then bestgraft := append(bestgraft,t)
+		fi;
+		if bestgraft[1,1] <= 1 then break fi;
+	    od
+	od;
+	t := bestgraft[Rand(1..length(bestgraft))];
+	if printlevel > 5 then
+	     printf( '%d entries computed, %d (%.2f%%) blank, best=%a\n',
+		tot1, tot2, If( nn>1, 200*tot2/nn/(nn-1), 0), bestgraft ) fi;
+	if t[3,1]<0 then a := t[3];  b := t[2] else a := t[2];  b := t[3] fi;
+
+	if a[1]<0 and b[1]<0 then
+	     ni := ni+1;
+	     IntNodes[ni] := [a[1],b[1],0];
+	     IntValues[ni] := copy([0,0,0]);
+	     BranchesInSubtree[ni] := {[ComputeValues(ni,3),ni,3]};
+	     old := t[4];  new := {ni}
+
+	elif a[1]<0 and IntNodes[b[1],3]=0 then
+	     IntNodes[b[1],3] := a[1];
+	     IntValues[b[1]] := copy([0,0,0]);
+	     MakeBranchesInSubtree( b[1] );
+	     old := {a[1],b[1]};  new := {b[1]}
+
+	elif a[1]<0 then
+	     a := a[1];
+	     ni := ni+1;
+	     IntNodes[ni] := [a,b[1],IntNodes[op(b)]];
+	     IntValues[ni] := copy([0,0,0]);
+	     if IntNodes[op(b)] > 0 then IntNodes[ReverseEdge(op(b))] := ni fi;
+	     IntNodes[op(b)] := ni;
+	     for i to 3 do EraseIntValues(ni,i) od;
+	     OptimizeTreeAtNode( ni, false );
+	     MakeBranchesInSubtree( ni );
+	     old := t[4];  new := {ni}
+
+	elif IntNodes[a[1],3]=0 and IntNodes[b[1],3]=0 then
+	     a := a[1];  b := b[1];
+	     IntNodes[a,3] := b;  IntNodes[b,3] := a;
+	     for i to 2 do IntValues[a,i] := IntValues[b,i] := 0 od;
+	     OptimizeTreeAtNode( b, false );
+	     MakeBranchesInSubtree( b );
+	     old := t[4];  new := {b}
+
+	elif IntNodes[a[1],3]=0 or IntNodes[b[1],3]=0 then
+	     if IntNodes[a[1],3]=0 then a := a[1]
+	     else x := b[1];  b := a;  a := x fi;
+	     ni := ni+1;
+	     IntNodes[ni] := [a,b[1],IntNodes[op(b)]];
+	     IntValues[ni] := copy([0,0,0]);
+	     IntNodes[a,3] := ni;
+	     if IntNodes[op(b)] > 0 then IntNodes[ReverseEdge(op(b))] := ni fi;
+	     IntNodes[op(b)] := ni;
+	     for i to 3 do EraseIntValues(ni,i) od;
+	     IntValues[a,1] := IntValues[a,2] := 0;
+	     OptimizeTreeAtNode( ni, false );
+	     MakeBranchesInSubtree( ni );
+	     old := t[4];  new := {ni}
+
+	else ni := ni+2;
+	     IntNodes[ni-1] := [a[1],IntNodes[op(a)],ni];
+	     IntNodes[ni] := [b[1],IntNodes[op(b)],ni-1];
+	     IntValues[ni-1] := copy([0,0,0]);
+	     IntValues[ni] := copy([0,0,0]);
+	     if IntNodes[op(a)]>0 then IntNodes[ReverseEdge(op(a))] := ni-1 fi;
+	     if IntNodes[op(b)]>0 then IntNodes[ReverseEdge(op(b))] := ni fi;
+	     IntNodes[op(a)] := ni-1;
+	     IntNodes[op(b)] := ni;
+	     EraseIntValues(ni-1,3);
+	     EraseIntValues(ni,3);
+	     OptimizeTreeAtNode( ni, false );
+	     MakeBranchesInSubtree( ni );
+	     old := t[4];  new := {ni}
+	fi;
+	if printlevel > 5 then printf( 'old=%a, new=%a\n', old, new ) fi;
+	parts := (parts minus old) union new;
+	for z in old do
+	    j := partsind[z];
+	    for i to n do CostMatrix[i,j] := CostMatrix[j,i] := 0 od;
+	od;
+	if new <> {} then partsind[new[1]] := j fi;
+
+	if printlevel > 5 then
+	     printf( 'OptInsertion: %d min costs: %d, %d parts, |%d|=%g\n',
+		length(bestgraft), t[1], length(parts), ni,
+		(3+length(BranchesInSubtree[max(1,ni)]))/2 ) fi;
+	od;
+  remember('erase');
+  VerifyTree( 'at end of OptInsertion' );
+  end:
+
+  OptGraftTwoParts := proc( a:integer, b:integer )
+  lowest := [DBL_MAX];
+  for za in If( a<0, [[Seqs2[-a],a]], BranchesInSubtree[a] ) do
+    for zb in If( b<0, [[Seqs2[-b],b]], BranchesInSubtree[b] ) do
+	t := R(Cost(za[1],zb[1]))[2];
+	if t < lowest[1] then lowest := [t,za[2..-1],zb[2..-1],{a,b}] fi;
+	if lowest[1] <= 1 then return(lowest) fi;
+	od od;
+  lowest
+  end:
+
+  MakeBranchesInSubtree := proc( ni )
+  external BranchesInSubtree;
+  t := [];
+  for i in InternalNodesAt(ni) do for j to 3 do if IntNodes[i,j]<i then
+	t := append( t, [ R(Merge( ComputeValues(i,j),
+		ComputeValues(ReverseEdge(i,j)))), i, j ] )
+	fi od od;
+  if length({seq( i[1,2], i=t )}) <> 1 then
+	for i in t do
+	    printf( 'Parsimonious(...,%d), IntNodes[%d]=%a, j=%d\n',
+		i[1,2], i[2], IntNodes[i[2]], i[3] ) od;
+	error('should not happen') fi;
+  BranchesInSubtree[ni] := {op(t)}
+  end:
+
+
+  ########################################################
+  # CircularTour: neighbour joining algorithm based on   #
+  #  joining good neighbours in an optimal circular tour #
+  ########################################################
+  CircularTour := proc( parts:set )
+      # Shuffling parts does not alter the results in a detectable way (Aug/04)
+      n := length(parts);
+      Dist := CreateArray( 1..n, 1..n ):
+      for i to n do for j from i+1 to n do
+          Dist[i,j] := Dist[j,i] := R(Cost( parts[i,2], parts[j,2] ))[2];
+          od od:
+      # the following parameter has been optimized by extensive simulation
+      t := ComputeCubicTSP( Dist, 1 );
+      t := [op(t),t[1],t[2],t[3]];
+
+      # find best pair to invert
+      best := DBL_MAX;
+      for i to length(t)-3 do
+	  # The constant 4 is definitely better than lower values (Aug/04)
+          c := 4 * ( -(Dist[t[i],t[i+1]] + Dist[t[i+2],t[i+3]]) +
+		Dist[t[i],t[i+2]] + Dist[t[i+1],t[i+3]] ) + Dist[t[i+1],t[i+2]];
+          if c < best then best := c;  k := [t[i+1],t[i+2]]
+	  # grouping at most 5 or 1% of lowest cost gives same results faster
+	  elif c = best and c < 2 and length(k) < max(10,n*0.025) and
+		not member(t[i+1],k) and not member(t[i+2],k) then
+		k := append(k,t[i+1],t[i+2]) fi
+          od:
+      if printlevel > 5 then printf( 'CircularTour: %d parts, c=%g, %d pairs\n',
+	  n, best, length(k)/2 ) fi;
+
+      seq( parts[i], i=k )
+  end:
+
+
+  #####################################################
+  # NJRandom: neighbour joining on the best cost, but #
+  #  with some randomness			      #
+  #####################################################
+  NJRandom := proc( parts0:set )
+      best := DBL_MAX;
+      # Definitely benefits from shuffling the parts (Aug/04)
+      parts := Shuffle([op(parts0)]);
+      n := length(parts);
+      b := 1.8/ln(n);  # factor determined by extensive simulation
+      for i to n do
+	  for j from i+1 to n do
+	      if best < DBL_MAX and Rand() > b then next fi;
+	      c := R(Cost( parts[i,2], parts[j,2] ))[1];
+	      if c < best then best := c;   r := [i,j]
+	      # make batches of at most 5 (or 1%) with cost 1 or 2 (Aug/04)
+	      elif c=best and not member(i,r) and not member(j,r) and
+		   length(r) < max(10,n*0.02) and c <= 2 then
+		   r := append(r,i,j) fi
+	      od
+	  od;
+      if printlevel > 5 then
+	   printf( 'NJRandom: %d parts, c=%g, %d pairs\n',
+		n, best, length(r)/2 ) fi;
+      seq( parts[i], i=r )
+  end:
+
+
+  #################################################
+  # NeighJoin: neighbour joining on the best cost #
+  #################################################
+  NeighJoin := proc( parts:set )
+      best := DBL_MAX;
+      n := length(parts);
+      for i to n do
+	  for j from i+1 to n do
+	      c := R(Cost( parts[i,2], parts[j,2] ))[1];
+	      if c < best then best := c;   r := [i,j]
+	      elif c=best and not member(i,r) and not member(j,r) then
+		   r := append(r,i,j) fi
+	      od
+	  od;
+      if printlevel > 5 then
+	   printf( 'NeighJoin: %d parts, c=%g, %d pairs\n',
+		n, best, length(r)/2 ) fi;
+      seq( parts[i], i=r )
+  end:
+
+
+  #####################################
+  # Auxiliary functions for NJGeneric #
+  #####################################
+  BuildRoot := proc( s1, s2, s3, s4 )
+  global NJnodes;
+  t1 := R(Merge(s1,s2));
+  t2 := R(Merge(s3,s4));
+  NJnodes := append( NJnodes, [{s1,s2},t1], [{s3,s4},t2],
+        [{t1,t2},R(Merge(t1,t2))] );
+  NULL
+  end:
+
+  BuildTree := proc( s:{string,Parsimonious}, lev:numeric )
+  i := SearchArray( s, Seqs2 );
+  if i >= 1 then Leaf(i,lev)
+  else for i to length(NJnodes) while NJnodes[i,2] <> s do od;
+       if i > length(NJnodes) then error(s,'not found in nodes vector') fi;
+       Tree( BuildTree( NJnodes[i,1,1], lev+1 ), lev,
+             BuildTree( NJnodes[i,1,2], lev+1 ) )
+       fi
+  end:
+
+
+  ###########################################################
+  # DynamicProg: make tree with dynamic programming joining #
+  ###########################################################
+  DynamicProg := proc( dpn:posint ) -> Tree;
+  global NJnodes;
+  local x;
+
+  fromset := { [0,{op(Seqs2)}] };
+  mm := dpn*length(fromset[1,2])^2;
+  alltoset := [fromset]:
+
+  while length(fromset[1,2]) > 4 do
+    currsize := length(fromset[1,2]);
+    m := min( 450, round( mm/currsize^2 ));
+    minc := max(3,round(m/10));
+    toset := [];
+    mincost := DBL_MAX;
+    for k to length(fromset) do
+	s := fromset[k];
+        s2 := s[2];
+	if length(s2) <> currsize then error('inconsistent sizes') fi;
+        for i to length(s2) do for j from i+1 to length(s2) do
+	    cost := R(Cost( s2[i], s2[j] ))[1];
+
+	    if cost < mincost then
+		news2 := (s2 minus {s2[i],s2[j]}) union {R(Merge(s2[i],s2[j]))};
+		# if two subtrees coincide, ignore them, this is bad, but
+		# coding using lists is tooooo painful (i.e. backtracking)
+	        if length(news2) = currsize-1 then
+		    toset := append( toset, [ cost, news2] ) fi;
+	        if length(toset) > m+minc then
+		    toset := {op(toset)};
+		    if length(toset) > m then toset := [toset[1..m]]
+		    else toset := [op(toset)] fi
+		    fi;
+	        if length(toset) >= m then
+		    mincost := max( seq(x[1],x=toset) );
+		    fi
+	        fi;
+	    od od;
+        od:
+
+    fromset := {op(toset)};
+    alltoset := append(alltoset,fromset);
+
+    od:
+
+  # Find the best one out of all the 4-tuples left
+  n := length(alltoset);
+  fourset := alltoset[n]:
+  mincost := DBL_MAX;
+  backbest := CreateArray(1..n):
+  for s in fourset do
+	s2 := s[2];
+	if length(s2) <> 4 then error(length(s2),'length must be 4') fi;
+	c1 := R(Cost( R(Merge(s2[1],s2[2])), R(Merge(s2[3],s2[4])) ));
+	if c1[1] < mincost then mincost := c1[1];  backbest[n] := [s,1] fi;
+	c1 := R(Cost( R(Merge(s2[1],s2[3])), R(Merge(s2[2],s2[4])) ));
+	if c1[1] < mincost then mincost := c1[1];  backbest[n] := [s,2] fi;
+	c1 := R(Cost( R(Merge(s2[1],s2[4])), R(Merge(s2[2],s2[3])) ));
+	if c1[1] < mincost then mincost := c1[1];  backbest[n] := [s,3] fi;
+	od:
+
+  # do the backwards phase of dynamic programming
+  # Make nodes of the tree as we backtrack
+  NJnodes := CreateArray(1..length(alltoset)-1):
+  for n from n-1 by -1 to 1 do
+    goal := backbest[n+1,1];
+    for s in alltoset[n] do
+	if length( s[2] minus goal[2] ) = 2 and
+	   length( goal[2] minus s[2] ) = 1 then
+		t := [ s[2] minus goal[2], op(goal[2] minus s[2]) ];
+		if t[2] <> R(Merge(op(t[1]))) then next fi;
+		backbest[n] := [s];
+		NJnodes[n] := t;
+		break fi
+	od;
+    if backbest[n] = 0 then error('failed step in backwards dp') fi;
+    od:
+
+  # Finish root of the tree
+  last := backbest[length(backbest)]:
+  s2 := last[1,2]:
+  if last[2]=1 then BuildRoot( s2[1], s2[2], s2[3], s2[4] );
+  elif last[2]=2 then BuildRoot( s2[1], s2[3], s2[2], s2[4] );
+  elif last[2]=3 then BuildRoot( s2[1], s2[4], s2[3], s2[2] );
+  else error('should not happen') fi;
+
+  # test consistency of NJnodes vector
+  for i to length(NJnodes) do
+      z := NJnodes[i];
+      if z[2] <> R(Merge(op(z[1]))) then error(z,'failed consistency') fi
+      od:
+
+  BuildTree( NJnodes[length(NJnodes),2], 0 )
+  end:
+
+
+
+  ########################################################
+  # Verify consistency of the tree in IntNodes/IntValues #
+  ########################################################
+  VerifyTree := proc( calledfrom:string )
+  all := [ seq( op(i), i=IntNodes )];
+  if length(all) <> 3*n-6 then
+	error(args,all,'incorrect length of all nodes') fi;
+  all := sort(all);
+  for i to n do if all[i] <> i-1-n then
+	error(args,all[1..n],'leafs repeated or missing') fi od;
+  iall := {op(all[n+1..-1])};
+  if n <= 3 then return() fi;
+  if length(iall) <> n-2 then error(args,iall,'internal nodes missing') fi;
+  for i to n-2 do for j to 3 do if IntNodes[i,j] > 0 then
+	if not member(i,IntNodes[IntNodes[i,j]]) then
+	     error(args,i,j,IntNodes[i,j],IntNodes[IntNodes[i,j]],
+		'connection back missing') fi
+	fi od od;
+  for i to n-2 do for j to 3 do if IntValues[i,j] <> 0 then
+	l := LeftNode(i,j);
+	lv := If( l[2] < 0, Seqs2[-IntNodes[l[1],-l[2]]], IntValues[l] );
+	r := RightNode(i,j);
+	rv := If( r[2] < 0, Seqs2[-IntNodes[r[1],-r[2]]], IntValues[r] );
+	if IntValues[i,j] <> R(Merge(lv,rv)) then
+	   lprint( i, j );
+	   lprint( l, lv );
+	   lprint( r, rv );
+	   lprint( IntValues[i,j] );
+	   lprint( R(Merge(lv,rv)) );
+	   error(args, 'IntValues do not match' ) fi;
+	fi od od;
+  end:
+
+
+end:
+
+
+module external Parsimony_preprocess, Parsimony_cost, Parsimony_merge;
+###########################################################
+# Encoding of characters to provide a fast Cost and Merge #
+###########################################################
+local eK,	# maximum number of different characters
+      eN,	# = 2^eK-1, number of codes needed to encode subsets
+      eM,	# number of characters grouped together
+      eG,	# = eN^eM maximum number of grouped codes
+      eS,	# = ceil(m/eM), number of grouped codes per Sequence
+      eI,	# table (eG x eG) for intersection/union results
+      eE;	# table (eG x eG) for intersection/union number of errors
+
+
+# Pre-process sequences for doing parsimony trees
+Parsimony_preprocess := proc( Seqs:{list,MAlignment} )
+external eK, eN, eM, eG, eS, eI, eE, Parsimony_cost, Parsimony_merge,
+	Parsimony_eE, Parsimony_eI;
+option internal;
+if type(Seqs,MAlignment) then r := RemoveUnchanged(Seqs['AlignedSeqs'])
+elif not type(Seqs,list(string)) then error(Seqs,'invalid argument')
+else lens := zip(length(Seqs));
+     if length({op(lens)}) = 1 then r := RemoveUnchanged(Seqs)
+     else ma := MAlign(Seqs,'circ');
+	  r := RemoveUnchanged(ma['AlignedSeqs'])
+	  fi
+     fi;
+lr := length(r);
+if lr <= 1 then return([r,r]) fi;
+m := length(r[1]);
+Chars := CreateArray(1..m,{});
+for i to m do Chars[i] := { seq( r[j,i], j=1..lr )} od;
+eK := max( seq( length(i), i=Chars ));
+eN := 2^eK-1;
+
+# if it is too large, use the default set encoding
+if eN > 511 then
+     Parsimony_cost := noeval(Parsimony_cost);
+     Parsimony_merge := noeval(Parsimony_merge);
+     Parsimony_cost := op(Parsimony_cost_d);
+     Parsimony_merge := op(Parsimony_merge_d);
+     return([r,r]) fi;
+eM := floor( log(511.001)/log(eN) );
+eG := eN^eM;
+eS := ceil(m/eM);
+
+# Build one-character intersection/union tables
+I := CreateArray(1..eN,1..eN);
+E := CreateArray(1..eN,1..eN);
+bits1 := CreateArray(1..eK);
+bits2 := CreateArray(1..eK);
+for c1 to eN do
+    t := c1;
+    for i to eK do bits1[i] := mod(t,2);  t := (t-bits1[i])/2 od;
+    for c2 from c1 to eN do
+	t := c2;
+	for i to eK do bits2[i] := mod(t,2);  t := (t-bits2[i])/2 od;
+	t := sum( If( bits1[i]=1 and bits2[i]=1, 2^(i-1), 0 ), i=1..eK );
+	if t > 0 then I[c1,c2] := I[c2,c1] := t;  next fi;
+	t := sum( If( bits1[i]=1 or bits2[i]=1, 2^(i-1), 0 ), i=1..eK );
+	I[c1,c2] := I[c2,c1] := t;
+	E[c1,c2] := E[c2,c1] := 1;
+	od
+    od;
+
+# Build the eM-characters intersection/union tables
+if eM=1 then eI := I;  eE := E
+else eI := CreateArray(1..eG,1..eG,'');
+     eE := CreateArray(1..eG,1..eG,'');
+     for i1 to eG do for i2 from i1 to eG do
+	 t1 := i1-1;  t2 := i2-1;
+	 newI := newE := 0;
+	 for j to eM do
+	     r1 := mod(t1,eN);  r2 := mod(t2,eN);
+	     t1 := (t1-r1)/eN;  t2 := (t2-r2)/eN;
+	     newI := newI + (I[r1+1,r2+1]-1) * eN^(j-1);
+	     newE := newE + E[r1+1,r2+1]
+	     od;
+	 eI[i1,i2] := eI[i2,i1] := newI+1;
+	 eE[i1,i2] := eE[i2,i1] := newE
+	 od od
+     fi;
+if max(eI) <> eG or min(eI) <> 1 or min(eE) <> 0 or max(eE) <> eM then
+     error(min(eI),max(eI),min(eE),max(eE),'invalid matrices') fi;
+
+# Build the Seqs vector with Parsimonious objects
+newr := CreateArray(1..lr);
+for i to lr do
+    lst := [];
+    for j by eM to m do
+	t := 1;
+	for k from 0 to eM-1 do
+	    if j+k > m then break fi;
+	    t := (t-1)*eN + 2^(SearchArray(r[i,j+k],[op(Chars[j+k])])-1);
+	od;
+	lst := append(lst,t)
+    od;
+    newr[i] := Parsimonious(lst,0)
+od;
+Parsimony_cost := noeval(Parsimony_cost);
+Parsimony_merge := noeval(Parsimony_merge);
+Parsimony_cost := op(Parsimony_cost_e);
+Parsimony_merge := op(Parsimony_merge_e);
+Parsimony_eI := eI;  Parsimony_eE := eE;
+
+# Random testing of consistency
+#to 50 do
+#    inds := {};
+#    while length(inds) < 5 do inds := inds union {Rand(1..lr)} od;
+#    cd := Parsimony_cost_d( Parsimony_merge_d( Parsimony_merge_d(r[inds[1]],
+#	r[inds[2]]), Parsimony_merge_d(r[inds[3]],r[inds[4]]) ), r[inds[5]] );
+#    ce := Parsimony_cost_e( Parsimony_merge_e( Parsimony_merge_e(newr[inds[1]],
+#	newr[inds[2]]), Parsimony_merge_e(newr[inds[3]],newr[inds[4]]) ),
+#	newr[inds[5]] );
+#    if cd <> ce then error(cd,ce,'random testing failed') fi
+#od;
+
+[newr,r]
+end:
+
+
+# Cost of linking x to y (parsimony)
+Parsimony_cost_d := proc( x, y ) option internal;
+if type(x,string) then
+     if type(y,string) then
+	  err := sum( If(x[i]=y[i],0,1), i=1..length(x) );
+	  [err,err]
+     else err := sum( If(member(x[i],y[1,i]),0,1), i=1..length(x) );
+	  [err+y[2],err]
+	  fi
+elif type(y,string) then procname(y,x)
+else err := sum( If( x[1,i] intersect y[1,i] = {}, 1, 0 ), i=1..length(x[1]) );
+     [err+x[2]+y[2],err]
+     fi;
+end:
+# This has now been implemented in the kernel
+#Parsimony_cost_e := proc( x, y )
+#xv := x[1];  yv := y[1];
+#err := sum( eE[xv[i],yv[i]], i=1..eS );
+#[err+x[2]+y[2],err]
+#end:
+
+
+
+#  Merging two subtrees with parsimony
+Parsimony_merge_d := proc( s1, s2 ) option internal;
+if type(s1,string) and type(s2,string) then
+     n := length(s1);
+     if n <> length(s2) then error(s1,s2,'unequal lengths') fi;
+     r := CreateArray(1..n);
+     err := 0;
+     for i to n do
+        if s1[i]=s2[i] then r[i] := {s1[i]}
+        else r[i] := {s1[i],s2[i]};  err := err+1 fi od;
+     Parsimonious(r,err)
+elif type(s2,string) then procname(s2,s1)
+elif type(s1,string) then
+     n := length(s1);
+     r := [ seq( {s1[i]}, i=1..n )];
+     procname( Parsimonious(r,0), s2 )
+elif type(s1,Parsimonious(list,integer)) and type(s2,Parsimonious(list,integer))
+     then
+     err := 0;
+     n := length(s1[1]);
+     r := CreateArray(1..n);
+     for i to n do
+         r[i] := s1[1,i] intersect s2[1,i];
+         if r[i] = {} then r[i] := s1[1,i] union s2[1,i];  err := err+1 fi
+         od;
+     Parsimonious(r,err+s1[2]+s2[2])
+else error('not implemented yet') fi
+end:
+# This has now been implemented in the kernel
+#Parsimony_merge_e := proc( x, y )
+#xv := x[1];  yv := y[1]; 
+#Parsimonious( [seq( eI[xv[i],yv[i]], i=1..eS )],
+#	       sum( eE[xv[i],yv[i]], i=1..eS ) + x[2]+y[2] )
+#end:
+
+
+end; # module Parsimony_cost etc.
+
+
+Parsimonious_type := noeval(Parsimonious(list,integer)):
+
+
+
+######################################################################
+# Remove the columns which have not mutated (for parsimonious trees) #
+######################################################################
+RemoveUnchanged := proc( seqs:list(string) )
+l := { seq( length(i), i=seqs ) };
+if length(l) <> 1 then error('sequences are not of the same length') fi;
+l := l[1];
+n := length(seqs);
+
+r := [ seq( ''.i, i=seqs ) ];  # transform to strings, just in case
+k := 0;
+for i to l do
+    for j from 2 to n while seqs[1,i] = seqs[j,i] do od;
+    if j <= n then
+	k := k+1;
+	for j to n do r[j,k] := seqs[j,i] od;
+	fi
+    od;
+
+if printlevel > 5 and k < l then
+    printf( 'PhylogeneticTree: %d characters, %d with variation\n', l, k ) fi;
+[ seq( i[1..k], i=r ) ]
+end:

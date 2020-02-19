@@ -1,0 +1,335 @@
+#
+#   New algorithm for clique (for less than n(n-1)/4 edges)
+#
+#   Grow Cliques to a max size, select new nodes to include at random
+#
+#					Gaston H Gonnet (Jan 1, 2002)
+NewClique := proc( g:Graph )
+global CliqueUpperBound;
+
+ns := g[Nodes];
+n := length(ns);
+adj := g[Adjacencies];
+sizadj := CreateArray(1..n):
+for i to n do
+    adj[i] := {op(adj[i]),i};
+    sizadj[i] := [length(adj[i]),i]
+    od;
+sizadj := sort( sizadj );
+if length(sizadj) > 20 then sizadj := sizadj[-20..-1] fi;
+CliqueUpperBound := min( sizadj[length(sizadj),1],
+    floor( sqrt( sum(length(adj[i]),i=1..n) )) );
+
+# first approximation to a clique
+tb := {};
+for i1 to length(sizadj) do
+    for i2 from i1+1 to length(sizadj) do
+	t := adj[sizadj[i1,2]] intersect adj[sizadj[i2,2]];
+	if length(t) > length(tb) then tb := t fi
+	od
+    od;
+
+# refine the largest intersection
+do  ltb := length(tb);
+    torem := [];
+    for z in tb do
+        l := length(tb intersect adj[z]);
+        if l < ltb then torem := append(torem,[l,z]) fi
+        od;
+    if torem=[] then break fi;
+    torem := sort(torem);
+    z := torem[length(torem),2];
+    tb := tb intersect adj[z]
+    od;
+
+currcli := tb;
+currsize := length(currcli);
+changed := true;
+while changed do
+    changed := false;
+
+    # recompute CliqueUpperBound
+    CliqueUpperBound := min( max( [seq(length(adj[i]),i=1..n)] ),
+	floor( sqrt( sum(length(adj[i]),i=1..n) )) );
+    if currsize >= CliqueUpperBound then break fi;
+
+    # remove any node with too few adjacencies
+    for i to n do
+	if length(adj[i]) <= currsize then 
+	    for z in adj[i] do adj[z] := adj[z] minus {i};  changed := true od;
+	    adj[i] := {}
+	    fi
+	od;
+
+    # search for possible new cliques (starting from a pair not fully
+    #  included in the current clique)
+    for i1 to n do
+	for i2 in adj[i1] do if i2 > i1 then
+	    if {i1,i2} minus currcli = {} then next fi;
+
+	    t := adj[i1] intersect adj[i2];
+
+	    # find the largest 3-node adjacencies intersection
+	    tb := {};
+	    for z in t minus {i1,i2} do
+		t2 := t intersect adj[z];
+		if length(t2) > length(tb) then tb := t2 fi
+		od;
+
+	    # remove edge if it will not contribute to bigger clique
+	    if length(tb) <= currsize then
+		adj[i1] := adj[i1] minus {i2};
+		adj[i2] := adj[i2] minus {i1};
+		changed := true;
+		next
+		fi;
+
+	    t := CliqueAllReduce(t,adj,{i1,i2},12/7*n,currsize);
+	    if length(t[2]) > currsize then
+		 currcli := t[2];
+		 currsize := length(currcli) fi;
+	    if not t[1] then
+		 adj[i1] := adj[i1] minus {i2};
+		 adj[i2] := adj[i2] minus {i1};
+		 changed := true
+		 fi
+	    fi od
+	od;
+    od;
+
+if CliqueUpperBound < currsize then CliqueUpperBound := currsize fi;
+{ seq(ns[currcli[i]], i=1..currsize) }
+end:
+
+
+
+CliqueAllReduce := proc( cl:set, adj:list, incl:set, n, currsize )
+option internal;
+
+wset := { [cl,incl] };
+best := {};
+chop := false;
+while wset <> {} do
+
+    # equal sets, join them
+    for i while i < length(wset) do if wset[i,1]=wset[i+1,1] then
+	w := wset[i];
+	wset := (wset minus {w,wset[i+1]}) union
+	    {[w[1], w[2] union wset[i+1,2]]};
+	i := i-1
+	fi od;
+
+    i1 := 1;
+    for i from 2 to length(wset) do if length(wset[i,2]) < length(wset[i1,2])
+	then i1 := i fi od;
+    w := wset[i1];
+    wset := wset minus {w};
+
+    w1 := w[1];
+    if w[2] = w1 and length(w1) > length(best) then best := w1 fi;
+
+    for z in w1 minus w[2] do
+	t := w1 intersect adj[z];
+	if length(t) > currsize then wset := wset union {[t,w[2] union {z}]} fi
+	od;
+
+    while length(wset) > n do
+	i1 := 1;
+	for i from 2 to length(wset) do
+	    if length(wset[i,1]) < length(wset[i1,1]) then i1 := i fi od;
+	wset := wset minus {wset[i1]};
+	chop := true
+	od;
+    od;
+
+[chop,best]
+end:
+
+#
+#	grow cliques, trim to below 50000 at random
+#				Gaston H. Gonnet (Oct 29, 2004)
+NewClique2 := proc( g:Graph ) option internal;
+
+ns := g[Nodes];
+n := length(ns);
+adj := g[Adjacencies];
+for i to n do adj[i] := {op(adj[i])} od;
+
+cli1 := {seq({i},i=1..n)};
+
+do  cli2 := [];
+    for z in cli1 do
+	y := adj[z[1]];
+	for i from 2 to length(z) do y := y intersect adj[z[i]] od;
+	for w in y do cli2 := append(cli2, z union {w}) od;
+	if length(cli2) > 100000 then
+	    printf( '|cli2|=%d', length(cli2) );
+	    cli2 := [ op( {op(cli2)} )];
+	    printf( ', |cli2|=%d', length(cli2) );
+	    if length(cli2) > 50000 then
+		cli2 := [ seq(If(Rand()<0.5,i,NULL),i=cli2) ];
+	        printf( ', |cli2|=%d', length(cli2) );
+		fi;
+	    printf( '\n' );
+	    fi;
+	od;
+    if cli2=[] then break fi;
+    cli1 := {op(cli2)};
+    if length(cli1[1]) > 5 then printf( '%d cliques of size %d\n',
+	length(cli1), length(cli1[1]) ) fi;
+    od:
+{ seq(ns[i],i=cli1[1]) }
+end:
+
+#
+#	Find the connected components where |e|/|n| is largest
+#	(approximate cliques)
+#				Gaston H. Gonnet (Oct 30, 2004)
+NewClique3 := proc( g:Graph ) option internal;
+
+ns := g[Nodes];
+n := length(ns);
+adj := g[Adjacencies];
+for i to n do adj[i] := {op(adj[i])} od;
+Lim := 10000;
+Complex := proc(x) x[1]/(length(x[2])-.99999)^(4/3) end:
+
+# [ number_of_edges, {node_set} ]
+cli1 := {seq([0,{i}],i=1..n)};
+
+t := CreateArray(1..n):
+best := [0,{1}];
+do  cli2 := [];
+    mine := 0;
+    for iz from length(cli1) by -1 to 1 do
+	z := cli1[iz];
+	for y in z[2] do for w in adj[y] do t[w] := t[w]+1 od od;
+	for i to n do if t[i] > 0 then
+	    if not member(i,z[2]) and z[1]+t[i] > mine then
+		cli2 := append( cli2, [ z[1]+t[i], z[2] union {i}])  fi;
+	    t[i] := 0
+	    fi od;
+	if length(cli2) > 2*Lim then
+	    printf( '|cli2|=%d', length(cli2) );
+	    cli2 := [ op( {op(cli2)} )];
+	    printf( ', |cli2|=%d', length(cli2) );
+	    if length(cli2) > Lim then
+		mine := max(mine,cli2[length(cli2)-Lim,1]);
+		printf( ', discarded [%d,%d]', mine, length(cli2[1,2]) );
+		cli2 := cli2[-Lim..-1];
+		fi;
+	    printf( '\n' );
+	    fi;
+	od:
+    cli2 := [ op( {op(cli2)} )];
+    if cli2=[] then break fi;
+    x := cli2[length(cli2)];
+    if Complex(x) >= Complex(best) then best := x;  lprint(x,Complex(x))
+    elif Complex(x)+0.04 < Complex(best) then break fi;
+    cli1 := {op(cli2)}:
+    od:
+{ seq(ns[i],i=best[2]) }
+end:
+
+#
+#	Alternative algorithm for Clique computation
+#
+#	This algorithm should be preferred when the graph
+#	is relatively sparse.  It computes an upper and
+#	lower bound and tries to reduce the graph as much
+#	as possible.
+#
+#					Gaston H. Gonnet (Jan 2005)
+
+Clique := proc( gr:Graph ; 'UpperBound'=(upb=DBL_MAX:posint) )
+global CliqueUpperBound;
+n := length(gr['Nodes']);
+if n < 40 then return(CliqueK(gr)) fi;
+adj := gr['Adjacencies'];
+adjg := CreateArray(1..n,{});	# adjacencies of nodes > i
+for i to n do
+    adj[i] := {op(adj[i])};
+    adjg[i] := { seq( If(z>i,z,NULL), z=adj[i] )}
+    od:
+
+C3 := C4 := 0;
+for i1 to n do for i2 in adjg[i1] do
+    I12 := adjg[i1] intersect adjg[i2];
+    C3 := C3+length(I12);
+    for i3 in I12 do C4 := C4 + length( I12 intersect adjg[i3] ) od;
+    od od;
+if C4=0 then
+    if C3 > 0 then
+        for i1 to n do for i2 in adjg[i1] do
+            I12 := adjg[i1] intersect adjg[i2];
+	    if I12 <> {} then
+		CliqueUpperBound := 3;
+		return( { seq( gr[2,i], i={i1,i2,I12[1]} ) }) fi
+        od od;
+    fi;
+    CliqueUpperBound := 2;
+    return(CliqueK(gr))
+fi;
+
+for ub to min(n,upb) do
+    ub3 := ub*(ub-1)*(ub-2)/6;
+    if ub3 > C3 then break fi;
+    if ub3*(ub-3)/4 > C4 then break fi
+    od;
+
+  # CliqueOfSize attempts to build a clique of size k or larger
+  # It will remove recursively all the nodes with less than k incidences
+  CliqueOfSize := proc( k:posint )
+    adj2 := copy(adj);
+    do	for i to n do if length(adj2[i]) < k-1 then adj2[i] := {} fi od;
+	for i to n do adj2[i] := {seq( If( adj2[z]={},NULL,z), z=adj2[i] )} od;
+	c := sum( length(z), z=adj2 );
+	if c=cmin then break else cmin := c fi;
+	od;
+    t := sum( If(z={},0,1), z=adj2 );
+    if t < k then return({})
+    elif t > 1000 or max(cmin,t*(t-1)/2-cmin) > 240000 then
+	 # the internal algorithm will not handle this size
+	 error('graph too large to compute a Clique') fi;
+    es := [];
+    for i to n do for z in adj2[i] do if z>i then
+	es := append(es,Edge(0,i,z)) fi od od;
+    if printlevel > 2 then
+        printf( 'CliqueOfSize: k=%d, |edges|=%d, |nodes|=%d\n',
+	   k, length(es), t ) fi;
+    CliqueK(Graph(Edges(op(es))))
+  end:
+
+
+# There does not exist a clique of size ub
+# There exists a clique of size lb
+#  CliqueUpperBound is correct, ub is the "best we can"
+CliqueUpperBound := ub-1;
+lb := 4;
+if printlevel > 2 then
+    printf( 'Clique: C3=%d, C4=%d, upb=%d\n', C3, C4, ub ) fi;
+while ub-lb > 1 do
+    if lb=4 then mid := floor( (4*ub+lb)/5 )
+    else mid := round( (ub+lb)/2 ) fi;
+    r := CliqueOfSize( mid );
+    if length(r) >= mid then return({ seq( gr[2,i], i=r ) })
+    else ub := min(mid,CliqueUpperBound+1);
+	 if length(r) > lb then
+	     res := r;
+	     lb := length(r);
+	     printf( 'Clique: lower/upper bounds: %d/%d\n', lb, ub )
+	 fi
+    fi
+od;
+if lb=4 then
+    for i1 to n do for i2 in adjg[i1] do
+        I12 := adjg[i1] intersect adjg[i2];
+        for i3 in I12 do
+            I123 := I12 intersect adjg[i3];
+	    if I123 <> {} then
+		return( { seq( gr[2,i], i={i1,i2,i3,I123[1]} ) }) fi
+            od;
+        od od;
+    fi;
+{ seq( gr[2,i], i=res ) }
+end:

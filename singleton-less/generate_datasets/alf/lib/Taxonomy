@@ -1,0 +1,229 @@
+#############################################
+# Functions to manage Gene Taxonomyes       #
+#              Adrian Altenhoff, Oct 2012   #
+#############################################
+
+module external TaxonomyEntry, TaxonomyEntry_select, TaxonomyEntry_type, TaxonomyEntry_print, TaxonomyDownload;
+local sciname, synname, comname, othernames, parent, children, mnemonic;
+
+rawfile := '/tmp/UniProtTaxonomy.tmp.gz';
+drwfile := datadirname.'/UniProtTaxonomy.drw';
+
+traperror(ReadProgram(drwfile));
+if assigned(Taxonomy_sciname) then 
+    sciname    := Taxonomy_sciname;   
+    mnemonic   := Taxonomy_mnemonic;  
+    comname    := Taxonomy_comname;   
+    synname    := Taxonomy_synname;   
+    othernames := Taxonomy_othernames;
+    parent     := Taxonomy_parent;
+    children   := Taxonomy_children;
+fi;
+
+
+##############################################
+# Download a new Taxonomy file from the      #
+# webpage.                                   #
+##############################################
+TaxonomyDownload := proc()
+DownloadURL('http://www.uniprot.org/taxonomy/?query=*&compress=yes&format=tab',
+        rawfile);
+ConvertRawFile();
+CallSystem('rm -f '.rawfile);
+end:
+
+###############################################
+# Read the raw file and fill up the data      #
+# structures.                                 #
+###############################################
+ConvertRawFile := proc() 
+global sciname, synname, comname, othernames, parent, children, mnemonic;
+option internal;
+print('Reading Taxonomy file...');
+sciname := table(''):
+comname := table(''):
+synname := table(''):
+othernames := table([],[]):
+mnemonic := table(''):
+parent := table(0):
+c1 := Counter('Taxon entries read');
+OpenPipe('zcat '.rawfile);
+t := ReadRawLine(); # header line --> throw away
+lineNr := 1;
+do
+    t := ReadRawLine(); lineNr := lineNr + 1;
+    if t=EOF then break fi:
+
+    entry := SearchDelim('\t', trim(t));
+    if length(entry)<3 then next fi:
+
+    tax := parse(entry[1]);
+    mnemcode := entry[2]; sci := entry[3];
+    if length(entry)>=6 then
+        com := entry[4]; syn := entry[5]; oth := entry[6]; 
+    else com := syn := oth := ''; 
+    fi:
+
+    if length(entry)<10 then up := 0;
+    else up := parse(entry[10]); fi:
+
+    if sciname[tax]<>'' then warning('Taxon '.tax.' defined several times.') fi:
+    sciname[tax] := sci;
+    if mnemcode<>'' then mnemonic[tax] := mnemcode fi;
+    if com<>'' then comname[tax] := com fi;
+    if syn<>'' then synname[tax] := syn fi;
+    if oth<>'' then othernames[tax] := SearchDelim('; ', oth): fi;
+    parent[tax] := up;
+    c1+1;
+od:
+print(c1);
+
+# manual fixes:
+mnemonic[73382] := 'CAPI1';
+mnemonic[9823]  := 'PIGXX';
+mnemonic[10116] := 'RATNO';
+
+children := table([],[]):
+for child in Indices(parent) do
+    p := parent[child];
+    if p<>child then 
+       children[p] := append(children[p], child);
+    fi:
+od:
+
+if not assigned(fileDat) then 
+    fileDat := trim(TimedCallSystem('date +"%Y%m%d"')[2]); 
+fi:
+fn := sprintf('%s-%s', drwfile, fileDat);
+noise := Set(printgc=false);
+OpenWriting(fn);
+printf('Taxonomy_sciname := %A:\n',sciname);
+printf('Taxonomy_mnemonic := %A:\n',mnemonic);
+printf('Taxonomy_comname := %A:\n',comname);
+printf('Taxonomy_synname := %A:\n',synname);
+printf('Taxonomy_othernames := %A:\n',othernames);
+printf('Taxonomy_parent := %A:\n',parent);
+printf('Taxonomy_children := %A:\n',children);
+OpenWriting(previous);
+Set(printgc=noise);
+CallSystem('gzip -9f '.fn);
+CallSystem('rm -f '.drwfile.'.gz ; ln -s '.fn.'.gz '.drwfile.'.gz');
+end:
+
+##################################
+# Error message if the data file #
+# was not read.                         #
+##################################
+ErrorMsg := proc() 
+option internal;
+    print('No Taxonomy data file found. It should be');
+    print(drwfile);
+    error('use TaxonomyDownload() to download and convert ontologies.');
+end:
+
+TaxonomyEntry := proc(id:{string,integer})
+   if not assigned(sciname) then ErrorMsg() fi:
+   if type(id,integer) then
+       if sciname[id]<>'' then return(noeval(TaxonomyEntry(id)));
+       else error('not a valid taxonomy id: '.string(id)) fi;
+
+   elif length(id)=5 then
+       for tax in Indices(mnemonic) do
+           if id=mnemonic[tax] then return(noeval(TaxonomyEntry(tax))) fi;
+       od:
+   fi:
+   for tax in Indices(sciname) do
+       if sciname[tax]=id then return(noeval(TaxonomyEntry(tax))) fi;
+   od:
+
+   error(id.' is not a valid taxonomy id nor a species code nor scientific name');
+end:
+TaxonomyEntry_select := proc(t, sel, val)
+    if nargs>2 then error('no assignments allowd') fi:
+    lcsel := lowercase(sel);
+    if lcsel='sciname' or lcsel='scientific name' then
+        return( sciname[ t['id'] ] );
+    elif lcsel='comname' or lcsel='common name' or lcsel='commonname' then
+        return( comname[ t['id'] ] );
+    elif lcsel='synname' or lcsel='synonym' or lcsel='synonym name' then
+        return( synname[ t['id'] ] );
+    elif lcsel='othernames' or lcsel='other names' then
+        return( othernames[ t['id'] ] );
+    elif member(lcsel,{'mnemonic','5letter','speciescode','species code'}) then
+        return( mnemonic[ t['id'] ]);
+    elif lcsel='parent' then
+        p := parent[ t['id'] ];
+        if p=0 then error('no parent Taxonomy available') fi:
+        return( TaxonomyEntry(p) );
+    elif lcsel='children' then
+        cs := children[ t['id'] ];
+        return( [seq(TaxonomyEntry(z), z=cs)] );
+    elif lcsel='lineage' then
+        return( GetLineage( t['id'] ) );
+    elif lcsel='lineagestring' then
+        lin := GetLineage( t['id'] );
+        return( ConcatStrings(lin, '; ') );
+    elif lcsel='lineageids' then
+        return( GetNumericLineage(t['id']) );
+    elif lcsel='kingdom' then
+        return( GetLineage( t['id'] )[1] );
+    else error('selector unknown: '.sel)
+    fi:
+end:
+TaxonomyEntry_print := proc(t)
+    code := t['5letter']; 
+    if code='' then code := 'n/a' fi;
+    com := t['common name'];
+    syn := t['synonym'];
+    printf('Taxonomy summary:\n');
+    printf(' Scientific name: %s\n', t['SCINAME']);
+    printf(' Species code: %s\n', code);
+    printf(' Taxonomy ID: %d\n', t['id']);
+    if com<>'' then printf(' Common name: %s\n',com) fi:
+    if syn<>'' then printf(' Synonym name: %s\n',syn) fi:
+    printf(' Kingdom: %s\n', t['kingdom']);
+    printf(' Lineage: %s\n\n', t['lineagestring']);
+end:
+CompleteClass(TaxonomyEntry);
+
+
+##################################
+# function to clean unwanted levels.
+#  currently: group and subgroup as complete words 
+#  addd: remove repetition of levels. occurs e.g. in Actinabacteria 
+CleanLin := proc()
+    if nargs=0 then return(NULL);
+    elif type(args[1], list) then
+        keep := [seq(If(length(MatchRegex('\\<(sub)?group\\>',
+                        sciname[z]))>0,false,true),
+                 z=args[1])];
+        for i from 2 to length(keep) do 
+            keep[i] := keep[i] and sciname[args[1,i]]<>sciname[args[1,i-1]];
+        od:
+        return(keep);
+    else 
+        return( procname([args]) );
+    fi:
+end:
+
+GetNumericLineage := proc(id:{string,integer})
+    if not assigned(sciname) then ErrorMsg() fi;
+    tax := TaxonomyEntry(id)['id']:
+    i := tax; lin := NULL;
+    while i>0 do 
+        lin := i , lin;
+        i := parent[i];
+    od:
+   
+    lin := [lin[2..-1]];
+    keep := CleanLin(lin);
+    lin := [seq(If(keep[i], lin[i], NULL), i=1..length(lin))];
+    return( lin );
+end:
+
+GetLineage := proc(id:{string,integer})
+    numLin := GetNumericLineage(id);
+    return( [seq(sciname[z], z=numLin)] );
+end:
+
+end: # module

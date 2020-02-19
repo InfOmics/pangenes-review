@@ -1,0 +1,231 @@
+#############################################
+# Functions to manage Gene Ontologies       #
+#                Adrian Schneider, Sep 2005  #
+#############################################
+
+module external GOdownload, GOname, GOnumber, GOdefinition, GOsuperclass,
+        GOsuperclassR, GOsubclass, GOsubclassR;
+local id, name, def, relations:
+
+rawfile := '/tmp/GOrawfile.tmp';
+drwfile := datadirname.'/GOdata.drw';
+uprels := {'is_a','part_of'};
+downrels := {'can_be','has_parts'};
+
+for try to 2 while traperror(ReadProgram(drwfile))=lasterror do sleep(2^try) od:
+if assigned(Ontology_name) then 
+    name := Ontology_name:
+    id := Ontology_id:
+    def := Ontology_def:
+    relations := table();
+    relations['is_a'] := Ontology_is_a;
+    relations['part_of'] := Ontology_part_of;
+    relations['can_be'] := Ontology_can_be;
+    relations['has_parts'] := Ontology_has_parts;
+    # for backwards compability
+    for z in ['part_of','has_parts'] do
+        if not type(relations[z],table) then 
+            relations[z] := table([],[]) 
+        fi:
+    od:
+else
+    warning('GO data is not present ('.drwfile.'). Use GOdownload() to obtain it.');
+fi;
+
+
+##############################
+# Convert GO:0001786 to 1786 #
+##############################
+GetNumber := proc(s:{string,posint}) option internal;
+   if type(s,posint) then return(s) fi;
+   h := SearchString('GO:',s);
+   if h=-1 or length(s)<h+10 then 
+        error('argument must look like GO:0001786');
+   fi;
+   nr := s[h+4..h+10];
+   return(parse(nr));
+end:
+
+##############################################
+# Download a new GO definition file from the #
+# webpage.                                      #
+##############################################
+GOdownload := proc()
+DownloadURL('http://www.geneontology.org/ontology/gene_ontology.obo',
+        rawfile);
+ConvertRawFile();
+end:
+
+###############################################
+# Read the raw file and fill up the data      #
+# structures.                                      #
+###############################################
+ConvertRawFile := proc() 
+global id, name, relations, def;
+option internal;
+print('Reading GO file...');
+id := table(0):
+name := table(''):
+relations := table():
+relations['is_a'] := table([],[]):
+relations['can_be'] := table([],[]):
+relations['part_of'] := table([],[]):
+relations['has_parts'] := table([],[]):
+def := table('');
+c1 := Counter('Ontologies read');
+OpenReading(rawfile);
+t := ReadRawLine();
+readingterm := false;
+while t<>EOF do
+    if readingterm then
+        if t='\n' then 
+            readingterm := false;
+            h := SearchArray('id',transpose(terms)[1]);
+            if h=0 then error('term without ID',terms) fi;
+            tid := traperror( GetNumber(transpose(terms)[2,h]) );
+            if tid=lasterror then 
+                warning('ignoring invalid id: '.terms[h,2]);
+            else
+                for z in terms do
+                    if z[1]='name' then 
+                        name[tid] := z[2];
+                        id[z[2]] := tid;
+                    elif z[1]='is_a' then 
+                        id2 := GetNumber(z[2]);
+                        relations['is_a',tid] := append(relations['is_a',tid],id2);
+                        relations['can_be',id2] := append(relations['can_be',id2],tid);
+                    elif z[1]='def' then
+                        h := SearchString('"',z[2,2..-1]);
+                        def[tid] := z[2,2..h];
+                    elif z[1]='relationship' then
+                        if length(z[2])<18 or z[2,1..7]<>'part_of' then next fi;
+                        id2 := GetNumber(z[2,9..-1]);
+                        relations['part_of',tid] := append(relations['part_of',tid],id2);
+                        relations['has_parts',id2] := append(relations['has_parts',id2],tid); 
+                    fi;
+                od:        
+                c1+1;
+            fi:
+        else
+            h := SearchString(': ',t);
+            terms := append(terms,[t[1..h],t[h+3..-2]]);
+        fi;
+    elif length(t)>6 and t[1..6]='[Term]' then
+        readingterm:=true;
+        terms := [];
+    elif length(t)>=17 and t[1..15]='format-version:' then
+        fileformat := t[17..-2];
+    elif length(t)>=6 and t[1..5]='date:' then
+        fDat := sscanf(t[6..-2], '%d:%d:%d %d:%d');
+        if length(fDat)<3 then warning('ignoring date in obo-file: '.t);
+        else fileDat := sprintf('%04d%02d%02d', fDat[3], fDat[2], fDat[1]);
+        fi:
+    fi;
+    t := ReadRawLine(); 
+od:
+print(c1);
+if not assigned(fileDat) then 
+    fileDat := trim(TimedCallSystem('date +"%Y%m%d"')[2]); 
+fi:
+fn := sprintf('%s-%s', drwfile, fileDat);
+OpenWriting(fn);
+printf('Ontology_id := %A:\n',id);
+printf('Ontology_name := %A:\n',name);
+printf('Ontology_def := %A:\n',def);
+printf('Ontology_is_a := %A:\n',relations['is_a']);
+printf('Ontology_part_of := %A:\n',relations['part_of']);
+printf('Ontology_can_be := %A:\n',relations['can_be']);
+printf('Ontology_has_parts := %A:\n',relations['has_parts']);
+OpenWriting(previous);
+CallSystem('gzip -9fv '.fn);
+CallSystem('rm -f '.drwfile.'.gz ; ln -s '.fn.'.gz '.drwfile.'.gz');
+end:
+
+##################################
+# Error message if the data file #
+# was not read.                         #
+##################################
+ErrorMsg := proc() 
+option internal;
+    print('No GO data file found. It should be');
+    print(drwfile);
+    error('use GOdownload() to download and convert ontologies.');
+end:
+
+
+##################################
+# Functions to access the tables #
+##################################
+GOname := proc(go:{string,posint});
+if not assigned(name) then ErrorMsg() fi;
+nr := GetNumber(go);
+return(name[nr]);
+end:
+
+GOnumber := proc(s:string);
+if not assigned(id) then ErrorMsg() fi;
+return(id[s]);
+end:
+
+
+GOdefinition := proc(go:{string,posint});
+if not assigned(def) then ErrorMsg() fi;
+nr := GetNumber(go);
+return(def[nr]);
+end:
+
+GOsuperclass := proc(go:{string,posint} ; 
+    'links'=((link=uprels):set(string)) )
+if not assigned(relations) then ErrorMsg() fi;
+if length( minus(link, uprels) )>0 then
+    error(sprintf('links must contain only %a',uprels));
+fi:
+nr := GetNumber(go);
+return( [seq( op(relations[z,nr]), z=link)] );
+end:
+
+GOsubclass := proc(go:{string,posint} ;
+    'links'=((link=downrels):set(string)) )
+if not assigned(relations) then ErrorMsg() fi;
+if length( minus(link, downrels) )>0 then
+    error(sprintf('links must contain only %a',downrels));
+fi:
+nr := GetNumber(go);
+return( [seq( op(relations[z,nr]), z=link)] );
+end:
+
+GOsuperclassR := proc(go:{string,posint} ; 
+    'links'=((link=uprels):set(string)) );
+if not assigned(relations) then ErrorMsg() fi;
+if length( minus(link, uprels) )>0 then
+    error(sprintf('links must contain only %a',uprels));
+fi:
+nr := GetNumber(go);
+rem :={nr};
+all := {};
+while rem<>{} do
+    new := {seq(seq(op(relations[z,i]),i=rem),z=link)};
+    all := all union rem;
+    rem := new minus all;
+od:
+return([op(all minus {nr})]);
+end:
+
+GOsubclassR := proc(go:{string,posint} ;
+    'links'=((link=downrels):set(string)) )
+if not assigned(relations) then ErrorMsg() fi;
+if length( minus(link, downrels) )>0 then
+    error(sprintf('links must contain only %a',downrels));
+fi:
+nr := GetNumber(go);
+rem :={nr};
+all := {};
+while rem<>{} do
+    new := {seq(seq(op(relations[z,i]),i=rem),z=link)};
+    all := all union rem;
+    rem := new minus all;
+od:
+return([op(all minus {nr})]);
+end:
+
+end: # module

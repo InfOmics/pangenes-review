@@ -1,0 +1,36 @@
+# FileHandle ist the data type to save file handles for the "MultiIO" 
+# system. It should only be constructed by the internal FiloOpen 
+# function. The actual handle is invisible to the user.
+#				Daniel D and Adrian S, 12 March 2009
+
+FileHandle := proc(filename:string, mode:{'r','w','a'})
+option NoIndexing;
+#error('not allowed to create FileHandle');
+return(noeval(FileHandle(args)));
+end:
+
+FileHandle_type := noeval(FileHandle(string,string,integer)):
+
+# FileHandle_selector: is read-only and doesn't return handle
+# PROBLEM: assign is still possible. WHY?
+FileHandle_select := proc( w:FileHandle, sel)
+if nargs=3 then error('FileHandle is read-only') fi;
+if lowercase(sel)='handle' then 
+   error(' handle is an invalid selector') 
+fi
+end:
+
+FileHandle_string := proc( w ) option internal;
+return(sprintf('FileHandle(%s, %s)',w[filename],w[mode]));
+end:
+
+FileHandle_print := proc( w ) option internal; printf( '%s\n', string(w) ) end:
+FileHandle_lprint := proc( w ) option internal; printf( '%s', string(w) ) end:
+FileHandle_printf := proc( fmt, w ) option internal; string(w) end:
+
+
+
+#f := FileHandle('xxx','w',8765);
+#f[handle];
+#f[filename]:='yyy';
+#print(f);

@@ -1,0 +1,789 @@
+#
+# Definition of various scoring matrices in common use
+#
+#		compiled by Gaston H. Gonnet (Aug 1992)
+#
+module external FindEntropy, DayMatrixScale, Matrices, 
+BLOSUM50, BLOSUM60, BLOSUM62, BLOSUM70, Dayhoff1978, GENETIC10, GENETIC100, 
+GENETIC150, GENETIC200, GENETIC250, GENETIC50, Grantham, Machlaclan, PAM0, 
+PAM100, PAM150, PAM200, PAM250, PAM50, PIMA, RDDH250, UNITARY, UNITARY2;
+
+local i,j;
+
+BuildScoreMatrix := proc( m:list(string), pam:numeric )
+option internal;
+description 'Build a scoring matrix (Dayhoff type) from text data.';
+
+if not type(length(m[1])/3,integer) or length(m[1]) < 60 then
+    error('incorrect descriptor line') fi;
+for i to 20 do if length(m[i+1]) <> 3*i then
+    error('incorrect data line',i) fi od;
+if pam <= 0 or pam > 1000 then error('incorrect PAM distance') fi;
+DM := CreateDayMatrix(NewLogPAM1,pam);
+used := CreateArray(1..20);
+
+for i to 20 do
+    aa := AToInt(m[1,3*i]);
+    if aa < 1 or aa > 20 then error('incorrect aa in descriptor line') fi;
+    used[aa] := 1;
+    for j to i do
+	v := sscanf( m[i+1,3*j-2..3*j], '%d' );
+	if length(v) <> 1 then error('incorrect value in line',i) fi;
+	DM[Sim,aa,m[1,3*j]] := v[1]
+	od;
+    od;
+if sum(used) <> 20 then error('repeated columns') fi;
+
+diave := sum( DM[Sim,i,i], i=1..20 ) / 20;
+DM[FixedDel] := min(-1,-2*diave);
+DM[IncDel] := min(-0.1,-0.5*diave);
+eval(DM)
+end:
+#
+BuildScoreMatrix2 := proc( m:list(string), pam:numeric )
+option internal;
+description 'Build a scoring matrix (Dayhoff type) from text data.';
+
+if not type(length(m[1])/4,integer) or length(m[1]) < 60 then
+    error('incorrect descriptor line') fi;
+for i to 20 do if length(m[i+1]) <> 4*i then
+    error('incorrect data line',i) fi od;
+if pam <= 0 or pam > 1000 then error('incorrect PAM distance') fi;
+DM := CreateDayMatrix(NewLogPAM1,pam);
+used := CreateArray(1..20);
+
+for i to 20 do
+    aa := AToInt(m[1,4*i]);
+    if aa < 1 or aa > 20 then error('incorrect aa in descriptor line') fi;
+    used[aa] := 1;
+    for j to i do
+	v := sscanf( m[i+1,4*j-3..4*j], '%f' );
+	if length(v) <> 1 then error('incorrect value in line',i) fi;
+	DM[Sim,aa,m[1,4*j]] := v[1]
+	od;
+    od;
+if sum(used) <> 20 then error('repeated columns') fi;
+
+diave := sum( DM[Sim,i,i], i=1..20 ) / 20;
+DM[FixedDel] := min(-1,-2*diave);
+DM[IncDel] := min(-0.1,-0.5*diave);
+eval(DM)
+end:
+#
+#
+# Dayhoff's original log-odds matrix for PAM 250
+# (From the Atals, Vol 5, p. 103).
+
+Dayhoff1978 := [
+'  A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V',
+'  1',
+' -3  9',
+'  1  0  2',
+'  1 -2  1  4',
+' -1 -6 -2 -3 12',
+'  0  1  1  1 -3  3',
+'  1 -2  1  3 -3  1  3',
+'  1 -4  0  0 -2  0  1  5',
+' -1  3  1  0 -5  1 -1 -2  8',
+' -1 -3 -1 -2  0 -1 -2 -3 -2  4',
+' -2 -4 -3 -3 -3 -2 -2 -4 -2  3  6',
+'  0  3  1  0 -4  0  0 -1  0 -1 -2  4',
+' -1  0 -2 -2  1 -1 -2 -3 -2  2  3 -1  4',
+' -4 -4 -5 -6 -6 -5 -6 -7 -2  0  1 -5  0  8',
+'  1 -4  0  0 -4  1  1  1 -3 -2 -4 -1 -2 -6  6',
+'  1 -2  1  1  0  0  1  1  0 -1 -2  0 -1 -4  0  1',
+'  1 -2  1  0  0  0  0  0 -1  0 -1  0  0 -3  0  1  3',
+' -8 -6 -7 -9-12 -8 -9-11  2 -4 -5 -8 -4  6-11 -7 -8 16',
+' -7 -5 -7 -9-10 -7 -8-10 -1 -2 -3 -5 -2  8 -9 -6 -6  7 11',
+'  0 -3 -1 -1  0 -1 -1 -1 -2  3  2 -1  2 -2 -1  0  0 -7 -5  3' ]:
+Dayhoff1978 := BuildScoreMatrix(Dayhoff1978,250):
+
+
+PAM0 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+' 13',
+'-34 13',
+'-34-34 13',
+'-34-34-34 13',
+'-34-34-34-34 13',
+'-34-34-34-34-34 13',
+'-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34 13',
+'-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34-34  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0 13' ]:
+PAM0 := BuildScoreMatrix(PAM0,0.0751):
+
+
+PAM50 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+' -2  6',
+' -6  1  6',
+' -6 -1 -3  8',
+' -5  0  0  0  5',
+' -7 -1 -4 -4 -1  6',
+' -8  1 -1 -4 -2 -2  7',
+'-11 -2 -3 -6 -2 -2  2  7',
+'-11 -3 -4 -4 -1 -3 -1  3  7',
+'-11 -4 -4 -2 -3 -5 -2 -1  2  8',
+' -6 -4 -5 -3 -5 -7  1 -2 -3  2  9',
+' -6 -2 -5 -3 -5 -7 -4 -7 -7  0  0  8',
+'-11 -3 -2 -5 -5 -6  0 -3 -3 -2 -4  1  6',
+'-11 -4 -3 -6 -4 -7 -6 -8 -5 -3 -8 -3 -1 10',
+' -5 -5 -1 -7 -3 -8 -4 -6 -4 -6 -7 -4 -5  0  8',
+'-12 -7 -5 -6 -5 -9 -6-10 -7 -4 -5 -7 -6  2  0  6',
+' -5 -4 -2 -4 -1 -4 -6 -6 -5 -5 -5 -6 -7  0  3 -1  7',
+'-10 -5 -7 -8 -7 -8 -7-12-11-10 -5 -8-11 -3 -1 -1 -6  9',
+' -3 -5 -5-11 -6-11 -3 -9 -7 -9 -2 -8 -8 -8 -5 -5 -6  3  9',
+'-13 -4-10-11-11-12 -7-12-13-10 -6 -1 -9-10-11 -5-12 -3 -4 13',
+' -9 -1 -2 -5 -2 -2  5  6  2 -2  0 -5 -1 -7 -5 -7 -6 -9 -5 -8  5',
+'-11 -3 -4 -3 -2 -4 -1  2  6  6  0 -2 -2 -4 -5 -5 -5-11 -8-11  1  6',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  7' ]:
+PAM50 := BuildScoreMatrix(PAM50,50):
+
+
+PAM100 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+' -1  4',
+' -4  2  5',
+' -4  0 -1  7',
+' -3  1  1  1  4',
+' -5  0 -2 -2  1  5',
+' -5  1  0 -2 -1 -1  5',
+' -7 -1 -2 -3 -1 -1  3  5',
+' -8 -1 -2 -2  0 -1  1  4  5',
+' -8 -2 -2 -1 -2 -3 -1  0  2  6',
+' -4 -2 -3 -1 -3 -4  2 -1 -1  3  7',
+' -5 -1 -3 -1 -3 -5 -2 -4 -3  1  1  7',
+' -8 -1 -1 -3 -3 -3  1 -1 -1  0 -2  2  5',
+' -7 -3 -1 -4 -2 -4 -4 -5 -4 -2 -4 -1  0  9',
+' -3 -3  0 -4 -2 -5 -3 -4 -3 -4 -4 -3 -3  1  6',
+' -8 -4 -3 -4 -3 -6 -4 -6 -5 -2 -3 -5 -4  3  1  6',
+' -3 -2  0 -3  0 -3 -3 -4 -3 -3 -3 -4 -4  1  3  0  5',
+' -7 -4 -5 -6 -5 -6 -5 -8 -8 -7 -3 -6 -7 -1  0  0 -3  8',
+' -1 -4 -4 -7 -4 -7 -2 -6 -5 -6 -1 -6 -6 -5 -3 -3 -4  4  9',
+' -9 -3 -7 -7 -7 -9 -5 -9 -9 -7 -4  1 -6 -6 -7 -3 -9 -1 -2 12',
+' -6  0 -1 -3 -1 -1  4  4  3  0  1 -3  0 -4 -3 -5 -4 -6 -4 -6  4',
+' -8 -2 -2 -1 -1 -2  0  3  4  5  1 -1 -1 -2 -3 -4 -3 -7 -6 -8  2  5',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  6' ]:
+PAM100 := BuildScoreMatrix(PAM100,100):
+
+
+PAM150 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+'  0  2',
+' -3  1  4',
+' -3  1  0  6',
+' -2  1  1  1  3',
+' -4  1 -1 -1  1  4',
+' -4  1  0 -1  0  0  3',
+' -6  0 -1 -2  0  0  2  4',
+' -6 -1 -1 -1  0 -1  1  3  4',
+' -6 -1 -1  0 -1 -2  0  1  2  5',
+' -3 -1 -2 -1 -2 -3  2  0  0  3  6',
+' -4 -1 -2 -1 -2 -3 -1 -2 -2  1  1  6',
+' -6 -1  0 -2 -2 -2  1 -1 -1  0 -1  3  4',
+' -5 -2 -1 -3 -1 -3 -2 -3 -2 -1 -3 -1  0  7',
+' -2 -2  0 -3 -1 -3 -2 -3 -2 -3 -3 -2 -2  2  5',
+' -6 -3 -2 -3 -2 -4 -3 -5 -4 -2 -2 -3 -3  3  1  5',
+' -2 -1  0 -2  0 -2 -2 -3 -2 -2 -3 -3 -3  1  3  1  4',
+' -5 -3 -3 -5 -4 -5 -4 -6 -6 -5 -2 -4 -6 -1  0  1 -2  7',
+'  0 -3 -3 -5 -3 -5 -2 -4 -4 -4  0 -4 -4 -3 -2 -2 -3  5  8',
+' -7 -2 -5 -6 -6 -7 -4 -7 -7 -5 -3  1 -4 -5 -5 -2 -6 -1 -1 12',
+' -5  0  0 -2  0  0  3  3  2  1  1 -2  0 -3 -2 -4 -2 -5 -3 -5  3',
+' -6 -1 -1 -1  0 -1  1  2  4  4  1  0  0 -2 -2 -3 -2 -5 -4 -6  2  4',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  5' ]:
+PAM150 := BuildScoreMatrix(PAM150,150):
+
+
+PAM200 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+' 12',
+'  0  2',
+' -3  2  4',
+' -4  1  0  7',
+' -3  1  1  1  3',
+' -4  1  0 -1  1  6',
+' -5  1  0 -1  0  0  3',
+' -6  0  0 -2  0  0  3  5',
+' -7  0 -1 -1  0  0  2  4  5',
+' -7 -1 -1  0 -1 -2  1  2  3  5',
+' -4 -1 -2 -1 -2 -3  2  0  0  3  8',
+' -4 -1 -1  0 -2 -4  0 -2 -2  1  2  7',
+' -7  0  0 -2 -2 -2  1  0  0  1 -1  4  6',
+' -6 -2 -1 -3 -2 -4 -2 -4 -3 -1 -3 -1  1  8',
+' -3 -2  0 -3 -1 -3 -2 -3 -3 -3 -3 -2 -2  2  6',
+' -7 -4 -2 -3 -2 -5 -4 -5 -4 -2 -3 -4 -4  4  2  7',
+' -2 -1  0 -2  0 -2 -2 -3 -2 -3 -3 -3 -3  2  4  2  5',
+' -6 -4 -4 -6 -4 -6 -4 -7 -7 -6 -2 -5 -7  0  1  2 -2 10',
+'  0 -3 -3 -6 -4 -6 -2 -5 -5 -5  0 -5 -5 -3 -2 -2 -3  7 11',
+' -9 -3 -6 -7 -7 -8 -5 -8 -9 -6 -3  2 -4 -5 -6 -2 -8  0 -1 18',
+' -5  1  0 -1  0  0  3  4  3  1  1 -1  0 -3 -3 -4 -3 -6 -4 -6  3',
+' -7 -1 -1 -1  0 -1  1  3  4  4  2  0  0 -2 -3 -3 -2 -6 -5 -7  2  4',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  6' ]:
+PAM200 := BuildScoreMatrix(PAM200,200):
+
+
+PAM250 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+' 12',
+'  0  2',
+' -2  1  3',
+' -3  1  0  6',
+' -2  1  1  1  2',
+' -3  1  0  0  1  5',
+' -4  1  0  0  0  0  2',
+' -5  0  0 -1  0  1  2  4',
+' -5  0  0 -1  0  0  1  3  4',
+' -5 -1 -1  0  0 -1  1  2  2  4',
+' -3 -1 -1  0 -1 -2  2  1  1  3  6',
+' -4  0 -1  0 -2 -3  0 -1 -1  1  2  6',
+' -5  0  0 -1 -1 -2  1  0  0  1  0  3  5',
+' -5 -2 -1 -2 -1 -3 -2 -3 -2 -1 -2  0  0  6',
+' -2 -1  0 -2 -1 -3 -2 -2 -2 -2 -2 -2 -2  2  5',
+' -6 -3 -2 -3 -2 -4 -3 -4 -3 -2 -2 -3 -3  4  2  6',
+' -2 -1  0 -1  0 -1 -2 -2 -2 -2 -2 -2 -2  2  4  2  4',
+' -4 -3 -3 -5 -3 -5 -3 -6 -5 -5 -2 -4 -5  0  1  2 -1  9',
+'  0 -3 -3 -5 -3 -5 -2 -4 -4 -4  0 -4 -4 -2 -1 -1 -2  7 10',
+' -8 -2 -5 -6 -6 -7 -4 -7 -7 -5 -3  2 -3 -4 -5 -2 -6  0  0 17',
+' -4  0  0 -1  0  0  2  3  3  1  1 -1  1 -2 -2 -3 -2 -4 -3 -5  3',
+' -5  0 -1  0  0  0  1  3  3  3  2  0  0 -2 -2 -3 -2 -5 -4 -6  2  3',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  5' ]:
+PAM250 := BuildScoreMatrix(PAM250,250):
+
+
+# BLOSUM Matrices
+# ---------------
+#
+# Sequence similarity among protein sequences is typically measured by
+# substitution matrices, such as the Dayhoff PAM matrices based on
+# evolutionary rates, which give scores for all possible exchanges of
+# one amino acid with another. Henikoff and Henikoff have derived
+# substitution matrices using about 2000 blocks of aligned subsequences
+# >From 504 groups of related proteins. In FASTA and BLAST searches,
+# these matrices have shown improvements in alignments over the other
+# substitution matrices, using query sequences from each of the 504
+# groups
+# From: Amino acid substitution matrices from protein blocks, by
+# Steven Henikoff and Jorja G. Henikoff  (e-mail: steveh@sparky.fhcrc.org)
+
+
+
+BLOSUM50 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  8',
+' -1  3',
+' -1  1  4',
+' -2 -1 -1  7',
+'  0  1  0 -1  3',
+' -1  0 -1 -1  0  5',
+' -1  1  0 -1 -1  0  5',
+' -2  0  0 -1 -1 -1  1  5',
+' -2  0 -1 -1  0 -2  0  1  4',
+' -2  0 -1 -1  0 -1  0  0  1  4',
+' -2  0 -1 -1 -1 -1  1 -1  0  1  7',
+' -2  0 -1 -2 -1 -2  0 -1  0  1  0  5',
+' -2  0 -1 -1 -1 -1  0  0  1  1  0  2  4',
+' -2 -1 -1 -2  0 -2 -1 -3 -2  0 -1 -1 -1  5',
+' -1 -1  0 -2 -1 -3 -2 -3 -2 -2 -2 -2 -2  1  3',
+' -1 -2 -1 -2 -1 -3 -2 -2 -2 -2 -2 -1 -2  2  2  3',
+' -1 -1  0 -1  0 -3 -3 -3 -2 -1 -2 -2 -2  1  2  1  3',
+' -2 -2 -1 -3 -2 -3 -2 -3 -2 -3 -1 -3 -2  1  0  1 -1  6',
+' -2 -1 -1 -2 -2 -2 -2 -1 -1 -1  1 -1 -1 -1 -1  0 -1  3  6',
+' -4 -2 -1 -3 -2 -3 -3 -3 -2 -1 -2 -2 -2 -2 -2 -1 -2  1  2 10',
+' -2  0  0 -1 -1 -1  1  5  1  0 -1 -1  0 -3 -3 -2 -3 -3 -1 -3  5',
+' -2  0 -1 -1  0 -2  0  1  4  1  0  0  1 -2 -2 -2 -2 -2 -1 -2  1  4',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1' ]:
+BLOSUM50 := BuildScoreMatrix(BLOSUM50,250):
+BLOSUM50[FixedDel] := -12:  BLOSUM50[IncDel] := -4:
+
+
+BLOSUM60 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+' -1  4',
+' -1  1  4',
+' -2 -1 -1  7',
+' -1  1  0  0  4',
+' -2  0 -1 -2  0  6',
+' -2  1  0 -2 -1  0  6',
+' -4  0 -1 -2 -2 -1  1  6',
+' -3  0 -1 -1 -1 -2  0  1  5',
+' -2  0 -1 -1 -1 -2  0  0  2  5',
+' -3 -1 -2 -2 -1 -2  0 -1  0  1  7',
+' -3 -1 -1 -2 -1 -2  0 -1  0  1  0  5',
+' -3  0 -1 -1 -1 -1  0 -1  1  1 -1  2  4',
+' -2 -2 -1 -2 -1 -3 -2 -3 -2  0 -2 -1 -1  6',
+' -1 -2 -1 -3 -1 -3 -3 -3 -3 -2 -3 -3 -2  1  4',
+' -1 -2 -1 -2 -1 -3 -3 -3 -2 -2 -3 -2 -2  2  2  4',
+' -1 -2  0 -2  0 -3 -3 -3 -2 -2 -3 -2 -2  1  3  1  4',
+' -2 -2 -2 -3 -2 -3 -3 -3 -3 -3 -1 -2 -3  0  0  0 -1  6',
+' -3 -2 -2 -2 -2 -3 -2 -2 -2 -2  1 -2 -2 -1 -1 -1 -1  3  7',
+' -3 -2 -2 -3 -3 -2 -2 -4 -2 -2 -2 -2 -3 -2 -2 -2 -2  1  2 10',
+' -4  0 -1 -2 -2 -1  1  6  1  0 -1 -1 -1 -3 -3 -3 -3 -3 -2 -4  6',
+' -3  0 -1 -1 -1 -2  0  1  5  2  0  0  1 -2 -3 -2 -2 -3 -2 -2  1  5',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1' ]:
+BLOSUM60 := BuildScoreMatrix(BLOSUM60,250):
+BLOSUM60[FixedDel] := -12:  BLOSUM60[IncDel] := -4:
+
+
+BLOSUM62 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+' -1  4',
+' -1  1  5',
+' -3 -1 -1  7',
+'  0  1  0 -1  4',
+' -3  0 -2 -2  0  6',
+' -3  1  0 -2 -2  0  6',
+' -3  0 -1 -1 -2 -1  1  6',
+' -4  0 -1 -1 -1 -2  0  2  5',
+' -3  0 -1 -1 -1 -2  0  0  2  5',
+' -3 -1 -2 -2 -2 -2  1 -1  0  0  8',
+' -3 -1 -1 -2 -1 -2  0 -2  0  1  0  5',
+' -3  0 -1 -1 -1 -2  0 -1  1  1 -1  2  5',
+' -1 -1 -1 -2 -1 -3 -2 -3 -2  0 -2 -1 -1  5',
+' -1 -2 -1 -3 -1 -4 -3 -3 -3 -3 -3 -3 -3  1  4',
+' -1 -2 -1 -3 -1 -4 -3 -4 -3 -2 -3 -2 -2  2  2  4',
+' -1 -2  0 -2  0 -3 -3 -3 -2 -2 -3 -3 -2  1  3  1  4',
+' -2 -2 -2 -4 -2 -3 -3 -3 -3 -3 -1 -3 -3  0  0  0 -1  6',
+' -2 -2 -2 -3 -2 -3 -2 -3 -2 -1  2 -2 -2 -1 -1 -1 -1  3  7',
+' -2 -3 -2 -4 -3 -2 -4 -4 -3 -2 -2 -3 -3 -1 -3 -2 -3  1  2 11',
+' -4  0 -1 -2 -2 -1  1  6  1  0 -1 -1 -1 -3 -3 -3 -3 -3 -2 -4  6',
+' -3  0 -1 -1 -1 -2  0  1  5  2  0  0  1 -2 -3 -2 -2 -3 -2 -2  1  5',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1' ]:
+BLOSUM62 := BuildScoreMatrix(BLOSUM62,250):
+BLOSUM62[FixedDel] := -12:  BLOSUM62[IncDel] := -4:
+
+
+BLOSUM70 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W  B  Z  X  *',
+'  9',
+' -1  4',
+' -1  1  5',
+' -3 -1 -1  8',
+' -1  1  0 -1  4',
+' -3 -1 -2 -3  0  6',
+' -3  1  0 -2 -2 -1  6',
+' -4  0 -1 -2 -2 -2  1  6',
+' -4  0 -1 -1 -1 -2  0  1  5',
+' -3  0 -1 -1 -1 -2  0 -1  2  6',
+' -4 -1 -2 -2 -2 -2  0 -2  0  1  8',
+' -4 -1 -1 -2 -2 -2 -1 -2  0  1  0  6',
+' -3  0 -1 -1 -1 -2  0 -1  1  1 -1  2  5',
+' -2 -2 -1 -3 -1 -3 -2 -3 -2  0 -2 -2 -2  6',
+' -1 -2 -1 -3 -1 -4 -4 -4 -3 -3 -3 -3 -3  1  4',
+' -2 -3 -2 -3 -2 -4 -3 -4 -3 -2 -3 -2 -3  2  1  4',
+' -1 -2  0 -2  0 -4 -3 -4 -3 -2 -3 -3 -2  1  3  1  4',
+' -3 -3 -2 -4 -3 -3 -3 -3 -3 -3 -2 -3 -3  0  0  0 -1  6',
+' -3 -2 -2 -3 -2 -4 -3 -3 -2 -2  2 -2 -2 -2 -1 -1 -1  3  7',
+' -4 -3 -3 -4 -3 -3 -3 -5 -3 -2 -2 -3 -4 -2 -3 -2 -3  1  2 11',
+' -4  0 -1 -2 -2 -2  1  6  1 -1 -2 -2 -1 -3 -4 -4 -4 -3 -3 -5  6',
+' -4  0 -1 -1 -1 -2  0  1  5  2  0  0  1 -2 -3 -3 -3 -3 -2 -3  1  5',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1',
+' -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1' ]:
+BLOSUM70 := BuildScoreMatrix(BLOSUM70,250):
+BLOSUM70[FixedDel] := -12:  BLOSUM70[IncDel] := -4:
+
+
+UNITARY := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W',
+'  1',
+'  0  1',
+'  0  0  1',
+'  0  0  0  1',
+'  0  0  0  0  1',
+'  0  0  0  0  0  1',
+'  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1' ]:
+UNITARY := BuildScoreMatrix(UNITARY,250):
+
+
+UNITARY2 := [
+'  C  S  T  P  A  G  N  D  E  Q  H  R  K  M  I  L  V  F  Y  W',
+'  2',
+'  0  1',
+'  0  0  1',
+'  0  0  0  1',
+'  0  0  0  0  1',
+'  0  0  0  0  0  1',
+'  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1',
+'  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  0  1' ]:
+UNITARY2 := BuildScoreMatrix(UNITARY2,250):
+#
+# from: "Amino Acid Substitutions in Structurally Related Proteins",
+#  JMB (1988) 204, 1019-1029.  by Risler, Delorme, Delacroix and Henaut
+
+RDDH250 := [
+'   A   C   D   E   F   G   H   I   K   L   M   N   P   Q   R   S   T   V   W   Y',
+' 2.2',
+'-1.5 2.2',
+' 0.2-1.7 2.2',
+' 1.7-1.5 1.0 2.2',
+' 0.6-1.6-0.3 0.6 2.2',
+' 0.6-1.7-0.4 0.3-0.4 2.2',
+'-0.6-1.8-1.3-0.6-1.1-1.2 2.2',
+' 1.7-1.6 0.0 1.5 1.0 0.0-0.8 2.2',
+' 1.4-1.6 0.1 1.4 0.1-0.1-1.0 1.0 2.2',
+' 1.3-1.5-0.2 0.9 1.0-0.2-0.9 2.1 0.7 2.2',
+' 1.0-1.6-0.5 0.6-0.2-0.4-1.2 0.9 0.4 1.8 2.2',
+' 1.3-1.6 0.8 1.4 0.4 0.2-0.3 0.9 1.0 0.8 0.0 2.2',
+'-0.2-1.8-1.2-0.1-1.1-1.2-1.6-0.6-0.7-0.8-1.2-1.0 2.2',
+' 1.8-1.4 0.6 2.1 0.7 0.2-0.5 1.4 1.7 1.1 1.2 1.4-0.6 2.2',
+' 1.5-1.5-0.1 1.9 0.4 0.1-0.4 1.4 2.1 1.2 1.1 1.2-0.3 2.0 2.2',
+' 2.0-1.3 0.7 1.8 0.5 0.7-0.4 1.6 1.4 1.3 0.6 1.9-0.3 1.8 2.0 2.2',
+' 1.9-1.4 0.0 1.6 0.3 0.2-0.9 1.6 1.2 1.2 0.8 1.1-0.5 1.7 1.9 2.1 2.2',
+' 2.0-1.4 0.0 1.6 0.8 0.1-0.7 2.2 1.2 2.0 0.8 1.1-0.6 1.5 1.5 1.8 1.6 2.2',
+'-0.4-1.8-1.4-1.0-0.9-1.3-1.7-0.7-1.1-0.8-1.3-1.1-1.6-1.0-0.8-0.8-1.0-0.7 2.2',
+' 0.2-1.1-0.4 0.2 2.0-0.2-0.8 0.4 0.5 0.5-0.2-0.1-1.2 0.5 0.8 0.4 0.3 0.3-0.6 2.2' ]:
+RDDH250 := BuildScoreMatrix2(RDDH250,250):
+
+#
+#  PIMA's scoring scheme is shown below (from the manual):
+#
+#
+#                       Amino Acid Classes                     Match score
+#
+#                                                                  -2
+#                _______________ X __________________               0
+#               /          /           \             \
+#            _ f _        /       ______r _______     \             1
+#          /  /    \     /       /   /     \     \     \
+#         /  c      \   e       /   m       p     \   _ j __        2
+#        /  /  \     \ / \     /   / \     / \     \ /   \  \
+#       /  a    b     d   \   /   l   k   o   n     i     h  \      3
+#      /  / \  / \   /|\   \ /   / \ / \ / \  /\   / \   / \  \
+#     C   I V  L M  F W Y   H   N   D   E  Q  K R  S T   A G   P    5
+#
+#     Note: During clustering,  matches  between  unrelated  amino
+#     acids,  i.e.  connected  only  through  the  'X' (wild-card)
+#     class, score -2
+#Paul berti@bri.nrc.ca 
+PIMA := [
+'  C  I  V  L  M  F  W  Y  H  N  D  E  Q  K  R  S  T  A  G  P',
+'  5',
+'  1  5',
+'  1  3  5',
+'  1  2  2  5',
+'  1  2  2  3  5',
+'  1  1  1  1  1  5',
+'  1  1  1  1  1  3  5',
+'  1  1  1  1  1  3  3  5',
+' -2 -2 -2 -2 -2  2  2  2  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  2  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  1  1  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  1  1  2  2  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  1  1  2  2  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  1  1  1  1  1  1  5',
+' -2 -2 -2 -2 -2 -2 -2 -2  1  1  1  1  1  1  1  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2  2  2  5',
+' -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2  2  2  3  5',
+' -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2 -2  2  2  2  2  5' ]:
+PIMA := BuildScoreMatrix(PIMA,250):
+
+#
+# Matrices derived from the genetic code.
+# These matrices assume that the only source of mutations are
+# random mutations in any of the three bases.
+#
+# There are 526 possible transitions between non-stop to non-stop
+# codons, all are considered equally likely.
+#
+# Let A be the column vector of all tri-nucleotides, then
+#
+#       A' = L x A
+#
+# where L is a 64x64 matrix, each column having 9 or
+# less non-zero entries besides L[i,i] = -9
+#
+# Transitions from/to stop codons are not recorded, as
+# it is assumed that these are immediately discarded
+# by natural selection (debatable assumption, but more
+# solid than other assumptions).  Hence the markov process
+# is lossy (the probabilities will slowly decay).  This loss
+# is compensated by a growth in the population, which is
+# assumed to equalize the decay.
+#
+# The steady state frequency of the amino acids, F, is not
+# exactly proportional to the number of codons encoding the
+# amino acids as some of the transitions leave the system.
+# F is the eigenvector of the mutation matrix with largest
+# eigenvalue.  Since the mutation matrices are of the form
+# exp(L*t), the eigenvectors of L are the eigenvectors of
+# exp(L*t).  Let l1 be the largest eigenvalue of L, l1=-.31736
+# and exp(l1)=0.72806.
+#
+# The combined effect of mutation and expansion is then
+#
+#	exp(L*t) * exp(-l1*t)	(mutation times normalization)
+#
+# A 1-PAM matrix is defined as a matrix M = exp( (L-l1)*t1 )
+# such that for the induced amino acid matrix (20x20),
+# sum( AF[i]*(1-AA[i,i]), i=1..20 ) = 0.01.
+#
+#				Gaston H. Gonnet (Oct 1992)
+proc()
+global GENETIC10, GENETIC50, GENETIC100, GENETIC150, GENETIC200, GENETIC250;
+LogGenCodeMatrix := CreateArray(1..20,1..20):
+TransPerAA := CreateArray(1..20);
+l1 := -.317368627181183574330204120037;
+F := [.0146062474681811686,.0169064031755616466,.0149912774338881490,
+  .0169064031755616466,.0169064031755616466,.0181527460838384347,
+  .0174787182907164194,.0181527460838384347,.0149912774338881490,
+  .0174787182907164194,.0168046904975944040,.0174787182907164194,
+  .0169064031755616466,.0181527460838384347,.0174787182907164194,
+  .0181527460838384347,.0146062474681811686,.0169064031755616466,
+  .0149912774338881490,.0169064031755616466,.0169064031755616466,
+  .0181527460838384347,.0174787182907164194,.0181527460838384347,
+  .0149912774338881490,.0174787182907164194,.0168046904975944040,
+  .0174787182907164194,.0169064031755616466,.0181527460838384347,
+  .0174787182907164194,.0181527460838384347,.0146062474681811686,
+  .0169064031755616466,.0149912774338881490,.0169064031755616466,
+  .0169064031755616466,.0181527460838384347,.0174787182907164194,
+  .0181527460838384347,.0149912774338881490,.0174787182907164194,
+  .0168046904975944040,.0174787182907164194,.0169064031755616466,
+  .0181527460838384347,.0174787182907164194,.0181527460838384347,0,
+  .0126911217265076710,0,.0126911217265076710,.0126911217265076710,
+  .0162323753824396313,.0143172496407661337,.0162323753824396313,0,
+  .0143172496407661337,.0124021238990926360,.0143172496407661337,
+  .0126911217265076710,.0162323753824396313,.0143172496407661337,
+  .0162323753824396313];
+t1 := 0.0011581930947390058;
+InducedAAMatrix := proc( M:array(numeric,64,64), F:array(numeric,64) )
+AF := CreateArray(1..20);
+AA := CreateArray(1..20,1..20);
+for i1 to 4 do for i2 to 4 do for i3 to 4 do
+    i := CodonToInt(IntToB(i1),IntToB(i2),IntToB(i3));
+    if i=22 then next fi;
+    AF[i] := AF[i] + F[16*i1+4*i2+i3-20];
+
+    for j1 to 4 do for j2 to 4 do for j3 to 4 do
+	j := CodonToInt(IntToB(j1),IntToB(j2),IntToB(j3));
+	if j=22 then next fi;
+	AA[i,j] := AA[i,j] + M[16*i1+4*i2+i3-20,16*j1+4*j2+j3-20] *
+	    F[16*j1+4*j2+j3-20]
+	od od od;
+    od od od;
+[AF,AA]
+end:
+
+Change := proc( M:array(numeric,64,64), F:array(numeric,64) )
+ch := 0;
+for i1 to 4 do for i2 to 4 do for i3 to 4 do
+    i := CodonToInt(IntToB(i1),IntToB(i2),IntToB(i3));
+    if i=22 then next fi;
+
+    for j1 to 4 do for j2 to 4 do for j3 to 4 do
+	j := CodonToInt(IntToB(j1),IntToB(j2),IntToB(j3));
+	if j=22 or j=i then next fi;
+	ch := ch + M[16*i1+4*i2+i3-20,16*j1+4*j2+j3-20] *
+	    F[16*j1+4*j2+j3-20]
+	od od od;
+    od od od;
+ch
+end:
+
+for B1 to 4 do for B2 to 4 do for B3 to 4 do
+    i := CodonToInt(IntToB(B1),IntToB(B2),IntToB(B3));
+    if i=22 then next fi;
+    for BB1 to 4 do
+	j := CodonToInt(IntToB(BB1),IntToB(B2),IntToB(B3));
+	if j=22 or BB1=B1 then next fi;
+	TransPerAA[i] := TransPerAA[i]+1;
+	LogGenCodeMatrix[j,i] := LogGenCodeMatrix[j,i]+1
+	od;
+    for BB2 to 4 do
+	j := CodonToInt(IntToB(B1),IntToB(BB2),IntToB(B3));
+	if j=22 or BB2=B2 then next fi;
+	TransPerAA[i] := TransPerAA[i]+1;
+	LogGenCodeMatrix[j,i] := LogGenCodeMatrix[j,i]+1
+	od;
+    for BB3 to 4 do
+	j := CodonToInt(IntToB(B1),IntToB(B2),IntToB(BB3));
+	if j=22 or BB3=B3 then next fi;
+	TransPerAA[i] := TransPerAA[i]+1;
+	LogGenCodeMatrix[j,i] := LogGenCodeMatrix[j,i]+1
+	od;
+    od od od;
+    tot := LogGenCodeMatrix[1];
+    for i from 2 to 20 do tot := tot+LogGenCodeMatrix[i] od;
+    for i to 20 do LogGenCodeMatrix[i,i] := LogGenCodeMatrix[i,i]-tot[i] od;
+    for i to 20 do for j to 20 do
+	LogGenCodeMatrix[i,j] := LogGenCodeMatrix[i,j]/TransPerAA[j] od od;
+    LogGenCodeMatrix := LogGenCodeMatrix/74.0847761226853;
+    M := exp(LogGenCodeMatrix);
+    AF := CreateArray(1..20):
+    for i to 20 do AF[i] := M[i,1]/M[1,i] od:
+    AF := AF/sum(AF):
+    GENETIC10 := CreateDayMatrix(LogGenCodeMatrix,10);
+    GENETIC50 := CreateDayMatrix(LogGenCodeMatrix,50);
+    GENETIC100 := CreateDayMatrix(LogGenCodeMatrix,100);
+    GENETIC150 := CreateDayMatrix(LogGenCodeMatrix,150);
+    GENETIC200 := CreateDayMatrix(LogGenCodeMatrix,200);
+    GENETIC250 := CreateDayMatrix(LogGenCodeMatrix,250);
+end():
+
+
+# Grantham's structural dissimilarity matrix
+Grantham := [ 
+'  A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V',
+'  0',
+'112  0',
+'111 86  0',
+'126 96 23  0',
+'195180139154  0',
+' 91 43 46 61154  0',
+'107 54 42 45170 29  0',
+' 60125 80 94159 87 98  0',
+' 86 29 68 81174 24 40 98  0',
+' 94 97149168198109134135 94  0',
+' 96102153172198113138138 99  5  0',
+'106 26 94101202 53 56127 32102107  0',
+' 84 91142160196101126127 87 10 15 95  0',
+'113 97158177205116140153100 21 22102 28  0',
+' 27103 91108169 76 93 42 77 95 98103 87114  0',
+' 99110 46 65112 68 80 56 89142145121135155 74  0',
+' 58 71 65 85149 42 65 59 47 89 92 78 81103 38 58  0',
+'148101174181215130152184115 61 61110 67 40147177128  0',
+'112 77143160194 99122147 83 33 36 85 36 22110144 92 37  0',
+' 64 96133152192 96121109 84 29 32 97 21 50 68124 69 88 55  0' ]:
+Grantham := BuildScoreMatrix(Grantham,250):
+for i to 20 do for j to 20 do Grantham[Sim,i,j] := -Grantham[Sim,i,j] od od;
+
+
+
+Machlaclan := [
+'  A  R  N  D  C  Q  E  G  H  I  L  K  M  F  P  S  T  W  Y  V',
+'  8',
+'  2  9',
+'  3  3  8',
+'  3  1  5  8',
+'  1  1  1  1  9',
+'  3  5  4  4  0  8',
+'  4  3  4  5  0  5  8',
+'  3  3  3  3  1  2  3  8',
+'  3  5  4  4  3  4  2  2  8',
+'  2  1  1  0  1  0  1  1  2  8',
+'  2  2  1  1  0  3  1  1  2  5  8',
+'  3  5  4  3  0  4  4  3  4  1  2  8',
+'  3  1  2  2  3  3  1  1  3  5  6  1  8',
+'  1  1  0  1  0  0  0  0  4  3  5  0  5  9',
+'  4  3  1  3  0  3  4  3  3  1  1  3  1  1  8',
+'  4  4  5  3  2  4  4  3  3  2  2  3  2  2  3  8',
+'  3  3  3  3  2  3  4  2  4  3  3  3  3  1  3  5  8',
+'  1  3  0  0  2  2  1  1  3  3  3  1  1  6  0  3  2  9',
+'  1  2  2  1  1  1  2  0  4  3  3  1  2  6  0  3  1  6  9',
+'  3  2  1  1  1  2  2  2  2  5  5  2  4  3  2  2  3  2  3  8' ]:
+Machlaclan := BuildScoreMatrix(Machlaclan,250):
+
+
+Matrices := proc()
+  op(sort([names(DayMatrix)])),
+  'are defined as Dayhoff (scoring) matrices'
+end:
+
+DayMatrixScale := proc (dm: DayMatrix)
+
+  if not type (AF, array (numeric, 20)) then
+    error ('AF must be assigned an array of frequencies')
+  fi;
+  # Get an upper limit for lambda
+  x := 0;
+  for i to 20 do x := max (x, - ln (AF[i]) / dm[Sim,i,i]) od;
+  # Half interval until sign changes
+  do
+    f := -1;
+    for i to 20 do
+      f := f + AF[i]^2 * exp (x * dm[Sim,i,i]);
+      for j to i - 1 do
+	f := f + 2 * AF[i] * AF[j] * exp (x * dm[Sim,i,j])
+      od
+    od;
+    if f < 0 then break fi;
+    x := x / 2
+  od;
+  x := 2 * x;
+  # Newton iteration
+  do
+    fs := 0; f := -1;
+    for i to 20 do
+      y := AF[i]^2 * exp (x * dm[Sim,i,i]);
+      fs := fs + dm[Sim,i,i] * y;
+      f := f + y;
+      for j to i - 1 do
+	y := 2 * AF[i] * AF[j] * exp (x * dm[Sim,i,j]);
+	fs := fs + dm[Sim,i,j] * y;
+	f := f + y
+      od
+    od;
+    xo := x;
+    x := x - f / fs;
+    if x >= xo then break fi
+  od;
+  x
+end:
+
+FindEntropy := proc (dm: DayMatrix)
+
+  l := DayMatrixScale (dm);
+  H := 0;
+  for i to 20 do
+    H := H + AF[i]^2 * exp (l * dm[Sim,i,i]) * dm[Sim,i,i];
+    for j to i - 1 do
+      H := H + 2 * AF[i] * AF[j] * exp (l * dm[Sim,i,j]) * dm[Sim,i,j]
+    od
+  od;
+  H * l / ln (2)
+end:
+
+end: #module

@@ -1,0 +1,207 @@
+#
+#	CircularTour -- find a minimal cost Circular tour
+#
+#	This is a front-end to ComputeTSP where we give as
+#	input either a set of sequences or a distance matrix
+#	or an AllAll matrix and the result is a minimal cost
+#	tour broken at the most convenient place (highest cost).
+#
+#	Input:
+#		List of sequences - the sequences are aligned
+#				all against all using Global alignments
+#				with the default DM matrix.  (rest is
+#				as with AllAll matrix).
+#
+#		AllAll matrix - if the Alignments have a PamDistance, the
+#				minimal cost tour is based on PamDistances.
+#				If not it is based on maximizing the Score
+#				of the neighbouring alignments.
+#
+#		Distance matrix - the tour is computed to minimize the
+#				sum of the distances.
+#
+#	Output:
+#		list(posint) - a list of the indices of the best tour.
+#				The link L[n]--L[1] is the one with the
+#				worst cost.
+#
+#					Gaston H. Gonnet (June 19th, 2003)
+#
+
+
+CircularTour := proc( inp:{list,matrix} ) -> list(posint);
+
+n := length(inp);
+
+if type( inp, array(nonnegative,n,n)) then
+     Dist := inp
+
+elif type(inp,array({0,Alignment},n,n)) then
+     Dist := CreateArray(1..n,1..n);
+     if inp[1,2,PamDistance] = 0 then
+	  for i to n do for j from i+1 to n do
+	      Dist[i,j] := Dist[j,i] := inp[i,j,Score]
+	      od od;
+	  MaxScore := max(Dist);
+	  for i to n do for j from i+1 to n do
+	      Dist[i,j] := Dist[j,i] := MaxScore-inp[i,j,Score]
+	      od od
+     else for i to n do for j from i+1 to n do
+	      Dist[i,j] := Dist[j,i] := inp[i,j,PamDistance]
+	      od od
+	  fi
+
+elif type(inp,list(string)) then
+     Seqs := zip(Sequence(inp));
+     AllAll := CreateArray(1..n,1..n):
+     st1 := st := time();  nal := 0;
+     for i to n do for j from i+1 to n do
+	  AllAll[i,j] := AllAll[j,i] := Align(Seqs[i],Seqs[j],DM,Global);
+	  nal := nal+1;
+	  if printlevel > 2 and time()-st > 300 then
+		printf( '... matched %d against %d, %.1f mins left\n',
+		    i, j, (time()-st1)*(n*(n-1)/2/nal-1)/60 );
+		st := time()
+		fi
+	  od od;
+     return( procname(AllAll) )
+
+else error(inp,'is an invalid argument') fi;
+
+t := ComputeTSP(Dist);
+t := [op(t), t[1]];
+j := 1;
+for i from 2 to n do if Dist[t[i],t[i+1]] > Dist[t[j],t[j+1]] then j := i fi od;
+[op(j+1..n,t), op(1..j,t)]
+end:
+
+
+
+
+
+#
+#	Clusters - Find clusters in a set of sequences or any objects
+#		from their distance or similarity constraints.
+#
+#
+#	Input:
+#		List of sequences - the sequences are aligned
+#				all against all using Global alignments
+#				with the default DM matrix.  (rest is
+#				as with AllAll matrix).
+#
+#		AllAll matrix - if the cluster definition is based on
+#				MaxDistance=ddd or AveDistance=dd then the
+#				clusters are selected so that the PamDistance
+#				of the Alignments are less than ddd.  If
+#				MinSimil=sss or AveSimil=sss is specified,
+#				the the clusters will be determined by the
+#				Score of the Alignments being larger than sss.
+#
+#		Distance matrix - MaxDistance=ddd or AveDistance=ddd should
+#				be specified and the clusters are determined
+#				by this maximum distance
+#
+#	Output:
+#		list(set(posint)) - a list of sets of indices.  Each set is
+#				a cluster.  All indices are included, hence
+#				some clusters may be singletons.
+#
+#					Gaston H. Gonnet (July 5th, 2003)
+#
+Clusters := proc( inp:{list,matrix}, lim:string=positive ) -> list(set(posint));
+
+n := length(inp);
+typ := lowercase(op(1,lim));
+if not member(typ,{'maxdistance','minsimil','avedistance','avesimil'}) then
+     error(lim,'is an invalid limiting value')
+
+elif type( inp, array(nonnegative,n,n)) then
+     eps := inp - transpose(inp);
+     if typ <> 'maxdistance' and typ <> 'avedistance' then
+	  error('for distance matrices, Max/AveDistance should be specified' )
+     elif min(inp) < 0 then error('Distance matrix contains negative values')
+     elif max(eps)-min(eps) > 1e-10 * max(inp) then
+	  error('distance matrix is not symmtric' ) fi;
+     Dist := inp
+
+elif type(inp,array({0,Alignment},n,n)) then
+     Dist := CreateArray(1..n,1..n);
+     if typ = 'minsimil' or typ = 'avesimil' then
+	  for i to n do for j from i+1 to n do
+	      Dist[i,j] := Dist[j,i] := inp[i,j,Score]
+	      od od;
+     else for i to n do for j from i+1 to n do
+	      Dist[i,j] := Dist[j,i] := inp[i,j,PamDistance]
+	      od od
+	  fi
+
+elif type(inp,list(string)) then
+     Seqs := zip(Sequence(inp));
+     AllAll := CreateArray(1..n,1..n):
+     st1 := st := time();  nal := 0;
+     for i to n do for j from i+1 to n do
+	  AllAll[i,j] := AllAll[j,i] := Align(Seqs[i],Seqs[j],DM,Global);
+	  nal := nal+1;
+	  if printlevel > 2 and time()-st > 300 then
+		printf( '... matched %d against %d, %.1f mins left\n',
+		    i, j, (time()-st1)*(n*(n-1)/2/nal-1)/60 );
+		st := time()
+		fi
+	  od od;
+     return( procname(AllAll,lim) )
+
+else error(inp,'is an invalid argument') fi;
+
+v := op(2,lim);
+unassig := { seq(i,i=1..n) };
+r := [];
+
+if typ='minsimil' or typ='maxdistance' then
+     # construct the neighbours sets
+     nei := CreateArray( 1..n, {} );
+     for i to n do
+         for j to n do
+	     if typ='minsimil' and Dist[i,j] >= v or
+	        typ='maxdistance' and Dist[i,j] <= v then
+	          nei[i] := nei[i] union {j} fi
+	     od
+         od;
+
+     # build the clusters
+     while length(unassig) > 0 do
+         cl1 := {};
+         cl2 := nei[unassig[1]];
+         while cl1 <> cl2 do
+	     cl1 := cl2;
+	     for z in cl1 do cl2 := cl2 union nei[z] od;
+	     od;
+         r := append(r,cl2);
+         unassig := unassig minus cl2;
+         od;
+     r
+
+else # build the clusters
+     while length(unassig) > 0 do
+	 cl2 := {unassig[1]};
+	 do  if typ='avesimil' then
+		  best := 0;
+		  for z in unassig minus cl2 do
+		      zd := sum( Dist[z,i], i=[op(cl2)] ) / length(cl2);
+		      if zd > best then best := zd;  bestz := z fi
+		      od;
+		  if best >= v then cl2 := cl2 union {bestz} else break fi
+	     else best := DBL_MAX;
+		  for z in unassig minus cl2 do
+		      zd := sum( Dist[z,i], i=[op(cl2)] ) / length(cl2);
+		      if zd < best then best := zd;  bestz := z fi
+		      od;
+		  if best <= v then cl2 := cl2 union {bestz} else break fi
+		  fi
+	     od;
+	 r := append(r,cl2);
+	 unassig := unassig minus cl2;
+	 od;
+     r
+     fi
+end:

@@ -1,0 +1,46 @@
+#
+#	Counter: A Counter is an object
+#	which stores a number.  It is understood that this number
+#	is incremented occasionally, that is the purpose of a counter.
+#	It should be possible to have as many counters as we want.
+#	It is also desirable to be able to associate a name or id
+#	to the counter, so that some standard printing will show
+#	the name together with its value.  All these operations
+#	should be designed to be as easy and obvious as possible.
+#
+#			From the bio-recipe Counters
+
+Counter := proc( title:string, value:numeric ) option polymorphic;
+  if nargs=0 then noeval( Counter('',0) )
+  elif nargs=1 then noeval( Counter(title,0) )
+  else noeval( Counter(title,value) ) fi
+end:
+
+Counter_plus := proc(a,b) option internal;
+  # return the Counter, so that c1+1+1 works correctly
+  if type(a,numeric) then b['value'] := b['value']+a;  b
+  elif type(b,numeric) then a['value'] := a['value']+b;  a
+  else error('invalid arguments') fi
+end:
+
+Counter_times := proc(a,b) option internal;
+  if type(a,numeric) then b['value'] := b['value']*a
+  elif type(b,numeric) then a['value'] := a['value']*b
+  else error('invalid arguments') fi
+end:
+
+Counter_string := proc( c ) option internal;
+ c['title'] . ': ' .
+ sprintf( If( type(c['value'],integer), '%.0f', '%.8g'), c['value'] )
+end:
+
+Counter_printf := proc( fmt:string, c:Counter ) option internal;
+ c['title'] . ': ' .  sprintf( fmt, c['value'] )
+end:
+
+Counter_XML := proc(counter:Counter )
+        TagNV(Counter,counter[title],counter[value])
+end:
+
+CompleteClass(Counter);
+Protect(Counter);

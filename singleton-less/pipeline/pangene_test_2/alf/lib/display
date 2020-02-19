@@ -1,0 +1,21 @@
+#
+#	display function
+#		Display an object in a visual way
+#
+#						Gaston H. Gonnet (Dec 22, 2001)
+display := proc( a ) option polymorphic;
+if nargs=1 and type(a,string) and uppercase(a)=PLOT then
+     ViewPlot()
+else error('does not know how to display',args) fi
+end:
+
+
+Graph_display := proc( G:Graph )
+old := Set(plotoutput='graph_display.ps');
+DrawGraph(G);
+ViewPlot();
+Set(plotoutput=old);
+NULL
+end:
+
+

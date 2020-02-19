@@ -1,0 +1,28 @@
+# Rewrite the list of possible commands for darwin shell autocompletion
+# (which works by invoking ctrl-space)
+#       cd, 2008
+
+RedoCompletion := proc()
+    out := [];
+    Set(printgc=false);
+    n := names();
+    cmdfile := libname.'/cmds';
+    CallSystem('chmod u+w '.cmdfile);
+    for my_i in n do
+        if my_i = NULL or my_i = 'NULL' then
+            out := append(out,'NULL');
+        else
+            if length(my_i) > 1 then
+                #if type(eval(my_i),procedure) then
+                #    out := append(out,sprintf('%s(',my_i));
+                #else
+                    out := append(out,sprintf('%s',my_i));
+                #fi;
+            fi;
+        fi;
+    od;
+    OpenWriting(cmdfile);
+    prints(ConcatStrings(sort(out),'\n'));
+    OpenWriting(previous);
+    return(NULL);
+end:

@@ -1,0 +1,117 @@
+#
+#	Species related functions (mostly related to SwissProt)
+#
+#					Gaston H. Gonnet (Dec 17, 2001)
+
+Species_Entry := proc( specname:string )
+global SearchOS_table, Species_table;
+
+if not type(DB,database) then
+     error('DB is not assigned to any database.');
+fi;
+if not type(Species_table,list(posint)) then
+     t := CreateArray(1..DB[TotEntries],'');
+     for i to DB[TotEntries] do
+         t[i] := SearchTag('OS',DB[string,DB[entry,i]+1..DB[entry,i+1]]) od;
+     SearchOS_table := sort(t);
+
+     Species_table := [1];
+     for i to length(SearchOS_table)-1 do
+	 if SearchOS_table[i] <> SearchOS_table[i+1] then
+	     Species_table := append(Species_table,i+1) fi od;
+     Species_table := append(Species_table,i+1);
+     fi;
+
+found := [];
+for i to length(Species_table)-1 do
+     if SearchString( specname, SearchOS_table[Species_table[i]] ) >= 0 then
+	 found := append(found,i) fi
+	 od;
+if found=[] then for tol to 3 do
+     for i to length(Species_table)-1 do
+	 if ApproxSearchString(specname,SearchOS_table[Species_table[i]],tol)
+		>= 0 then found := append(found,i) fi
+	 od;
+     if length(found) > 0 then break fi;
+     od fi;
+
+r := [];
+for i in found do
+     for j from Species_table[i] to Species_table[i+1]-1 do
+	 r := append(r,Entry(SearchOS_table[j]))
+	 od;
+     if printlevel > 1 then
+	 printf( '%3d sequences of %s\n', Species_table[i+1]-Species_table[i],
+	     SearchOS_table[Species_table[i]] ) fi
+     od;
+
+r
+end:
+
+
+
+#
+#	Extract names of species from SwissProt
+#
+#	Optionally, select the species having a particular
+#	taxonomic classification 
+#					Gaston H. Gonnet (Dec 18th, 2001)
+SP_Species := proc( taxon:string )
+# Setup tables
+if not type(DB,database) then
+    error('a SwissProt database must be loaded in DB') fi;
+Species_Entry('Abies veitchii');
+if not type(Species_table,list(posint)) then
+    error('could not create Species_table') fi;
+
+Species := [];
+for i to length(Species_table)-1 do
+    t := SearchOS_table[Species_table[i]];
+    if nargs=1 then
+	if SearchString( taxon, SearchTag( 'OC', Entry(t) )) < 0 then next fi
+	fi;
+    j := SearchString( ' (', t );
+    if j > 0 then t := t[1..j] fi;
+    j := SearchString( ', and', t );
+    if j > 0 then t := t[1..j] fi;
+    while member( t[-1..-1], {' ', '.'}) do t := t[1..-2] od;
+    Species := append(Species,t)
+    od:
+{op(Species)}
+end:
+
+
+
+
+SPCommonName := proc( entry )
+if type(entry,{posint,structure}) or type(entry,string) and entry[1..3]='<E>'
+     then en := Entry(entry);  t := SearchTag('OS',en);
+elif type(entry,string) then
+     eo := GetOffset(entry);
+     if eo < 0 or eo >= DB[TotChars] then
+	 eo := SearchString( entry, DB[string] );
+	 if eo < 0 then error('invalid argument') fi;
+	 fi;
+     t := eo+DB[string];
+     i := SearchString('</',t);
+     if i >= 0 then t := t[1..i] fi;
+     en := ''
+else error('invalid argument, must be entry, entry number or description') fi;
+
+if t <> '' then
+     i := SearchString('(',t);
+     if i < 0 then
+	  while member(t[-1..-1],{' ','.'}) do t := t-1 od;
+	  return( t ) fi;
+     t := i+1+t;
+     i := SearchString(')',t);
+     if i < 0 then return(t) else return(t[1..i]) fi
+     fi;
+
+for z in ['AC','ID'] do
+     t := SearchTag(z,en);
+     if t <> '' then return(t) fi;
+     od;
+
+t
+end:

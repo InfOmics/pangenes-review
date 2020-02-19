@@ -1,0 +1,103 @@
+IsWhiteSpace := proc(char:string)
+    if length(char) <> 1 then error('was expecting a single character'); fi;
+
+    whiteSpaces := {' ','\t','\n'};
+    return(has(whiteSpaces,char));
+end;
+
+Trim := proc(str:string)
+    i := 1;
+    for i from 1 to length(str) while(IsWhiteSpace(str[i])) do
+    od;
+
+    if i > length(str) then
+        return('');
+    fi;
+
+    j := length(str);
+    for j from length(str) by -1 to 1 while(IsWhiteSpace(str[j])) do
+    od;
+
+    return(str[i..j]);
+end;
+
+GetHMMERAlignment := proc(nseqs:integer, hmmFile:string)
+    r := TimedCallSystem(hmmerDir.'/bin/hmmemit -a -n '.nseqs.' '.hmmFile, 10):
+
+    i := 1:
+    while r[2,i..i+10] <> '# STOCKHOLM' do i := i + 1 od:
+
+    lines := SplitLines(r[2,i..-1]):
+    labels := [seq('seq'.i, i=1..nseqs)]:
+
+    labs := CreateArray(1..length(labels),'');
+    seqs := CreateArray(1..length(labels),'');
+    rf := '':
+
+    for i to length(lines) while lines[i][1] <> '/' do
+        lines[i] := Trim(lines[i]);
+        if lines[i] = '' then
+            next;
+        elif lines[i][1..4] = '#=GC' then
+            words := ReplaceString('\t', ' ', Trim(lines[i]));
+            j := 1:
+            while j < length(words) do
+                if words[j..j+1] = '  ' then
+                    words := words[1..j].words[j+2..-1]:
+                    next:
+                fi:
+                j := j + 1:
+            od:
+            words := SearchDelim(' ', words);
+            if words[2] = 'RF' then
+               err := traperror(assign(noeval(rf),words[3]));
+               if err = lasterror then
+                  warning(err);
+               fi;
+            elif words[2] = 'NH' then
+               err := traperror(assign(noeval(tree),ParseNewickTree(words[3])));
+               if err = lasterror then
+                  warning(err);
+               fi;
+               trees[tree_id] := tree;
+            fi;
+        elif lines[i][1] <> '#' then
+            words := ReplaceString('\t', ' ', Trim(lines[i]));
+            words := SearchDelim(' ', words);
+            if length(words) < 2 then continues; fi;
+
+            words := [words[1], words[length(words)]];
+
+            if type(labels,list(string)) then
+                for j from 1 to length(labels) do
+                    if labels[j] = words[1] then
+                        labs[j] := words[1];
+                        seqs[j] := uppercase(ReplaceString('-','_',words[2]));
+                    fi;
+                od;
+            else
+                labs[i] := words[1];
+                seqs[i] := uppercase(ReplaceString('-','_',words[2]));
+            fi;
+        fi;
+    od;
+    rfnum := CreateArray(1..length(rf),0):
+    for i to length(rf) do
+        rfnum[i] := i:
+    od:
+    
+    repeats := CreateArray(1..nseqs, 1..2, 0):
+    for i to length(seqs) do
+        curseq := '':
+        curarr := []:
+        for j to length(rfnum) do
+            if seqs[i,j] = '_' or seqs[i,j] = '.' then next fi:
+            curseq := curseq.seqs[i,j]:
+            curarr := append(curarr, rfnum[j]):
+        od:
+        repeats[i,1] := curseq:
+        repeats[i,2] := curarr:
+    od:
+    
+    repeats
+end:

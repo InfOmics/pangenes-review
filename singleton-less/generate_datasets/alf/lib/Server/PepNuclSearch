@@ -1,0 +1,13 @@
+# Purpose: PepNuclSearch (dummy) server
+# Author:  CompBioResGrp
+# Created: 29 Jun 1994
+#
+init := proc () end:
+job := proc ()
+  'The PepNuclSearch service requested is not yet installed.\n'.
+  'When this service becomes available, it will be announced in\n'.
+  'bionet.software and bionet.general as well as in "help news" of\n'.
+  'this server.\n'.
+  'In the meantime, your request cannot be processed.\n'.
+  '   yours sincerely, CBRG automatic server.\n'
+end:

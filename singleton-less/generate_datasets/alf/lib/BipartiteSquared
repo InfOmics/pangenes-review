@@ -1,0 +1,137 @@
+#
+#	BipartiteSquared measures of distace between trees
+#
+#	In each tree, configurations of 2, 3 or 4 subtrees are
+#	identified and matched (bipartite matching) to the each other.
+#
+#	At the top level, a bipartite matching is applied to the
+#	configurations of each tree to find the minimal cost.
+#
+#	The individual costs of the subtrees have two possibilities:
+#
+#	    RF:
+#		equal -> 0, not equal -> 1 (hamming distance which is
+#			equivalent to Robinson-Foulds for configurations
+#			of size 2
+#
+#	    SizeDiff:
+#		number of leaves not in the intersection, or
+#		length( ( As union Bs ) minus ( As intersect Bs ) )
+#
+#	If the global variable MinLen is assigned a value, any edge which
+#	is <= MinLen is considered to be non-existent, that is the tree is
+#	n-ary, rather than binary.  The distances are computed accordingly.
+#	
+#		Gaston H. Gonnet (June 27th, 2010)
+#
+
+module external BipartiteSquared;
+
+nleaves := proc( t:Tree )
+if type(t,Leaf) then 1 else procname(t[1]) + procname(t[3]) fi end:
+
+leaves := proc( t:Tree )
+if type(t,Leaf) then {t[1]} else remember(procname(t[1])) union
+	remember(procname(t[3])) fi end:
+
+#
+#	Find the leaf-sets for a particular tree,
+#	these are usually the set of leaves for each
+#	configuration:
+#		internal edge, (NumberSubtrees=2) (no one-side singletons)
+#		   represented by { {leaves-A}, {leaves-B} } for A---B
+#		internal node, (NumberSubtrees=3)
+#		   represented by { {leaves-A}, {leaves-B}, {leaves-C} }
+#			for A---(B,C)
+#		quartet, (NumberSubtrees=4)
+#		   represented by { {{As}, {Bs}}, {{Cs}, {Ds}} }
+#			for (A,B)--(C,D)
+#
+#	Gaston H. Gonnet (June 27th, 2010)
+#
+LeafSets := proc( t:Tree, ns:posint )
+if ns=2 then LeafSets_IntEdge(t)
+elif ns=3 then LeafSets_IntNode(t)
+elif ns=4 then LeafSets_Quartet(t)
+else error(ns,'invalid number of subtrees') fi
+end:
+
+
+#########################################################
+# produces Leaf-sets {{As},{Bs}} for each internal edge #
+#########################################################
+LeafSets_IntEdge := proc( t:Tree )
+r := [];
+proc( t, above )
+  external r;
+  if type(t,Leaf) then return() fi;
+  l1 := remember(leaves(t[1]));  l1a := l1 union above;
+  l3 := remember(leaves(t[3]));  l3a := l3 union above;
+  if type(MinLen,nonnegative) then
+       if length(l1a) > 1 and length(l3) > 1 and |t[2]-t[3,2]| > MinLen then
+	    r := append( r, {l1a,l3} ) fi;
+       if length(l1) > 1 and length(l3a) > 1 and |t[2]-t[1,2]| > MinLen then
+	    r := append( r, {l1,l3a} ) fi;
+  else
+       if length(l1a) > 1 and length(l3) > 1 then r := append( r, {l1a,l3} ) fi;
+       if length(l1) > 1 and length(l3a) > 1 then r := append( r, {l1,l3a} ) fi;
+  fi;
+  procname( t[1], l3a );
+  procname( t[3], l1a );
+end( t, {} );
+{op(r)}
+end:
+
+
+##############################################################
+# produces Leaf-sets {{As},{Bs},{Cs}} for each internal node #
+##############################################################
+LeafSets_IntNode := proc( t:Tree )
+r := [];
+LeafSets_IntNode_r := proc( t, above )
+  external r;
+  if type(t,Leaf) then return() fi;
+  l1 := remember(leaves(t[1]));
+  l3 := remember(leaves(t[3]));
+  r := append( r, {l1,l3,above} );
+  procname( t[1], l3 union above );
+  procname( t[3], l1 union above );
+end;
+LeafSets_IntNode_r( t[1], remember(leaves(t[3])) );
+LeafSets_IntNode_r( t[3], remember(leaves(t[1])) );
+{op(r)}
+end:
+
+BipartiteSquared := proc( t1, t2 ;
+	(NumberSubtrees=2):{2,3,4},
+	(ConfCost='RF'):{'RF','SizeDiff'} )
+
+if leaves(t1) <> leaves(t2) then
+    error(t1,t2,'trees are not on the same set of leaves') fi;
+ls1 := LeafSets(t1,NumberSubtrees);
+ls2 := LeafSets(t2,NumberSubtrees);
+
+if ls1={} or ls2={} then 0 # no non-trivial non-zero branch
+elif ConfCost = 'RF' then
+     # Robinson-Foulds means that the cost is 0/1 if the sets
+     # are identical/different.  It can be computed directly
+     min( length( ls1 minus ls2 ), length( ls2 minus ls1 ) )
+else 
+     Cost := CreateArray(1..length(ls1),1..length(ls2));
+     Cost2 := CreateArray(1..NumberSubtrees,1..NumberSubtrees);
+     for i1 to length(ls1) do
+	 for i2 to length(ls2) do
+	     if ls1[i1] = ls2[i2] then Cost[i1,i2] := 0;  next fi;
+	     for j1 to NumberSubtrees do for j2 to NumberSubtrees do
+		Cost2[j1,j2] := length( (ls1[i1,j1] union ls2[i2,j2]) minus
+			(ls1[i1,j1] intersect ls2[i2,j2]) );
+	     od od;
+	     m := BipartiteMatching( Cost2 );
+             Cost[i1,i2] := sum( Cost2[w[1],w[2]], w=m );
+     od od;
+     m := BipartiteMatching( Cost );
+     sum( Cost[w[1],w[2]], w=m );
+fi;
+end:
+
+end: # end module

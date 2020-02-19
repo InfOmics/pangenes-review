@@ -1,0 +1,251 @@
+module external doInline;
+
+doInline := proc(pd:structure) -> structure;
+   if type(pd[6],structure(anything,StatSeq)) then
+      result := iterateStatSeq(pd[6],length(pd[2]));
+
+      # apply changes and add new locals
+      pd[6] := result[1];
+      pd[2] := append(pd[2],op(result[2]));
+   fi:
+
+   pd;
+end:
+
+canBeInlined := proc( p : procedure ) -> boolean;
+   pd := disassemble(op(p));
+   body := pd[6];
+   
+   not member(builtin, pd[3]) and
+   length(pd) < 7 and
+   checkLocals(pd[6]) and
+   checkReturns(pd[6]);
+   
+   # what about polymorphic procedures?
+   
+   #ensure it does not contain returns
+   #ensure it does not have optional params (NYI)
+   #ensure it does not use args array (Local(0)??)
+   #ensure it does not use locals from outer scope -> no problem because assemble will die anyway ;)
+end:
+
+# checks the code for return statements
+checkReturns := proc(s) -> boolean;
+   ret := true;
+   
+   if(type(s,structure)) then
+      t := top(s);
+      if t = structure and s[1] = return then
+         ret := false;
+      else
+         for ss in s do
+	    if not procname(ss) then
+	      ret := false;
+	      break;
+	    fi:
+	 od:
+      fi:
+   fi:
+
+   ret;
+end:
+
+# checks whether evil locals/params are used (locals from outer scope or args
+# array)
+checkLocals := proc(s) -> boolean;
+   ret := true;
+   
+   if(type(s,structure)) then
+      t := top(s);
+      if t = Local or t = Param then
+         if(s[1] <= 0) then
+            ret := false;
+	 fi:
+      else
+         for ss in s do
+	    if not procname(ss) then
+	      ret := false;
+	      break;
+	    fi:
+	 od:
+      fi:
+   fi:
+
+   ret;
+end:
+
+# iterate over StatSeq and inline some function calls
+iterateStatSeq := proc ( s : structure(anything,StatSeq), nLocals : posint; (locals=[]) : list ) -> (structure(anything,StatSeq), list(symbol));
+   newStatSeq := StatSeq();
+
+   for i to length(s) do
+      interesting := false;
+      x := s[i];
+      if(type(x, structure(anything,Assign))) then
+         interesting := true;
+	 pos := length(x);
+      fi:
+
+      # TODO add other cases
+
+      # check if procedure ok for inlining and perform inlining
+      if interesting then
+         xx := x[pos];
+         if type(xx,structure(anything,structure)) and type(eval(xx[1]),procedure) and canBeInlined(xx[1]) then
+            returnValue := nLocals+length(locals)+1;
+            p := xx[1];
+            result := inlineProc(p,nLocals+length(locals),[xx[2..length(xx)]]);
+
+            newStatSeq := append(newStatSeq,op(result[1]));
+            locals := append(locals,op(result[2]));
+
+            newStatSeq := append(newStatSeq,x);
+            x[pos] := Local(returnValue);
+         elif type(x,structure) then
+            result := iterateStructure(x,nLocals,locals);
+            locals := result[2];
+            newStatSeq := append(newStatSeq,result[1]);
+         fi:
+      elif type(x,structure) then
+        result := iterateStructure(x,nLocals,locals);
+        locals := result[2];
+        newStatSeq := append(newStatSeq,result[1]);
+      fi:
+   od:
+
+   (newStatSeq, locals)
+end:
+
+# deep search for next StatSeq
+iterateStructure := proc ( s : structure, nLocals : posint; (locals=[]) : list(symbol) ) -> (structure, list(symbol));
+   for i to length(s) do
+      if type(s[i], structure(anything,StatSeq)) then
+         result := iterateStatSeq(s[i],nLocals,locals);
+         s[i] := result[1];
+         locals := result[2];
+      elif type(s[i],structure) then
+         result := procname(s[i],nLocals,locals);
+         s[i] := result[1];
+         locals := result[2];
+      fi:
+   od:
+   (s,locals);
+end:
+
+inlineProc := proc(p : procedure, nLocals : posint, params : list) -> (structure(anything,StatSeq),list);
+   pd := disassemble(op(p));
+   pd := NormalizeProc(pd);
+   code := StatSeq();
+   copied := StatSeq();
+
+   # create local for return value
+   locals := [noeval(retval)];
+
+   # create locals holding procedure params
+   nParams := length(pd[1]);
+   for i from 1 to nParams do
+      param := pd[1][i];
+      if type(param,structure(anything,colon)) then
+         param := param[1];
+      fi:
+      locals := append(locals, param);
+      code := append(code,Assign(Local(i+nLocals+1),params[i]));
+   od:
+
+   # add inlined prodedure's locals
+   for l in pd[2] do
+      locals := append(locals, l);
+   od:
+
+   # copy whole code
+   body := pd[6];
+   for i from 1 to length(body) do
+      copied := append(copied, copy(body[i]));
+   od:
+
+   copied := substituteLocals(copied,nLocals,nParams);
+   copied := fixLeaves(copied,nLocals+1);
+
+   # now append the copied code
+   code := append(code, op(copied));
+
+   (code,locals);
+end:
+
+substituteLocals := proc(s : structure,nLocals : posint,nParams : {posint,0}) -> structure;
+   # substitutions:
+   #    return value:   Local(nLocals+1)
+   #    parameter:      Local(old_number+nLocals+1)
+   #    local variable: Local(old_number+nParams+nLocals+1)
+   if(type(s,structure)) then
+      t := top(s);
+      if t = Local then
+         s[1] := s[1] + nParams + nLocals + 1;
+      elif t = Param then
+         return(Local(s[1] + nLocals + 1));
+      else
+         for i from 1 to length(s) do
+	    ss := s[i];
+	    if type(ss,structure) then
+	       s[i] := procname(ss,nLocals,nParams);
+	    fi:
+	 od:
+      fi:
+   fi:
+   
+   s;
+end:
+
+fixLeaves := proc(s:{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)},retval:posint) -> structure;
+   # identify leaves (recursively):
+   #    case StatSeq: s[length(s)]
+   #    case Assign: s[length[s]]
+   #    case IfStat: s[2n]
+   #    case ForLoop: s[length(s)]
+   # replace leaves with assignments
+   t := top(s);
+   if t = StatSeq or t = ForLoop then
+      l := length(s);
+      if type(s[l],{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+         s[l] := procname(s[l],retval);
+      else
+         s[l] := Assign(Local(retval),s[l]);
+      fi:
+   elif t = IfStat then
+      # if and elif cases
+      for i from 2 to length(s) by 2 do
+         if type(s[i],{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+            s[i] := procname(s[i],retval);
+         else
+            s[i] := Assign(Local(retval),s[i]);
+         fi:
+      od:
+      
+      # else case
+      if type(s[length(s)],{structure(anything,StatSeq),structure(anything,IfStat),structure(anything,ForLoop)}) then
+         s[length(s)] := procname(s[length(s)],retval);
+      else
+         s[length(s)] := Assign(Local(retval),s[length(s)]);
+      fi:
+#  elif t = Assign FIXME ???
+   fi:
+
+   s;
+end:
+
+#problems:
+# - procedure can be altered after being inlined
+#   - how can I verify it has not changed?
+#   - copy whole procedure body to compare with???
+# - procedure could change during execution
+# - what about using args variable or local from outer procedure etc. in procedure?
+# - how to handle inner procedure with bound variables from outer scope?
+# - which procedure may be inlined?
+#   - use of global variables is ok
+#   - recursive procedures may not be inlined (at least not recursively ;])
+#   - procedures which do not use return() (can we do without a goto?)
+#   - normalize arrow operator -> transform to proc()
+# - does every op evaluate its args from left to right? are all args evaluated?
+#   - boolean ops and if statement do not evaluate all operands! anything else?
+
+end: #module

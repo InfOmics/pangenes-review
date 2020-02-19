@@ -1,0 +1,69 @@
+#
+#
+# SearchFrag( string ):  Search a given fragment of a peptide
+#			 sequence against a peptide database.
+#
+#			 Compute a reasonable boundary to reduce
+#			 the spurious matches to 10 on the average
+#
+#			 With this bound, compute an AlignOneAll
+#			 against the database.
+#
+#			 Refine the alignments at their best PAM distance,
+#			 returns those with a similarity not less
+#			 than MinSim (or 70 by default).
+#
+# OUTPUT:  a list of the refined selected alignments
+#
+#				Gaston H. Gonnet (Mar 1992)
+#				Gaston H. Gonnet (Feb 2005)
+#
+SearchFrag := proc( SearchSeq:string )
+
+if not type(DB,database) or DB[type] <> Peptide then
+    error('A peptide database must be loaded before running SearchFrag') fi;
+printf('Searching the fragment %s in %s, %s\n',
+    SearchSeq, DB[FileName], date() );
+
+# Set MinSim
+if type(MinSim,numeric) and MinSim > 0 then
+     FinGoal := MinSim
+else FinGoal := 70 fi;
+
+# If there is no DMS array, compute one
+if not type(DMS,array(DayMatrix)) then CreateDayMatrices() fi;
+Len := length(SearchSeq);
+
+ByRefShake := Stat();
+SeqPos := GetOffset(SearchSeq);
+for i to 100 do
+    RandEntry := Rand(Entry);
+    RandLen := length( Sequence(RandEntry));
+    if RandLen < 5 then next fi;
+    RandSeq := CreateRandSeq(RandLen,AF);
+    m := DynProgScore(SearchSeq,RandSeq,DM,JustScore);
+    UpdateStat(ByRefShake,m[1]);
+    od;
+
+Goal := ByRefShake[Mean] + sqrt(2*ByRefShake[Variance]) *
+	erfcinv(20/DB[TotEntries]);
+MaxGoal := 0;
+for i to Len do
+    MaxGoal := MaxGoal + DM[Sim,SearchSeq[i],SearchSeq[i]]
+    od;
+if Goal > MaxGoal*0.8 then Goal := MaxGoal*0.8 fi;
+
+found := AlignOneAll(SearchSeq,DB,DM,Goal);
+printf('With goal %.1f and PAM %.0f, %d matches were found\n',
+    Goal, DM[PamNumber], length(found) );
+
+goodfound := []:
+for al in found do
+    al := Align(Sequence(al),DMS);
+    if al[Score] >= FinGoal then goodfound := append(goodfound,al) fi
+    od;
+printf('After refining with Align/DMS, %d matches were selected\n',
+    length(goodfound));
+printf('  with similarity not less than %.0f\n', FinGoal );
+sort( goodfound, x->-x[Score] );
+end:

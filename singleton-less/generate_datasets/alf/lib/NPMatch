@@ -1,0 +1,726 @@
+# Purpose: Nucleotide peptide alignment procedures
+# Author:  Lukas Knecht
+# Created: 13 May 1992
+#
+# Bugfixes: Robert Berke, 16 April 2002 (#rob)
+
+NucPepMatch := proc ()
+  global DB, PepDB, NucDB;
+  option polymorphic;
+
+  argtypes := numeric, {string,integer}, {string,integer}, integer, integer, 	
+  numeric, numeric, {structure, string, 0}, list, list, list;			#rob
+  newargs := args;
+  for i to nargs while type (args[i], argtypes[i]) do od;
+  if nargs >= 3 and i > nargs or type ([args], [integer, integer]) then 
+    if type(args[2],string) then						#rob
+			DB:=NucDB;newargs[2]:=GetOffset(args[2]);
+    fi;
+    if nargs > 2 and type(args[3],string) then
+			DB:=PepDB;newargs[3]:=GetOffset(args[3]);
+    fi;
+    return (noeval (NucPepMatch (newargs)))
+  elif nargs = 2 or nargs = 3 then
+    oldDF := DB;
+    if type (args[1], structure) then
+      DB := NucDB; NucOffset := GetOffset(Sequence(Entry(args[1][1])));
+    elif type (args[1], integer) then
+      NucOffset := args[1]
+		elif type (args[1], Entry) then
+			DB := NucDB; NucOffset := GetOffset(Sequence(args[1]));
+    elif type (args[1], string) then						#rob
+      DB := NucDB; NucOffset := GetOffset(args[1]);
+    else
+      NucOffset := NULL
+    fi;
+    if type (args[2], structure) then
+      DB := PepDB; PepOffset :=  GetOffset(Sequence(Entry(args[2][1])));
+    elif type (args[2], integer) then
+      PepOffset := args[2]
+		elif type (args[2], Entry) then
+			DB := PepDB; PepOffset := GetOffset(Sequence(args[2]));
+    elif type (args[2], string) then 						#rob
+      DB := PepDB; PepOffset := GetOffset (args[2]);
+    else
+      PepOffset := NULL
+    fi;
+    if type (oldDF, database) then DB := oldDF fi;
+    if NucOffset <> NULL and PepOffset <> NULL then
+      if nargs = 2 then
+				return (noeval (NucPepMatch (NucOffset, PepOffset)))
+      elif type (args[3], structure) then
+				return (noeval (NucPepMatch (0, NucOffset, PepOffset, 0, 0, 0, 0, args[3])))
+      fi
+    fi
+  fi;
+  error ('Invalid NucPepMatch format')
+end:
+
+NucPepMatch_type := noeval(structure(anything,NucPepMatch)):
+
+NucPepMatch_select := proc (m, sel, val)
+  i := SearchArray (sel, ['Sim', 'NucOffset', 'PepOffset', 'NucLength',
+			  'PepLength', 'PamNumber', 'PamVariance',
+			  'IntronScoring', 'NucGaps', 'PepGaps', 'Introns']);
+  if i = 0 then
+    error ('Invalid selector', sel)
+  fi;
+  if length (m) = 2 then
+    if i = 1 then i := 3
+    elif i = 2 then i := 1
+    elif i = 3 then i := 2
+    fi
+  fi;
+  if i > length (m) then
+    if nargs = 3 then error ('Cannot assign', sel) else 0 fi
+  else
+    if nargs = 3 then m[i] := val else m[i] fi
+  fi
+end:
+
+NucPepMatch_Entry := proc (m)
+  Entry (GetEntryNumber (abs (m[NucOffset]), NucDB)),
+  Entry (GetEntryNumber (m[PepOffset], PepDB))
+end:
+
+NucPepMatch_ID := proc ()
+  global DB, NucDB, PepDB;
+  i := If (nargs = 2, 1, 2);
+  oldDF := DB; DB := NucDB; nid := Entry_ID(GetEntryNumber(abs(m[NucOffset])));
+  if m[NucOffset] < 0 then nid[1] := '-'.nid[1] fi;
+  DB := PepDB; pid := Entry_ID(GetEntryNumber(m[PepOffset]));
+  DB := oldDF; nid, pid
+end:
+
+GetPosition := proc (df: database, ofs: integer)
+  global DB;
+  oldDF := DB;
+  DB := df;
+  if ofs > 0 and ofs < df[TotChars] then
+    t := DB[string];
+    for i from 0
+      while (AToInt(t[ofs-i]) >= 1 and AToInt(t[ofs-i]) <= 20) or t[ofs-i]='U' do od;
+    pos := ofs-i;
+    s := Sequence (pos);
+    len := length (s);
+    pos := GetOffset(s);
+  else
+    t := ofs + df[string];
+    pos := ofs + TextHead (t);
+    t := pos + df[string];
+    len := length (t);    
+  fi; 
+  DB := oldDF;
+  [pos, len];
+end:
+
+LocalNucPepAlign := proc (npm: NucPepMatch, D:DayMatrix)
+  m := GetAllNucPepMatches (npm, D, -1);
+  if length (m) > 0 then m[1] else npm fi
+end:
+
+NucPepMatch_print := proc (npm)
+  global DB, NucDB, PepDB, NPP_mark;
+  mark_deletion := proc (dellen: integer, i: posint, j: integer,
+			 spm: [string, string], pep: string)
+    if dellen > 0 and mod (dellen, 3) = 0 and j = 0 then
+      lowPA := 'arndcqeghilkmfpstwyvx';
+      for k from i - dellen by 3 to i - 1 do
+	pNuc := traperror (CodonToInt (spm[1,k..k+2]));
+	if pNuc <> lasterror then
+	  pep[k] := NPP_mark[1];
+	  pep[k+1] := If(pNuc=22,'$',lowPA[pNuc]);
+	  pep[k+2] := NPP_mark[2]
+	fi
+      od
+    fi;
+    if dellen > 4 then
+      mark := sprintf ('(%d)', dellen);
+      at := i - dellen + trunc ((dellen - length (mark)) / 2);
+      for k to length (mark) do
+	spm[2,at+k-1] := mark[k]
+      od
+    fi
+  end:
+  
+  if not assigned (NPP_mark) then NPP_mark := '<>' fi;
+  oldDF := DB;
+  m := npm;
+  if length(m) < 6 then
+    lprint (m);  return ()
+  fi;
+  if type (DM, DayMatrix) and abs (DM[PamNumber] - m[PamNumber]) < 0.001 then
+    dm := DM
+  elif type (DMS, array(DayMatrix)) then
+    dm := SearchDayMatrix (m[PamNumber], DMS)
+  else
+    error ('Cannot find proper Dayhoff matrix')
+  fi;
+  if m[NucGaps] = 0 then
+    m := AlignNucPepMatch (m, dm)
+  fi;
+  spm := DynProgNucPepString (m);
+  ls := length(spm[1]);
+  fts := []:
+  if assigned (EncodedFT) and
+    m[NucOffset] > 0 and m[NucOffset] < NucDB[TotChars] then
+    DB := NucDB;
+    ft := EncodedFT (m[NucOffset], ['CDS', 'intron'], 
+		     'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz');
+    if length (ft[1]) > 0 then
+      fts := CreateArray (1..length (ft[1]));
+      for i to length (ft[1]) do fts[i] := CreateString (ls) od
+    fi
+  fi;
+  sim := iden := 0;  mid := CreateString(ls);  bpind := CreateString (ls);
+  codons := stops := nucins := 0;
+  codon := CreateString (3);
+  mpos := CreateArray (1..3);
+  pep := CreateString (ls);
+  j := 0;
+  dellen := 0;
+  bp := m[NucOffset] - GetPosition (NucDB, m[NucOffset])[1];
+  ic := 1;  nucPos := 0;
+  introns := m[Introns];
+  for i to ls do
+    if spm[1,i] <> '_' and spm[1,i] <> '-' then
+      bp := bp + 1; nucPos := nucPos + 1;
+      if mod (bp, 10) = 0 then
+  	mark := sprintf ('%d', If (mod (bp, 50) = 0, bp, mod (bp, 100)));
+        k2 := i - length (mark);
+        for k to length (mark) do
+          if k2 + k > 0 then
+            bpind[k2 + k] := mark[k]
+          fi
+        od
+      elif mod (bp, 5) = 0 then
+        bpind[i] := '|'
+      else
+        bpind[i] := '.'
+      fi;
+      for k to length (fts) do
+	fts[k,i] := ft[1,k,bp]
+      od
+    fi;
+    if spm[2,i] = '_' then
+      for ic from ic to length (introns) while introns[ic,2,2] < nucPos do od;
+      if ic <= length (introns) and nucPos >= introns[ic,2,1] then
+	if introns[ic,2,1] = nucPos then
+	  if dellen > 0 then
+	    mark_deletion (dellen, i, j, spm, pep);
+	    dellen := 0
+	  fi;
+	  spm[2,i] := NPP_mark[1]
+	elif introns[ic,2,2] = nucPos then
+	  intronlen := nucPos - introns[ic,2,1] + 1;
+	  mark := sprintf ('(%d/%.1f)', intronlen, introns[ic,1]);
+	  at := i - intronlen + trunc ((intronlen - length (mark)) / 2);
+	  for k to length (mark) do
+	    spm[2,at+k-1] := mark[k]
+	  od;
+	  spm[2,i] := NPP_mark[2]
+	else
+	  spm[2,i] := '.'
+	fi
+      else
+	dellen := dellen + 1
+      fi
+    else
+      if dellen > 0 then
+	mark_deletion (dellen, i, j, spm, pep);
+	dellen := 0
+      fi;
+      if spm[1,i] <> '_' then
+        j := j + 1;
+        mpos[j] := i;
+        codon[j] := spm[1,i];
+        if j = 2 then
+          pPep := AToInt (spm[2,i])
+        elif j = 3 then
+          midch := ' ';
+	  if codon[1] = '-' then
+	    nucins := nucins + 1; pNuc := 21
+	  else
+	    pNuc := CodonToInt (codon)
+	  fi;
+          if pNuc = pPep then
+            midch := '|';
+            iden := iden + 3
+          elif pNuc < 21 and pPep < 21 then
+            c := dm[Sim,pNuc,pPep];
+            if c >= 0 then
+              sim := sim + 3;
+              midch := If (c > dm[MaxOffDiag]/2, '!', ':' )
+            elif c > dm[MinSim]/2 then
+              midch := '.'
+            fi
+          fi;
+          pep[mpos[1]] := NPP_mark[1];
+          pep[mpos[2]] := If(pNuc=22,'$',IntToA(pNuc));
+          pep[mpos[3]] := NPP_mark[2];
+          mid[mpos[2]] := midch;
+	  codons := codons + 1;
+	  if pNuc = 22 then
+	    stops := stops + 1
+	  fi;
+	  j := 0
+	fi
+      fi
+    fi
+  od;
+  if j <> 0 then
+    error ('Assertion failed')
+  fi;
+  if not assigned (PM_offsets) or PM_offsets then
+    printf ('offsets=%d,%d, ', m[NucOffset], m[PepOffset])
+  fi;
+  printf ('lengths=%d,%d, simil=%.1f, pam=%.1f,', m[NucLength], m[PepLength], 
+           m[Sim], m[PamNumber]);
+  if m[PamVariance] > 0 then printf (' var=%.1f,', m[PamVariance]) fi;
+  printf ('\n  codons=%d, stops=%d, nuc dels=%d, nuc ins=%d, pep indels=%d, introns=%d, ',
+	  codons, stops, length (m[NucGaps]) - nucins, nucins,
+	  length (m[PepGaps]), length (introns));
+  la := ls - sum (zip ((x->x[2,2] - x[2,1] + 1)(introns)));
+  printf ('\n  identity=%.1f%%, similarity=%.1f%%\n', iden*100/la, sim*100/la);
+  width := Set(screenwidth=80);  Set(screenwidth=width);
+  DB := NucDB;
+  if m[NucOffset] < 0 or m[NucOffset] >= NucDB[TotChars] then
+    cofs := ComplementSequence (m[NucOffset]);
+    if cofs <> NULL then
+      printf ('Antiparallel strand of\n');
+      PrintHeader (-cofs[2])
+    fi
+  else
+    PrintHeader (m[NucOffset])
+  fi;
+  DB := PepDB;  PrintHeader (m[PepOffset]);
+  i := 1;
+  while i <= ls do
+    j := j0 := min (i+width-1, ls);
+    if j < ls then
+      for j from j0 by -1 to max (j0-6, i) while pep[j] <> NPP_mark[2] do od;
+      if j < max (j0-6, i) then j := j0 fi
+    fi;
+    for f in fts do
+      lprint (f[i..j])
+    od;
+    lprint (bpind[i..j]);
+    lprint (spm[1,i..j]);
+    if m[PepLength] > 0 then
+      lprint (pep[i..j]);
+      lprint (mid[i..j])
+    fi;
+    lprint (spm[2,i..j]);
+    if j < ls then lprint () fi;
+    i := j + 1
+  od;
+  if length (fts) > 0 then
+    lprint ();
+    for f in ft[2] do printf ('%s\n', f[1]) od
+  fi;
+  DB := oldDF;
+  NULL
+end:
+
+LocalNucPepAlignBestPam := proc (m: NucPepMatch)
+  global NucDB, PepDB;
+  if not type (DMS, array (DayMatrix)) then
+    error ('DMS must be assigned an array of DayMatrix')
+  fi;
+  if not type (NucDB, database) or NucDB[type] = 'Peptide' then
+    error ('NucDB must be assigned a nucleotide database')
+  fi;
+  if not type (PepDB, database) or PepDB[type] <> 'Peptide' then
+    error ('PepDB must be assigned a peptide database')
+  fi;
+  if m[Sim] = 0 then
+    m0 := LocalNucPepAlign (m, SearchDayMatrix (250, DMS))
+  else
+    m0 := m
+  fi;
+  m0 := FindNucPepPam (m0, DMS);
+  pam := m0[PamNumber];
+  pepPos := GetPosition (PepDB, m0[PepOffset]);
+  nucPos := GetPosition (NucDB, m0[NucOffset]);
+  for i to 10 do
+    leftIncr := max ((m0[PepOffset] - pepPos[1]) * 3, 150);
+    rightIncr := max ((pepPos[1] + pepPos[2] - 
+                       m0[PepOffset] - m0[PepLength]) * 3, 150);
+    newOfs := max (nucPos[1], m0[NucOffset]-leftIncr);
+    newLen := min (nucPos[2], m0[NucOffset]-newOfs+m0[NucLength]+rightIncr);
+    m1 := copy (m0);
+    m1[NucOffset] := newOfs; m1[PepOffset] := pepPos[1];
+    m1[NucLength] := newLen; m1[PepLength] := 0;
+    m1 := LocalNucPepAlign (m1, SearchDayMatrix (pam, DMS));
+    if abs (m1[Sim] - m0[Sim]) < 0.05 then break fi;
+    m0 := FindNucPepPam (m1, DMS);
+    if m0[Sim] - m1[Sim] < 0.05 or m0[Sim] < m1[Sim] then break fi;
+    pam := m0[PamNumber]
+  od;
+  if i > 10 then error ('Did not converge') fi;
+  m0
+end:
+
+GlobalNucPepAlign := proc (m: NucPepMatch, DM: DayMatrix)
+	global DB;
+	oldDB := DB;
+	DB := NucDB;
+  nuc := m[NucOffset] + DB[string]; nuc := nuc[1..m[NucLength]];
+	DB := PepDB;
+  pep := m[PepOffset] + DB[string]; pep := pep[1..m[PepLength]];
+	DB := oldDB;
+  if type (m[IntronScoring], structure) then
+    f := op (0, m[IntronScoring]);
+    scores := f (nuc, DM[PamNumber], op (m[IntronScoring]));
+    NucPepMatch (NucPepDynProg (nuc, pep, DM, m[NucLength], m[PepLength], scores)[1],
+	     m[NucOffset], m[PepOffset], m[NucLength], m[PepLength],
+	     DM[PamNumber], 0, m[IntronScoring])
+  else
+    NucPepMatch (NucPepDynProg (nuc, pep, DM, m[NucLength], m[PepLength])[1],
+	     m[NucOffset], m[PepOffset], m[NucLength], m[PepLength],
+	     DM[PamNumber], 0)
+  fi
+end:
+
+GetPeptides := proc (m: NucPepMatch)
+  if m[Introns] = 0 then
+    error ('No alignment information in Match, use AlignNucPepMatch first')
+  fi;
+  res := CreateString (trunc (m[NucLength] / 3) + length(m[NucGaps]));
+  len := 0;
+  codon := CreateString (3);
+  j := 0;
+  nuc := m[NucOffset] + NucDB[string];
+  i := gi := ii := 1;
+  nextGap := If (gi <= length (m[NucGaps]), m[NucGaps,gi,1], 0);
+  nextIntron := If (ii <= length (m[Introns]), m[Introns,ii,2,1], 0);
+  while i <= m[NucLength] do
+    if i = nextGap then
+      if m[NucGaps,gi,2] <= 0 then
+	for k to -m[NucGaps,gi,2] do 
+	  j := j + 1; codon[j] := 'X'
+	od
+      else
+	i := m[NucGaps,gi,2] + 1;
+	if mod (i - nextGap, 3) = 0 then
+	  for k from nextGap - j by 3 to i - 1 - j do
+	    pNuc := CodonToInt (nuc[k..k+2]);
+	    if pNuc <> 22 then
+	      len := len + 1;
+	      res[len] := IntToA (pNuc)
+	    fi
+	  od;
+	  for k to j do
+	    codon[k] := nuc[i - 1 - j + k]
+	  od
+	fi
+      fi;
+      gi := gi + 1;
+      nextGap := If (gi <= length (m[NucGaps]), m[NucGaps,gi,1], 0)
+    elif i = nextIntron then
+      i := m[Introns,ii,2,2] + 1;
+      ii := ii + 1;
+      nextIntron := If (ii <= length (m[Introns]), m[Introns,ii,2,1], 0)
+    else
+      j := j + 1;
+      codon[j] := nuc[i]; i := i + 1;
+      if j = 3 then
+	pNuc := CodonToInt (codon);
+	if pNuc <> 22 then
+	  len := len + 1;
+	  res[len] := IntToA (pNuc)
+	fi;
+	j := 0
+      fi
+    fi
+  od;
+  res[1..len]
+end:
+
+GetIntrons := proc (m: NucPepMatch)
+  res := copy (m[Introns]);
+  if res = 0 then
+    error ('No alignment information in Match, use AlignNucPepMatch first')
+  fi;
+  j := m[NucOffset] - GetPosition (NucDB, m[NucOffset])[1];
+  for r in res do
+    r[2,1] := r[2,1] + j;
+    r[2,2] := r[2,2] + j
+  od;
+  res
+end:
+
+Normalize := proc (m: NucPepMatch)
+  global DB, NucDB;
+  res := copy (m);
+  if m[NucOffset] < 0 then
+    oldDF := DB; DB := NucDB;
+    sequ := Sequence (-m[NucOffset]);
+    compl := antiparallel (string (sequ)[1]);
+    pos := GetOffset (compl);
+    res[NucOffset] := pos - m[NucOffset] - sequ[1];
+    DB := oldDF
+  fi;
+  res  
+end:
+
+Denormalize := proc (m: NucPepMatch)
+  global NucDB;
+  res := copy (m);
+  if m[NucOffset] < 0 or m[NucOffset] >= NucDB[TotChars] then
+    ofs := ComplementSequence (m[NucOffset]);
+    res[NucOffset] := ofs[2] - (m[NucOffset] - ofs[1])
+  fi;
+  res
+end:
+
+AlignNucPepAll := proc (nuc: string, dm: DayMatrix, division: string,
+	goal: numeric, pEntries: posint..posint)
+  global DB, NucDB, PepDB, OneAllMatch_SimilOnly;
+  if goal < 70 then
+    error ('goal is below reasonable range')
+  fi;
+  entries := If (nargs < 5, 1..PepDB[TotEntries], pEntries);
+  oldDF := DB; DB := PepDB;
+  # Search PepDB for the translation of each of the three reading frames of nuc,
+  # collect the similarities, and calculate the goals
+  simil := CreateArray (1..3, 1..entries[2] - entries[1] + 1);
+  OneAllMatch_SimilOnly := true;
+  goals := CreateArray (1..3, 1..3);
+  for shift from 0 to 2 do
+    frame := shift + nuc;
+    len := trunc ((length (nuc) - shift) / 3);
+    p := CreateString (len);
+    for i to len do
+      c := CodonToInt (frame[3*i-2..3*i]);
+      p[i] := If (c = 22, 'X', IntToA(c))
+    od;
+    stats := Stat ();
+    for j from entries[1] by 2000 to entries[2] do
+      for m in AlignOneAll (p, DB, dm, min (goal / 4, 30), 
+			    j..min(j+1999,entries[2])) do
+        simil[shift+1,GetEntryNumber(m[Offset1])-entries[1]+1] := m[Sim];
+	UpdateStat (stats, m[Sim])
+      od
+    od;
+    minf := erfc ((goal - stats[Mean]) / sqrt (2 * stats[Variance]));
+    maxf := erfc ((goal - 10 - stats[Mean]) / sqrt (2 * stats[Variance]));
+    f := max (min (maxf, 0.005), minf, 2.1e-45); # due to erfcinv bug
+    for i to 3 do
+      goals[shift+1,i] := stats[Mean] + sqrt (2 * stats[Variance]) *
+			  erfcinv (f^(1/i))
+    od
+  od;
+  OneAllMatch_SimilOnly := false;
+  # Find candidates using the goal
+  npm := [];
+  for i to length (simil[1]) do
+    count := CreateArray (1..3);
+    for j to 3 do
+      for k to 3 do
+	if simil[j,i] >= goals[j,k] then count[k] := count[k] + 1 fi
+      od
+    od;
+    if count[1] > 0 or count[2] > 1 or count[3] > 2 then
+      sequ := Sequence (Entry (i + entries[1] - 1));
+      npm := append (npm, NucPepMatch (0, nuc, sequ,
+				   length (nuc), length (sequ),
+				   0, 0, Intron (division)))
+    fi
+  od;
+  DB := oldDF;
+  # GlobalAlign the candidate matches
+  npm := ParallelAllNucPepMatches (npm, dm, goal);
+  res := [];
+  for ms in npm do
+    for m in ms do
+      res := append (res, m)
+    od
+  od;
+  res
+end:
+
+VisualizeGene := proc (ms: list(NucPepMatch))
+  global DB, NucDB, PepDB;
+
+  ID := proc (n: posint)
+    id := SearchTag ('ID', string (Entry (n)));
+    id[1..CaseSearchString (' ', id)]
+  end;
+
+  oldDF := DB;
+  height := 0.6;  # height of single bar
+  lheight := 0.9;  # height of line indicating gap
+  
+  # Find maximum extent of all matches
+  minOfs := DBL_MAX; maxOfs := -DBL_MAX;
+  for m in ms do
+    n := m[NucOffset];
+    minOfs := min (minOfs, n);
+    maxOfs := max (maxOfs, n + m[NucLength])
+  od;
+  ms2 := sort (ms, x->x[PamNumber]);
+
+  pts := min (10, 500 / length (ms2));
+  frameColor := [green, cyan, blue];
+  # Plot gene 
+  DB := NucDB;
+  idpos := - (maxOfs - minOfs) / 6;
+  if ms2[1,NucOffset] > 0 and ms2[1,NucOffset] < NucDB[TotChars] then
+    id := ID (GetEntryNumber (ms2[1,NucOffset], NucDB))
+  else
+    cofs := ComplementSequence (ms2[1,NucOffset]);
+    if cofs <> NULL then
+      id := '-'.ID (GetEntryNumber (-cofs[2], NucDB))
+    else
+      id := '(Nuc.Seq.)'
+    fi
+  fi;
+  sequ := GetPosition (NucDB, ms2[1,NucOffset]);
+  pd := [LTEXT (idpos, 1.6, 'ID', points=pts),
+	 RTEXT (idpos / 10, 1.6, 'PAM', points=pts),
+	 LTEXT (idpos, 0, id, points=pts)];
+  pd := append (pd, POLYGON(0,0,maxOfs-minOfs,0,maxOfs-minOfs,height,0,height,
+			    color=GetColorMap(black)));
+
+  # Plot scale
+  dx := trunc (maxOfs - minOfs) / 10;
+  scale := 10^trunc(log10(dx));
+  if dx / scale < 1.5 then dx := scale
+  elif dx / scale < 3 then dx := 2 * scale
+  else dx := 5 * scale fi;
+  shift := sequ[1] - minOfs;
+  for x from trunc ((minOfs - sequ[1]) / dx + 0.99999) * dx by dx to
+  maxOfs - sequ[1] do
+    pd := append (pd, LINE(x + shift, 1, x + shift, 1.5),
+		  CTEXT(x + shift, 1.6, sprintf('%d', x), points=pts))
+  od;
+
+  # Plot each protein
+  DB := PepDB;
+  lpd := [];
+  for i to length (ms2) do
+    pd := append (pd, LTEXT (idpos, -i, ID (GetEntryNumber (ms2[i,PepOffset])),
+			     points=pts),
+		  RTEXT (idpos / 10, -i, sprintf ('%d', ms2[i,PamNumber]),
+			 points=pts));
+    pos := x1 := ms2[i,NucOffset] - minOfs;
+    for p in NucPepRegions (ms2[i]) do
+      x2 := x1 + p[3];
+      if p[1] = ALIGN then
+	pd := append (pd, POLYGON(x1, -i, x2, -i,
+				  x2, height - i, x1, height - i,
+				  color = 
+				  GetColorMap (frameColor[mod (pos, 3) + 1])))
+      else
+	if p[1] = PEPGAP then
+	  lpd := append (lpd, LINE(x1, -i, x1, lheight-i))
+	elif p[1] = INTRON then
+	  pd := append (pd, LINE(x1, -i, x2, -i),
+			CTEXT((x1+x2)/2, 0.05-i, sprintf ('%.1f', p[2]),
+			      points=0.8*pts))
+	fi;
+	pos := pos + p[3]
+      fi;
+      x1 := x2
+    od
+  od;
+
+  # Force correct scaling
+  if length (ms2) < 40 then
+    pd := append (pd, LTEXT (idpos, -40, ' '))
+  fi;
+  DrawPlot ([op (pd), op (lpd)]);
+  DB := oldDF;
+  NULL
+end:
+
+VisualizeProtein := proc (ms: list(NucPepMatch))
+  global DB, PepDB;
+  description
+  'Visualize the alignment of a protein with all its homologue genes.';
+
+  oldDF := DB;
+  height := 0.4;
+  lheight := 0.6;
+  # Find maximum extent of all matches
+  minOfs := DBL_MAX; maxOfs := -DBL_MAX;
+  for m in ms do
+    n := m[PepOffset];
+    minOfs := min (minOfs, n);
+    maxOfs := max (maxOfs, n + m[PepLength])
+  od;
+
+  ms2 := sort (ms, x->x[PamNumber]);
+  pts := min (10, 500 / length (ms2));
+  frameColor := [green, cyan, blue];
+  # Plot protein
+  DB := PepDB;
+  idpos := - (maxOfs - minOfs) / 6;
+  if ms2[1,PepOffset] > 0 and ms2[1,PepOffset] < PepDB[TotChars] then
+    id := SearchTag ('ID', string (Entry (Offset (ms2[1,PepOffset]))));
+    id := id[1..CaseSearchString (' ', id)]
+  else
+    id := '(Nuc.Seq.)'
+  fi;
+  sequ := GetPosition (PepDB, ms2[1,PepOffset]);
+  x2 := maxOfs - minOfs;
+  pd := [LTEXT (idpos, 1.6, 'ID', points=pts),
+	 RTEXT (idpos / 10, 1.6, 'PAM', points=pts),
+	 LTEXT (idpos, 0, id, points=pts),
+	 POLYGON(0,0,x2,0,x2,height,0,height,color=GetColorMap(black))];
+
+  # Plot scale
+  dx := trunc (maxOfs - minOfs) / 10;
+  scale := 10^trunc(log10(dx));
+  if dx / scale < 1.5 then dx := scale
+  elif dx / scale < 3 then dx := 2 * scale
+  else dx := 5 * scale fi;
+  shift := sequ[1] - minOfs;
+  for x from trunc ((minOfs - sequ[1]) / dx + 0.99999) * dx by dx to
+  maxOfs - sequ[1] do
+    pd := append (pd, LINE(x + shift, 1, x + shift, 1.5),
+		  CTEXT(x + shift, 1.6, sprintf('%d', x), points=pts))
+  od;
+
+  # Plot each gene
+  DB := PepDB;
+  lpd := [];
+  for i to length (ms2) do
+    m := ms2[i];
+    pd := append (pd, LTEXT (idpos, -i, NucID (m), points=pts),
+		  RTEXT (idpos / 10, -i, sprintf ('%d', m[PamNumber]),
+			 points=pts));
+    x1 := m[PepOffset] - minOfs;
+    pos := 0;
+    for p in NucPepRegions (m) do
+      x2 := x1 + p[4];
+      if p[1] = ALIGN then
+	pd := append (pd, POLYGON(x1, -i, x2, -i,
+				  x2, height - i, x1, height - i,
+				  color = 
+				  GetColorMap (frameColor[mod (pos, 3) + 1])))
+      else
+	if p[1] <> PEPGAP then
+	  lpd := append (lpd, LINE(x1, -i, x1, lheight-i));
+	  if p[1] = INTRON then
+	    pd := append (pd, 
+			  POLYGON(x1,height-i,x1+1,lheight-i,x1-1,lheight-i,
+				  color=GetColorMap(black)),
+			  CTEXT(x1,lheight-i,sprintf('%d',p[3]),points=5))
+	  fi
+	fi;
+	pos := pos + p[3]
+      fi;
+      x1 := x2
+    od
+  od;
+  
+  # Force correct scaling
+  if length (ms2) < 40 then
+    pd := append (pd, LTEXT (idpos, -40, ' '))
+  fi;
+  DrawPlot ([op (pd), op (lpd)]);
+  DB := oldDF;
+  NULL
+end:

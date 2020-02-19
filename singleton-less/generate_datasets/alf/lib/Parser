@@ -1,0 +1,112 @@
+# Used by the Darwin Server
+isspace := c -> c<=' ' or c=',' or c=':' or c=';' or c='\n' or c='=':
+separator := c -> c='(' or c=')' or c='=':
+symbols := c -> c='"' or c='&':
+newtok := c -> c=':' or c=';':
+newline := c -> c='\n':
+isalpha := c -> SearchString(uppercase(c), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_') > -1:
+isnumeric := c -> SearchString(c, '1234567890') > -1:
+
+NextLine := proc(InputString);
+  if length(InputString) = 0 then return(['', '']); fi;
+  Remains := InputString;
+  p := 1;
+  while length(Remains) > p and (isspace(Remains[p]) or newtok(Remains[p])) do
+     p := p + 1;
+  od;
+  if length(Remains) = p then return(['', '']);
+  else
+     r := '';
+     while not newline(Remains[p]) and length(Remains)>p do
+	  r := r . Remains[p];
+	  p := p + 1;
+     od;
+  fi;
+  p := p + 1; 
+  return([r.';', Remains[p..-1]]);
+end:
+
+NextToken := proc(InputString);
+  if length(InputString) = 0 then return(['', '']); fi;
+  Remains:= InputString;
+  p := 1;
+  while length(Remains) > p and isspace(Remains[p]) do
+      p := p + 1 
+  od;
+  if length(Remains) = p then return(['', ''])
+  elif separator(Remains[p]) then
+     r := Remains[p];
+     p := p + 1
+  elif symbols(Remains[p]) then
+     r := '';
+     p := p + 1;
+     while not symbols(Remains[p])  do
+	  r := r . Remains[p];
+	  p := p + 1;;
+     od;
+     p := p + 1;
+  else r := '';
+     while not isspace(Remains[p]) and not separator(Remains[p]) and p<length(Remains) do
+	  r := r . Remains[p];
+	  p := p + 1;
+     od;
+  fi;
+  return([r, Remains[p..-1]]);
+end:
+
+GetBody := proc(msg: string);
+   if msg[1..5] = 'Debug' then
+     first := CaseSearchString ('\n', msg);
+     start := CaseSearchString ('\n', first + 2 + msg);
+     if first < 0 then
+       lprint ('Start of message body not found');
+       return (0)
+     fi;
+     body := msg[first+start+3..-1];
+  else
+    if length (msg) < 10 or msg[1..5] <> 'From ' then
+      lprint ('?Invalid incoming message');
+      return (0)
+    fi;
+    first := CaseSearchString ('\n\n', msg);
+    if first < 0 then
+      lprint ('?Start of message body not found');
+      return (0)
+    fi;
+    body :=msg[first+3..-1]; 
+  fi;
+  return(body);
+end:
+
+GetNumber := proc(InputLine: string);
+  res := NextToken(InputLine); 
+  if res[1] = '' then return(['', '']); fi;
+  tok := res[1]; Remains := res[2];
+  w := sscanf( tok, '%f' );
+  if not type(w,[integer]) and not type(w,[numeric]) then
+    return( sprintf(
+	'wrong format (should be a number). You entered %s', InputLine ));
+  else
+    return([w[1], Remains]);
+  fi;
+end:
+
+GetString := proc(InputLine: string);
+  res := NextToken(InputLine);
+  return(res);
+end:  
+
+printlong := proc(msg);
+  width := Set(screenwidth=80);  
+  Set(screenwidth=width);
+  if msg <> 0  then 
+    l := length(msg);
+    times:=round(l/width+0.5);
+    for i to times do
+        if length(msg)>width*(i-1)+1 then
+          printf('%a\n',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+        fi;
+    od;
+    lprint();
+  fi;
+end:

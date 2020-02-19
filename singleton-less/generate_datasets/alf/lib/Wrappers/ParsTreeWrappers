@@ -1,0 +1,150 @@
+module external KatohPaup;
+
+KatohPaup := proc(msa:MAlignment; binary=((binary=''):string))
+
+    pid      := getpid();
+    tmpdir := GetTmpDir().'paup.'.pid;
+    TimedCallSystem('mkdir '.tmpdir);
+    infile   := tmpdir.'/infile.'.pid;
+    outfile  := tmpdir.'/outfile.'.pid;
+    
+    selection := GetWrapperChoice('Tree/paup/paup4b10-x86-linux-icc/paup4b10-x86-linux-icc', 'paup', binary);
+    
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'paup';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Tree/paup/paup4b10-x86-linux-icc/paup4b10-x86-linux-icc';
+    else
+        error('no such selection');
+    fi;    
+
+    n := length(msa['AlignedSeqs']);
+    m := length(msa['AlignedSeqs',1]);
+    OpenWriting(infile);
+    printf('#NEXUS\n');
+    printf('begin data;\n');
+    printf('dimensions ntax=%d nchar=%d;\n', n,m);
+    printf('format datatype=protein gap=- ;\n');
+    printf('taxlabels '); seq(printf('%s ', string(i)), i=1..n); printf(';\n');
+    printf('matrix\n');
+    for i to n do	
+        printf('%d %s\n', i, ReplaceString('_','-', ReplaceString('X', '?', uppercase(msa['AlignedSeqs',i]))));
+    od;
+    printf(';\nend;\n\n');
+    
+#    printf('begin assumptions;\n');
+#    printf('options gapmode=%s;', If(mode_='all', 'newstate', 'missing'));
+#    printf('end;\n\n');
+#    if type(starttr, Tree) then
+#        printf('begin trees;\n');
+#        printf('tree starttree = [&U] %s;\n', Tree_Newick(starttr));
+#        printf('end;\n\n');
+#    fi;	
+    
+    printf(
+        'Begin PAUP;\n'.
+        'Log Start\n'.
+        'File=parsimony.log\n'.
+        'Replace=Yes;\n'.
+        '\n'.
+        'Set Increase=auto;\n'.
+        'Set Criterion = parsimony;\n'.
+        '\n'.
+        'Hsearch\n'.
+        'Start=Stepwise    [Stepwise/NJ/Current/Tree-number]\n'.
+        'AddSeq=Random    [Simple/closest/AsIs/Random...]\n'.
+        'nreps=100   [integer-value]\n'.
+        'swap=TBR    [TBR/SPR/NNI/None]\n'.
+        'Multrees=No;\n'.
+        'condense collapse=No;\n'.
+        'pset collapse=No;\n'.
+        'hsearch collapse=No;\n'.
+        '\n'.
+        'Pscores all/\n'.
+        'Total=Yes    [Yes/No]\n'.
+        'TL=No    [Yes/No]\n'.
+        'CI=No    [Yes/No]\n'.
+        'RI=No    [Yes/No]\n'.
+        'RC=No    [Yes/No]\n'.
+        'HI=No;    [Yes/No]\n'.
+        '\n'.
+        'DescribeTrees all/\n'.
+        'Plot=None    [None/Cladogram/Phylogram/Both]\n'.
+        'BrLens=Yes    [Yes/No]\n'.
+        'Root=Outgroup;    [Outgroup/Lundberg/Midpoint]\n'.
+        '\n'.
+        'SaveTrees\n'.
+        'Brlens=Yes\n'.
+        'File=parsimony.trees\n'.
+        'Replace=yes;\n'.
+        '\n'.
+        'ConTree all/\n'.
+        'Strict=Yes    [Yes/No]\n'.
+        'ShowTree=Yes    [Yes/No]\n'.
+        'Root=Outgroup   [Outgroup/Lundberg/Midpoint]\n'.
+        'TreeFile=MP_Con.tree\n'.
+        'Replace=Yes;    [Yes/No]\n'.
+        '\n'.
+        'Log stop;\n'.
+        'End;\n'
+    );
+    
+    OpenWriting(previous);
+    
+    cmd := sprintf('cd %s; %s -n %s > %s', tmpdir, pathExec, infile, outfile);
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if mod(res[1],256) <> 0 then
+        error(printf('%s failed!',cmd));
+    fi;
+    
+    # Get the number of changes from paup's outfile
+    resFile := ReadRawFile(tmpdir.'/parsimony.trees');
+#    printf('%s\n',resFile);
+    
+    pat := 'Score of best tree(s) found =';
+    i0 := SearchString(pat, resFile);
+    if i0 = -1 then error('KatohPaup: could not parse score') fi;
+    i0 := i0 + length(pat)+1;
+    i1 := i0 + SearchString('>', resFile[i0..-1]) -1;
+    score := parse(Trim(resFile[i0..i1]));
+    
+    lines := SearchDelim('\n',resFile);
+    for i to length(lines) do
+        if Trim(lines[i]) = 'Translate' then break; fi;
+    od;
+    if i > length(lines) then error('KatohPaup: could not parse trees'); fi;
+    
+    translate := CreateArray(1..n);
+    for j to n do
+        i := i + 1;
+        translate[j] := Trim(SearchDelim(' ',Trim(lines[i]))[-1]);
+        if translate[j,-1] = ',' then translate[j] := translate[j,1..-2]; fi;
+    od;
+    print(translate);
+    
+    i := i + 1;
+    assert(Trim(lines[i]) = ';');
+    
+    i := i+1;
+    nwTree := SearchDelim(' ',lines[i])[-1];
+    
+    tree := ParseNewickTree(nwTree);
+    
+    for leaf in Leaves(tree) do
+        leaf[1] := msa['labels',parse(translate[parse(leaf[1])])];
+    od;
+    
+    TimedCallSystem('rm -rf '.tmpdir);
+    
+    return(TreeResult(tree, 'Parsimony', 'Method'='Paup', 'CPUtime'=cputime, 'Likelihood'=score));
+end;
+    
+end;
+    

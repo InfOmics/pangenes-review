@@ -1,0 +1,55 @@
+# Purpose: General handler mailing results to sender
+# Author:  CompBioResGrp
+# Created: 27 Jun 1994
+#
+mail_handler := proc (job: posint, t: string)
+  global Queue, logfile, msg;
+ # option trace;    
+  result := Queue[job];
+    
+   OpenAppending('~cbrg/debug/mail_handler.trace');
+#   lprint('result:',result, length(result), type(result));
+  
+  if t <> 'ERROR' then
+    www := sscanf (result, '%s');
+    if length (www) = 1 and www[1] = 'WWW:' then
+      p := CaseSearchString ('From', result);
+      q := CaseSearchString ('\\n\\n', p + result);
+      addr := result[p+6..p + q];
+      
+      OpenWriting ('/tmp/outmsg');
+      printf ('%s\n', t);
+     
+      mailstring := sprintf ('Mail -s ''Results of WWW %s request'' %s </tmp/outmsg; rm /tmp/outmsg',logfile[1..-5], addr);
+      OpenAppending('~cbrg/debug/mail_handler.trace'); 
+#     printf('Mailstring:%s',mailstring);
+       
+     CallSystem (mailstring);
+  
+    else 
+    # changed and add by Ch.K 12.7.98    
+    
+      p := SearchString ('From', result);
+      q := SearchString (' ', result[p+6..-1]);  
+      addr := result[p+6..p + q+6];
+       
+      p := CaseSearchString ('Subject:', result);
+      q := CaseSearchString ('\\n', result[ p+9..-1]);  
+      subject := result[p+9..p + q+8];
+    
+      OpenWriting ('/tmp/outmsg');
+      printf ('%s\n', t);
+      
+    
+     mailstring := sprintf ('Mail -s  ''Re: %s'' %s < /tmp/outmsg;  rm /tmp/outmsg', subject,  addr);  
+      OpenAppending('~cbrg/debug/mail_handler.trace'); 
+#      printf('result:%s\n',result);
+#      lprint('subject:',subject);
+#      lprint('p:',p);
+#      lprint('q:',q);
+#      lprint('Mailstring:',mailstring);
+      
+      CallSystem (mailstring); 
+    fi
+  fi
+end:

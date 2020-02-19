@@ -1,0 +1,183 @@
+# M. Hallett - 09.01.99 
+# Added UPGMA and Neighbour Joining [Saitou, Nei, '87]
+
+SetInitialEdgeLengths := proc( T : Tree, NewValue : numeric )
+
+  old := T[2]:
+  T[2] := -NewValue:
+  if not (type(T, Leaf)) then
+      SetInitialEdgeLengths( T[1], NewValue + old ):  
+      SetInitialEdgeLengths( T[3], NewValue + old ):  fi:
+  return( T ):
+
+end:
+
+CreateUpgmaTree := proc(  Dist : matrix( numeric ) )
+
+  T := NULL:
+  # Create n seperate clusters.
+  labels := [ seq( Leaf(i, 0, 0, 1), i=1..length(Dist) ) ]:
+
+  NewD := copy( Dist ):
+
+  while ( length(NewD) > 1 ) do
+
+       # Find smallest entry; ignore diagonal entries.
+       minimum := 999999:
+       for i from 1 to length(NewD)-1 do
+             for j from i+1 to length(NewD) do
+                  if (NewD[i, j] < minimum) then
+                      minimum := NewD[i, j]:
+                      coor := [i,j]:           fi: od: od:
+
+       cluster_size_i := labels[coor[1]][4]:
+       cluster_size_j := labels[coor[2]][4]:
+       newcluster := Tree( labels[ coor[1] ],
+                     NewD[ coor[1], coor[2] ]/2, 
+                           labels[ coor[2] ] ,
+                     cluster_size_i + cluster_size_j ):
+
+      
+       # update the distance matrix.
+      NewDprime := [op(NewD[1..coor[1]-1]), op(NewD[coor[1]+1..coor[2]-1]), 
+                    op(NewD[coor[2]+1..length(NewD)])]: 
+
+      for k from 1 to length(NewDprime) do
+             NewDprime[k] := [ 
+                    op(NewDprime[k][1..coor[1]-1]), 
+                    op(NewDprime[k][coor[1]+1..coor[2]-1]), 
+                    op(NewDprime[k][coor[2]+1..length(NewDprime[k])]) ]:   od:
+
+       dist_k_to_new := CreateArray(1..length(NewD), 0):
+
+       # calculate distance to each remaining cluster
+       for k from 1 to length(NewD) do
+             if (k <> coor[1]) and (k <> coor[2]) then
+                  dist_k_to_new[k] := ( cluster_size_i * NewD[ k, coor[1] ] +
+                                     cluster_size_j * NewD[ k, coor[2] ] ) /
+                                     ( cluster_size_i + cluster_size_j );
+                  fi: od:
+
+       dist_k_to_new :=  [op(dist_k_to_new[1..coor[1]-1]), 
+                          op(dist_k_to_new[coor[1]+1..coor[2]-1]), 
+                          op(dist_k_to_new[coor[2]+1..length(dist_k_to_new)])]:
+
+       for k from 1 to length(NewDprime) do
+             NewDprime[k] := [ op(NewDprime[k]), dist_k_to_new[k] ]: od:
+       NewDprime := [ op(NewDprime), [ op(dist_k_to_new), 0 ] ]:
+  
+ 
+       # update the labels list
+       labels := [ op(labels[1..coor[1]-1]), 
+                   op(labels[coor[1]+1..coor[2]-1]),
+                   op(labels[coor[2]+1..length(labels)]) ]:
+
+       labels := [ op(labels), newcluster ]:
+
+       NewD := NewDprime:
+  od:
+  T := SetInitialEdgeLengths( op(labels), 0 ):
+  return( T ):
+end:
+
+CreateNeighJoinTree := proc( Dist : matrix( numeric ) )
+
+  T := NULL:
+  # Create n seperate clusters.
+  labels := [ seq( Leaf(i, 0, 0, 1), i=1..length(Dist) )]:
+
+  NewD := copy( Dist ):
+
+  while ( length(NewD) > 2 ) do
+       Dprime := CreateArray( 1..length(NewD), 1..length(NewD), 0):
+       r := CreateArray(1..length(NewD), 0):
+
+       for i from 1 to length(NewD) do
+             r[i] := 0:
+             for j from 1 to length(NewD[i]) do
+                  r[i] := r[i] + NewD[i,j]: od: od:
+
+       for i from 1 to length(NewD)-1 do
+             for j from i+1 to length(NewD) do
+                  Dprime[i, j] := Dprime[j, i] := 
+                            NewD[i, j] - 
+                                (r[i] + r[j])/(length(NewD)-2): od: od:
+
+       # Find smallest entry; ignore diagonal entries.
+       minimum := 999999:
+       for i from 1 to length(Dprime)-1 do
+             for j from i+1 to length(Dprime) do
+                  if (Dprime[i, j] < minimum) then
+                      minimum := Dprime[i, j]:
+                      coor := [i,j]:           fi: od: od:
+
+       temp := NewD[coor[1],coor[2]]/2 + 
+                ((r[ coor[1] ]-r[ coor[2] ])/(2*(length(NewD)-2))):
+       newcluster := Tree( labels[ coor[1] ],
+                     [ temp, NewD[ coor[1], coor[2] ] - temp ],
+                           labels[ coor[2] ]  ):
+       
+       # update the distance matrix.
+       NewDprime := [op(NewD[1..coor[1]-1]), op(NewD[coor[1]+1..coor[2]-1]), 
+                    op(NewD[coor[2]+1..length(NewD)])]: 
+
+       for k from 1 to length(NewDprime) do
+             NewDprime[k] := [ 
+                    op(NewDprime[k][1..coor[1]-1]), 
+                    op(NewDprime[k][coor[1]+1..coor[2]-1]), 
+                    op(NewDprime[k][coor[2]+1..length(NewDprime[k])]) ]:   od:
+
+       dist_k_to_new := CreateArray(1..length(NewD), 0):
+
+       # calculate distance to each remaining cluster
+       for k from 1 to length(NewD) do
+             if (k <> coor[1]) and (k <> coor[2]) then
+                  dist_k_to_new[k] := (NewD[coor[1],k] + 
+                                       NewD[coor[2],k] -
+                                       NewD[coor[1],coor[2]])/2:
+                  fi: od:
+
+       dist_k_to_new :=  [op(dist_k_to_new[1..coor[1]-1]), 
+                          op(dist_k_to_new[coor[1]+1..coor[2]-1]), 
+                          op(dist_k_to_new[coor[2]+1..length(dist_k_to_new)])]:
+
+       for k from 1 to length(NewDprime) do
+             NewDprime[k] := [ op(NewDprime[k]), dist_k_to_new[k] ]: od:
+       NewDprime := [ op(NewDprime), [ op(dist_k_to_new), 0 ] ]:  
+ 
+       # update the labels list
+       labels := [ op(labels[1..coor[1]-1]), 
+                   op(labels[coor[1]+1..coor[2]-1]),
+                   op(labels[coor[2]+1..length(labels)]) ]:
+
+       labels := [ op(labels), newcluster ]:
+
+       NewD := NewDprime:      
+  od:
+
+  T := Tree( labels[ 1 ], [NewD[1,2]/2, NewD[1,2]/2], labels[ 2 ]):
+  T := SetInitialNJEdgeLengths( T, 0 ):
+  return( T ):
+end:
+
+SetInitialNJEdgeLengths := proc( T : Tree, NewValue : numeric )
+  old := T[2]:
+  T[2] := -NewValue:
+  if not (type(T, Leaf)) then
+      SetInitialNJEdgeLengths( T[1], NewValue + old[1] ):  
+      SetInitialNJEdgeLengths( T[3], NewValue + old[2] ):  fi:
+  return( T ):
+
+end:
+
+
+SetToDarwinFormat := proc ( T : Tree)
+
+ if type(T, Leaf) then
+    return( Leaf( T[1], T[2], T[1] )):   
+ else
+    t1 := SetToDarwinFormat( T[1] );
+    t3 := SetToDarwinFormat( T[3] );
+    return( Tree( t1, T[2], t3 ) );
+ fi:
+end:

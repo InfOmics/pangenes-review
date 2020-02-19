@@ -1,0 +1,1357 @@
+
+#
+#	Partial Order representation
+#
+#	A partial order is any acyclic graph used to describe, in this case,
+#	a family of possible sequence alignments (usually an MSA).
+#
+#	The representation must allow:
+#	(0) Allow representation of any PO
+#	(1) Allign POs agasint POs
+#	(2) Associate sequence positions with nodes in the PO
+#		(for Global as well as Local alignments, i.e. the sequence may
+#		be shorter than any PO)
+#	(3) ease of display
+#	(4) compact representation (if possible)
+#
+#	A single source node must be called 'S'
+#	A single end node must be called 'T'
+#	The arcs are triplets: [source,number-of-positions,destination]
+#
+#	PartialOrder( ['S',n,'T']) represents a complete partial order
+#	with n nodes.
+#
+#	The simplest PO not representable with alternation/sequece:
+#	PartialOrder( [S,10,1],[S,5,2],[2,8,1],[1,15,T],[2,20,T] );
+#
+PartialOrder := proc( )
+global NewNodeName_next;
+for i to nargs do if not type(args[i],[anything,{0,posint},anything]) then
+	error(args[i],'is of the wrong type') fi od:
+Ss := {seq(w[1],w=[args])};
+Ts := {seq(w[3],w=[args])};
+all := Ss union Ts;
+if all minus Ss <> {'T'} then
+    error(all minus Ss, 'is not equal to', {'T'} )
+elif all minus Ts <> {'S'} then
+    error(all minus Ts, 'is not equal to', {'S'} )
+fi;
+
+# if a PartialOrder (read or created) has integers as node names,
+# update NewNodeName_next to avoid collissions.
+maxind := max( 0, seq( If(type(x,integer), x, NULL), x=all ));
+if maxind > NewNodeName_next then NewNodeName_next := maxind fi;
+noeval(procname(args))
+end:
+PartialOrder_select := proc( po, s )
+if nargs > 2 then error('unable to assign',s,'to PartialOrder')
+elif s = 'Nodes' then
+     pol := [op(po)];
+     { seq( w[1], w=pol ),  seq( w[3], w=pol ) }
+else error(s,'is an invalid selector for a PartialOrder') fi
+end:
+PartialOrder_type := structure([anything,{0,posint},anything],PartialOrder):
+CompleteClass( PartialOrder );
+
+#
+#	Structure to represent a sequence threaded in a PartialOrder
+SeqThread := proc( Sequence:string, label:string, NodeList:list(posint) )
+if nargs <> 3 then error('invalid number of arguments') fi;
+noeval(procname(args))
+end:
+CompleteClass( SeqThread );
+
+
+############################################
+# PartialOrderMSA - MSA using PartialOrder #
+############################################
+PartialOrderMSA := proc( SeqThreads:list(SeqThread), PO:PartialOrder,
+	Tree:{0,Tree}, AllAll:{0,matrix} )
+option polymorphic;
+if nargs > 4 or nargs < 2 then error('invalid number of arguments')
+elif nargs < 4 then procname( args, seq(0,4-nargs) ) fi;
+
+for st in SeqThreads do
+    if max(st['NodeList']) > length(PO) then
+	error( st, 'nodes out of range of PartialOrder' ) fi;
+    t := 'S';
+    for w in st['NodeList'] do
+	if PO[w,1] <> t then error(w,t,PO[w],st,
+            'PartialOrder element out of sequence') fi;
+	t := PO[w,3]
+    od;
+    if 'T' <> t then error(st,'PartialOrder element not ending in T')
+    elif sum(PO[w,2],w=st['NodeList']) <> length(st['Sequence']) then
+         error(st,PO,'length of selected path and sequence differ')
+    fi;
+od;
+
+noeval(procname(args))
+end:
+CompleteClass(PartialOrderMSA );
+
+
+NewNodeName_next := 50000:
+NewNodeName := proc() global NewNodeName_next;
+NewNodeName_next := NewNodeName_next+1 end:
+
+
+#################################################
+#################################################
+# all the rest of the functions are in a module #
+#################################################
+#################################################
+module external
+	MAlignment_PartialOrderMSA,
+	MAlignment_PartialOrderMSA_new,
+	PartialOrderMSA_MAlignment,
+	PartialOrderMSA_score,
+	PartialOrderMSA_SPscore,
+	PartialOrderMSA_renumber,
+	PartialOrderMSA_simplify,
+	PartialOrderMSA_print,
+	CT_DM,
+	CTfromAllAll;
+
+
+MAlignment_PartialOrderMSA := proc( msa:MAlignment )
+
+alseqs := msa[AlignedSeqs];
+n := length(alseqs);
+m := length(alseqs[1]);
+
+# the nodes of the PartialOrder are identified with the index of the previous
+# position in the aligned MSA.  Node S==0, node 1 between 1st and 2nd aa, etc.
+
+##################################################
+# building individual partial orders (gaps only) #
+##################################################
+PartOrds := []:
+for j to n do
+    s := alseqs[j];
+    assert( length(s) = m );
+    po := [];
+    i2 := 0;
+    for i from 2 to m do
+	if s[i-1]='_' and s[i] <> '_' then
+	     po := append(po,[i2,0,i-1]);
+	     i2 := i-1
+	elif s[i-1] <> '_' and s[i]='_' then i2 := i-1
+	fi
+    od;
+    if s[m]='_' then po := append( po, [i2, 0, m] ) fi;
+    PartOrds := append( PartOrds, {op(po)} );
+od:
+
+# search for boundaries of potential alternative splicings #
+bound := [];
+for i to m-1 do
+    for j to n while alseqs[j,i]='_' or alseqs[j,i+1]='_' do od;
+    if j > n then bound := append(bound,i) fi
+od;
+
+#####################################
+# merging individual partial orders #
+#####################################
+alln := { seq( seq(w[1],w=v), v=PartOrds), seq( seq(w[3],w=v), v=PartOrds),
+	0, m };
+Pred := table():  Succ := table():
+for i from 2 to length(alln) do
+    Pred[alln[i]] := Succ[alln[i-1]] := [alln[i-1], alln[i]-alln[i-1], alln[i]]
+od;
+for j to n do
+    w := PartOrds[j];
+    if w={} then PartOrds[j] :=
+	{seq( [alln[i],alln[i+1]-alln[i],alln[i+1]], i=1..length(alln)-1)};
+	next fi;
+    do  w1 := {seq(v[1],v=w)};
+	w3 := {seq(v[3],v=w)};
+	if w1 minus w3 = {0} and w3 minus w1 = {m} then break fi;
+	for v in w1 minus w3 minus {0} do w := w union {Pred[v]} od;
+	for v in w3 minus w1 minus {m} do w := w union {Succ[v]} od;
+    od;
+    PartOrds[j] := w;
+od:
+for w in PartOrds do w[-1,3] := 'T';  w[1,1] := 'S' od:
+poset := { seq(op(v),v=PartOrds) };
+po := PartialOrder( op(poset) );
+poset := [op(poset)];
+
+threads := [];
+for i to n do
+    nl := [];
+    for w in PartOrds[i] do nl := append( nl, SearchArray(w,poset) ) od;
+    assert( length(msa[InputSeqs,i]) = sum(w[2],w=PartOrds[i]) );
+    threads := append( threads, SeqThread( msa[InputSeqs,i], msa['labels',i],
+	nl ));
+od:
+
+r := PartialOrderMSA(threads,po,msa['tree'],msa['AllAll']);
+
+# reproduce alternative splicings
+for b in bound do
+    pred := succ := [];
+    predn := succn := {};
+    for i to length(po) do
+	w := po[i];
+	if w[1]=b then succ := append(succ,i);  succn := succn union {w[3]} fi;
+	if w[3]=b then pred := append(pred,i);  predn := predn union {w[1]} fi;
+    od;
+    for i1 in pred do if po[i1,2]=0 then
+	for i2 in succ do if po[i2,2] <> 0 then
+		po := append(po,[po[i1,1],po[i2,2],po[i2,3]]);
+		r := PartialOrder_subs( [i1,i2], [length(po)], r, po );
+	fi od;
+    fi od;
+    for i1 in pred do if po[i1,2] <> 0 then
+	for i2 in succ do if po[i2,2]=0 then
+		po := append(po,[po[i1,1],po[i1,2],po[i2,3]]);
+		r := PartialOrder_subs( [i1,i2], [length(po)], r, po );
+	fi od;
+    fi od;
+od;
+
+PartialOrderMSA_simplify(r)
+end:
+
+
+######################################################################################
+# new (hopefully improved) procedure to convert an MAlignment into a PartialOrderMSA #
+# Needs some more testing...                                                         #
+######################################################################################
+MAlignment_PartialOrderMSA_new := proc(msa:MAlignment)
+    #global PO, STs:
+    alSeqs := msa['AlignedSeqs']:
+    nSeqs := length(alSeqs):
+    sLen := length(alSeqs[1]):
+    
+    # build initial PO from gap patterns
+    curGapPattern := [seq(If(alSeqs[i,1]='_', 0, 1), i=1..nSeqs)]:
+    PO := []:
+    curN := 0:
+    prevInd := 1:
+    curInd := 2:
+    while curInd <= sLen do
+        newGapPattern := [seq(If(alSeqs[i,curInd]='_', 0, 1), i=1..nSeqs)]:
+        if curGapPattern <> newGapPattern then
+            PO := [op(PO), [curN, curInd-prevInd, curN+1, {seq(If(curGapPattern[i]=1,i,NULL), i=1..nSeqs)}],
+                   [curN, 0, curN+1, {seq(If(curGapPattern[i]=0,i,NULL), i=1..nSeqs)}]]:
+            curN := curN + 1:
+            curGapPattern := newGapPattern:
+            prevInd := curInd:
+        fi:
+        curInd := curInd + 1:
+    od:
+    PO := [op(PO), [curN, curInd-prevInd, curN+1, {seq(If(curGapPattern[i]=1,i,NULL), i=1..nSeqs)}],
+           [curN, 0, curN+1, {seq(If(curGapPattern[i]=0,i,NULL), i=1..nSeqs)}]]:
+    PO := [seq(If(PO[i,4]<>[],PO[i],NULL), i=1..length(PO))]:
+    
+    for n to curN do # merge long gaps
+        poLen := length(PO):
+        # get all zero and non-zero predecessors and successors
+        pnz := [seq(If(PO[i,3]=n and PO[i,2]<>0,i,NULL),i=1..poLen)]:
+        pz := [seq(If(PO[i,3]=n and PO[i,2]=0,i,NULL),i=1..poLen)]:
+        snz := [seq(If(PO[i,1]=n and PO[i,2]<>0,i,NULL),i=1..poLen)]:
+        sz := [seq(If(PO[i,1]=n and PO[i,2]=0,i,NULL),i=1..poLen)]:
+        pnzs := {seq(op(PO[i,4]), i= pnz)}:
+        pzs := {seq(op(PO[i,4]), i= pz)}:
+        snzs := {seq(op(PO[i,4]), i= snz)}:
+        szs := {seq(op(PO[i,4]), i= sz)}:
+        
+        pszs := pzs intersect szs:
+        
+        for i in pz do
+            nset1 := PO[i,4] intersect pszs:
+            for j in sz do  
+                nset2 := nset1 intersect PO[j,4]:
+                if nset2 <> {} then
+                    PO := [op(PO), [PO[i,1], 0, PO[j,3], nset2]]:
+                    PO[i,4] := PO[i,4] minus nset2:
+                    PO[j,4] := PO[j,4] minus nset2:
+                fi:
+            od:
+        od:
+        PO := [seq(If(PO[i,4]<>{},PO[i],NULL), i=1..length(PO))]:
+    od:
+    
+    for n to curN do # handle alternative splicings
+        poLen := length(PO):
+        # get all zero and non-zero predecessors and successors
+        pnz := [seq(If(PO[i,3]=n and PO[i,2]<>0,i,NULL),i=1..poLen)]:
+        pz := [seq(If(PO[i,3]=n and PO[i,2]=0,i,NULL),i=1..poLen)]:
+        snz := [seq(If(PO[i,1]=n and PO[i,2]<>0,i,NULL),i=1..poLen)]:
+        sz := [seq(If(PO[i,1]=n and PO[i,2]=0,i,NULL),i=1..poLen)]:
+#        pnzs := {seq(op(PO[i,4]), i= pnz)}:
+#        pzs := {seq(op(PO[i,4]), i= pz)}:
+#        snzs := {seq(op(PO[i,4]), i= snz)}:
+#        szs := {seq(op(PO[i,4]), i= sz)}:
+#        
+#        if pnzs intersect szs = pnzs and pzs intersect snzs = snzs then
+#            sn := PO[pnz[1],1]:
+#            en := PO[snz[1],3]:
+#            for i in [op(pnz), op(pz)] do
+#                PO[i,3] := en:
+#            od:
+#            # add additional 0-edges when predecessor edge starts further back than node sn
+#            for i in pz do
+#                if PO[i,1] <> sn then
+#                    PO := [op(PO), [PO[i,1], 0, sn, PO[i,4] intersect snzs]]:
+#                fi:
+#            od:
+#            
+#            for i in [op(snz), op(sz)] do
+#                PO[i,1] := sn:
+#            od:
+#            # add additional 0-edges when successor edge spans further than node en
+#            for i in sz do
+#                if PO[i,3] <> en then
+#                    PO := [op(PO), [en, 0, PO[i,3], PO[i,4] intersect pnzs]]:
+#                fi:
+#            od:
+#            for i in pz do
+#                PO[i,4] := PO[i,4] minus snzs:
+#            od:
+#            for i in sz do
+#                PO[i,4] := PO[i,4] minus pnzs:
+#            od:
+##            PO := [seq(op(PO[1..i]), i=sz)]:
+#        fi:
+#        PO := [seq(If(PO[i,4]<>{},PO[i],NULL), i=1..length(PO))]:
+
+        # find all non-zero predecessor edges for sequences with zero successor edges
+        for pe in pnz do
+            for se in sz do
+                #if PO[pe,4] minus PO[se,4] = {} then
+                if PO[pe,4] = PO[se,4] then
+                    PO[pe,3] := PO[se,3]:
+                    PO[se,4] := PO[se,4] minus PO[pe,4]:
+                    break:
+                fi:
+            od:
+        od:
+        
+        # find all non-zero successor edges for sequences with zero predecessor edges
+        for se in snz do
+            for pe in pz do
+                #if PO[se,4] minus PO[pe,4] = {} then
+                if PO[se,4] = PO[pe,4] then
+                    PO[se,1] := PO[pe,1]:
+                    PO[pe,4] := PO[pe,4] minus PO[se,4]:
+                    break:
+                fi:
+            od:
+        od:
+        
+        # 
+        
+        PO := [seq(If(po[4]<>{},po,NULL), po=PO)]:
+    od:
+    
+    poLen := length(PO):
+    
+    # combine multiple outgoing 0-edges into one (adding a 0-edge to the end node of that one 0-edge)
+    for n from 0 to curN do
+        ze := {seq(If(PO[i,1]=n and PO[i,2]=0, i,NULL), i=1..poLen)}:
+        rze := {}:
+        for e1 in ze do
+            for e2 in (ze minus rze) minus {e1} do
+                if PO[e1,3] > PO[e2,3] then
+                    PO[e1,1] := PO[e2,3]:
+                    PO[e2,4] := PO[e2,4] union PO[e1,4]:
+                    rze := rze union {e1}:
+                    break:
+                fi:
+            od:
+        od:
+    od:
+    
+    PO := sort(PO, x->x[1]):
+    # remove multiple 0-edges between the same nodes
+    for i from poLen to 1 by -1 do
+        for j to i-1 do
+            if PO[i,1] = PO[j,1] and PO[i,3] = PO[j,3] and PO[i,2] = 0 and PO[j,2] = 0 then
+                PO[j,4] := PO[j,4] union PO[i,4]:
+                PO := [op(PO[1..i-1]), op(PO[i+1..-1])]:
+                break
+            fi
+        od:
+    od:
+    
+    poLen := length(PO):    
+    for i to poLen do
+        if PO[i,1] = 0 then PO[i,1] := 'S': elif PO[i,3] = curN+1 then PO[i,3] := 'T'; fi:
+    od:
+        
+    # remove 0-edges that can be expressed by several consecutive 0-edges
+    for i to poLen do
+        if PO[i,2] = 0 then
+            # search for consecutive edges
+            se := [op({seq(If(PO[j,1]=PO[i,1] and PO[j,2]=0, j, NULL), j=1..poLen)} minus {i})]:
+            res := []:
+            for e in se do
+                r := FindZeroLengthPath(PO, e, PO[i,3]):
+                res := append(res, op(r))
+            od:
+            if res <> [] then
+                res := sort(res, x->length(x)):
+                #printf('found path %A for edge %A\n', res[1], i):
+                for e in res[1] do
+                    PO[e,4] := PO[e,4] union PO[i,4]:
+                od:
+                PO := [op(PO[1..i-1]), op(PO[i+1..-1])]:
+                i := 0:
+                poLen := length(PO):
+            fi
+        fi:
+        if i = poLen then break fi:
+    od:
+    
+    STs := [seq([msa['InputSeqs',i], msa['labels',i],[]], i=1..nSeqs)]:
+    for i to poLen do
+        for j to length(PO[i,4]) do
+            STs[PO[i,4,j],3] := append(STs[PO[i,4,j],3], i):
+        od
+    od:
+    PartialOrderMSA_simplify(PartialOrderMSA([seq(SeqThread(op(STs[i])), i=1..nSeqs)], PartialOrder(seq(PO[i,1..3], i=1..poLen)),0,msa['AllAll'])):
+end:
+
+#################################################################################
+# find all paths of length 0 starting from edge startEdge and ending in endNode #
+#################################################################################
+FindZeroLengthPath := proc(PO, startEdge, endNode)
+    if PO[startEdge,3] = endNode then
+        return([[startEdge]]):
+    elif PO[startEdge,3] = 'T' or (endNode <> 'T' and PO[startEdge,3] > endNode) then
+        return([]):
+    else
+        se := [op({seq(If(PO[i,1]=PO[startEdge,3] and PO[i,2]=0, i, NULL), i=1..length(PO))} minus {startEdge})]:
+        res := []:
+        for e in se do
+            r := FindZeroLengthPath(PO, e, endNode):
+            res := append(res, seq([startEdge, op(r[j])], j=1..length(r))):
+        od:
+        return(res):
+    fi
+end:
+
+
+
+##############################################################
+# make a substitution in a PartialOrder (or PartialOrderMSA) #
+##############################################################
+PartialOrder_subs := proc( old, new, r, po:PartialOrder )
+l := length(old);
+if type(r,PartialOrderMSA) then
+     othr := r['SeqThreads'];
+     nthr := CreateArray(1..length(othr),'');
+     for j to length(othr) do
+         nl := othr[j,'NodeList'];
+         i := SearchArray(old[1],nl);
+         if i > 0 and i <= length(nl)-l+1 and nl[i..i+l-1] = old then
+	      nthr[j] := SeqThread( othr[j,'Sequence'], othr[j,'label'],
+		   [op(1..i-1,nl), op(new), op(i+l..length(nl),nl) ] )
+         else nthr[j] := othr[j] fi;
+     od;
+     PartialOrderMSA( nthr, po, op(3..length(r),r) )
+elif type(r,SeqThread) then
+     nl := r['NodeList'];
+     i := SearchArray(old[1],nl);
+     if i > 0 and i <= length(nl)-l+1 and nl[i..i+l-1] = old then
+	  SeqThread( r['Sequence'], r['label'],
+		[op(1..i-1,nl), op(new), op(i+l..length(nl),nl) ] )
+     else r fi;
+else error('invalid argument') fi
+end:
+
+
+###############################################
+# Convert a PartialOrderMSA into a MAlignment #
+###############################################
+PartialOrderMSA_MAlignment := proc( msa:PartialOrderMSA ) -> MAlignment;
+threads := msa['SeqThreads']:
+n := length(threads);
+po := msa['PO'];
+
+inuse := { seq(op(w['NodeList']),w=threads) };
+sseqs := [seq(w['Sequence'],w=threads)];
+ls := round( 1.1*max( seq(length(w),w=sseqs) ));
+alseqs := [seq(CreateString(ls,'_'),n)];
+pad := CreateString(ceil(ls/5),'_');
+io := 0;
+
+# see examples in bio-recipes/GraphAlign/PartialOrderCases.jpg
+# the layout proceeds from left to right given any total order
+# of the edges compatible with the partial order.
+
+prev := 'S';
+pool := { seq([op(po[i]),i],i=remember(SuccessorEdges('S',po))) };
+while pool <> {} do
+    alls := { seq( op(remember(SuccessorClosure(x[3],po))), x=pool) };
+    pool2 := { seq( If( member(x[1],alls), NULL, x ), x=pool )};
+    assert( pool2 <> {} );
+    pool3 := { seq( If( x[1]=prev, x, NULL ), x=pool2 )};
+    x := If( pool3={}, RandL(pool2), RandL(pool3) );
+    prev := x[3];
+    pool := pool minus {x} union
+	{ seq([op(po[i]),i],i=remember(SuccessorEdges(x[3],po))) };
+
+    # now process edge x
+    if not member(x[4],inuse) or x[2] <= 0 then next fi;
+    while io+x[2] >= ls do
+	for i to n do alseqs[i] := alseqs[i] . pad od;
+	ls := ls + length(pad);
+	pad := pad . pad
+    od;
+    for i to n do if member(x[4],threads[i,'NodeList']) then
+	for j to x[2] do alseqs[i,j+io] := sseqs[i,j] od;
+	sseqs[i] := x[2]+sseqs[i];
+    fi od;
+    io := io+x[2];
+od;
+assert( max(seq(length(w),w=sseqs)) = 0 );
+alseqs := [seq(w[1..io],w=alseqs)];
+
+# compute best printing order, this is a path, not a tour
+D := CreateArray(1..n+1,1..n+1);
+for i to n do for j from i+1 to n do
+    comm := {op(threads[i,'NodeList'])} intersect {op(threads[j,'NodeList'])};
+    D[i,j] := D[j,i] := io - sum( po[w,2], w=comm );
+od od;
+porder := ComputeTSP(D);
+i := SearchArray(n+1,porder);
+porder := [op(i+1..n+1,porder), op(1..i-1,porder)];
+
+score := PartialOrderMSA_score(msa);
+seqs := [seq(w['Sequence'],w=threads)];
+# this upper bound does not consider costs of alt/splicings
+upb := ScoreUpperBound( seqs, msa['AllAll'] );
+MAlignment( seqs, alseqs, [seq(w['label'],w=threads)], 'PartialOrder', porder,
+    score, max(upb,score), msa['Tree'], msa['AllAll'] )
+end:
+
+
+PartialOrderMSA_print := proc( msa:PartialOrderMSA )
+print(PartialOrderMSA_MAlignment(msa))
+end:
+
+
+##########################################################
+# Score of a PartialOrderMSA based on PositionLikelihood #
+#  also check the PartialOrderMSA structure thoroughly   #
+##########################################################
+PartialOrderMSA_score := proc( msa:PartialOrderMSA ) -> numeric;
+PartialOrderMSA_verify(msa);
+PartialOrderMSA_score_indel(msa) + PartialOrderMSA_score_aa(msa)
+end:
+
+
+####################################################
+# compute the score of indels/alt-splic using MSTs #
+####################################################
+PartialOrderMSA_score_indel := proc( msa:PartialOrderMSA ) -> numeric;
+global Successor_Scores;
+threads := msa['SeqThreads']:
+po := msa['PO'];
+score := 0;
+inuse := { seq( op(w['NodeList']), w=threads )};
+
+
+#############################################
+# score deletions and alternative splicings #
+#############################################
+dm := SearchDayMatrix(10,DMS);
+C0 := dm['FixedDel'];  C1 := dm['IncDel'];
+Graph;
+Successor_Scores := table(0);
+for s in po['Nodes'] do
+    ss := remember(SuccessorEdges(s,po));
+    k := length(ss);
+    if k <= 1 then next
+    elif k=2 and po[ss[1],3]=po[ss[2],3] then
+	 Successor_Scores[s] := C0 + (po[ss[1],2]+po[ss[2],2]-1)*C1;
+	 score := score + ";
+	 next
+    fi;
+    sclo := [op(remember(SuccessorClosure(s,po)) minus {s})];
+    lsclo := length(sclo);
+    MinDist := CreateArray(1..k,1..lsclo,999999);
+    sse := [seq(po[w],w=ss)];
+    ss3 := [seq(w[3],w=sse)];
+    for i to k do
+	i2 := SearchArray(sse[i,3],sclo);
+	MinDist[i,i2] := sse[i,2]
+    od;
+
+    # Compute minimum distance from s through each of the edges
+    # to all other successors
+    es := [ seq( If( member(w[1],sclo) and member(w[3],sclo),
+	[SearchArray(w[1],sclo),w[2],SearchArray(w[3],sclo)], NULL),
+	w=[op(po)] )];
+    modified := true;
+    while modified <> false do
+	modified := false;
+        for w in es do
+	    for i to k do if MinDist[i,w[3]] > MinDist[i,w[1]]+w[2] then
+		MinDist[i,w[3]] := MinDist[i,w[1]]+w[2];
+		modified := true
+	    fi od;
+	od
+    od;
+    
+    ze := {};
+    D := CreateArray(1..k,1..k);
+    for i1 to k-1 do
+	for i2 from i1+1 to k do
+	    D[i1,i2] := D[i2,i1] := min(MinDist[i1]+MinDist[i2]);
+	    # multiple 0-length paths are impossible to eliminate.  E.g.
+	    # PartialOrder( [S,1,1],[S,0,1],[S,0,2],[1,1,2],[1,0,T],[2,1,T],
+	    #    [2,0,T] ).  They have no effect for dynamic programming.
+	    # See also bio-recipes/GraphAlign/Multiple_0_paths.jpg
+	    if D[i1,i2] <= 0 then ze := ze union {i1,i2} fi
+    od od;
+    nz := max( 1, length(ze) );
+    # The analysis in bio-recipes/GraphAlign/ScoringMultipleIndels.jpg shows
+    # that the MST is the preferred computation
+    mst := MST_matrix(D);
+    cost := (k-nz)*(C0-C1) + sum( D[op(w)], w=mst )*C1;
+    Successor_Scores[s] := cost;
+    score := score + cost;
+od;
+If( type(IndelFactor,positive), IndelFactor*score, score )
+end:
+
+
+
+##########################################################
+# compute the score of stretches of matching amino acids #
+##########################################################
+PartialOrderMSA_score_aa := proc( msa:PartialOrderMSA ) -> numeric;
+global Edge_Scores;
+threads := msa['SeqThreads']:
+n := length(threads);
+po := msa['PO'];
+lpo := length(po);
+Edge_Scores := CreateArray(1..lpo);
+Edge_Seqs := CreateArray(1..lpo,[]);
+Edge_Inds := CreateArray(1..lpo,[]);
+
+# go through each sequence
+for i to n do
+    thread := threads[i];
+    s := thread['Sequence'];
+    for j in thread['NodeList'] do if po[j,2] > 0 then
+	Edge_Seqs[j] := append(Edge_Seqs[j],s);
+	Edge_Inds[j] := append(Edge_Inds[j],i);
+	s := po[j,2] + s
+    fi od;
+od;
+
+for j to lpo do if po[j,2] > 0 then
+    Edge_Scores[j] := remember( CT_Edge( Edge_Inds[j], Edge_Seqs[j],
+	po[j,2], msa['AllAll'] ));
+fi od;
+
+sum(Edge_Scores);
+end:
+
+
+####################################################
+# Score of a PartialOrderMSA based on sum of pairs #
+####################################################
+PartialOrderMSA_SPscore := proc( msa:PartialOrderMSA ) -> numeric;
+PartialOrderMSA_score_indel(msa) + PartialOrderMSA_score_SPaa(msa)
+end:
+
+
+
+PartialOrderMSA_score_SPaa := proc( msa:PartialOrderMSA ) -> numeric;
+threads := msa['SeqThreads']:
+n := length(threads);
+po := msa['PO'];
+score := 0;
+
+##################################################
+# score matching amino acids with sum-of-pairs/k #
+##################################################
+for i to length(po) do
+    if po[i,2]=0 then next fi;
+    map := [seq( If( member(i,threads[j,'NodeList']), j, NULL), j=1..n )];
+    lm := length(map);
+    seqs := [ seq( st['Sequence'], st=threads )];
+    for j to lm do
+	for k in threads[map[j],'NodeList'] while k <> i do
+	    seqs[map[j]] := po[k,2] + seqs[map[j]]
+	od;
+    od;
+    for k to po[i,2] do
+	for j1 to lm do for j2 from j1+1 to lm do
+	    m1 := map[j1];  m2 := map[j2];
+	    score := score + 2/lm *
+	        msa['AllAll',m1,m2,'DayMatrix','Sim',seqs[m1,k],seqs[m2,k]];
+	od od;
+    od;
+od:
+
+score
+end:
+
+##############################
+# Simplify a PartialOrderMSA #
+##############################
+PartialOrderMSA_simplify := proc( msa:PartialOrderMSA )
+threads := msa['SeqThreads']:
+n := length(threads);
+po := msa['PO'];  lpo := length(po);
+# test for possible loops
+remember(SuccessorClosure('S',msa['PO']));
+
+# verify that all edges are in use, remove those which aren't
+inuse := { seq(op(w['NodeList']),w=threads) };
+if length(inuse) < lpo then
+     newpo := PartialOrder( seq( po[w], w=inuse ));
+     nthreads := [];
+     inuse1 := CreateArray(1..lpo);
+     for i to length(inuse) do inuse1[inuse[i]] := i od;
+     for st in threads do
+	  newst := SeqThread( st['Sequence'], st['label'],
+		[seq(inuse1[w],w=st['NodeList'])] );
+	  nthreads := append(nthreads,newst)
+     od;
+     return( procname( PartialOrderMSA( nthreads, newpo, op(3..length(msa),msa) )))
+fi;
+
+# find sequences of two edges which do not have intermediate branching
+#  (pr) ---------> (node) --------> (su)
+allnodes := {'S',seq(po[i,3],i=1..lpo)};
+torem := seen := [];
+po2 := 0;
+for node in allnodes do
+    pr := remember(PredecessorEdges(node,po));
+    su := remember(SuccessorEdges(node,po));
+    if length(pr) = 1 and length(su) = 1 then
+	pr := pr[1];  su := su[1];
+	if member(pr,seen) or member(su,seen) then next fi; # avoid chains
+	torem := append(torem,su);
+	seen := append(seen,pr,su);
+	if po2=0 then po2 := copy(po) fi;
+	po2[pr] := [po[pr,1], po[pr,2]+po[su,2], po[su,3]];
+    fi
+od;
+if torem <> [] then
+    sts := [];
+    for st in threads do
+	sts := append( sts, SeqThread( st['Sequence'], st['label'],
+	    [seq(If(member(x,torem),NULL,x),x=st['NodeList'])] ))
+    od;
+    return( procname( PartialOrderMSA( sts, po2, op(3..length(msa),msa) )))
+fi;
+
+# find common edges which are deletions
+anch := {op(threads[1,'NodeList'])};
+for i from 2 to n do anch := anch intersect {op(threads[i,'NodeList'])} od;
+torem := [ seq( If( po[w,2]=0 and po[w] <> ['S',0,'T'], w, NULL), w=anch )];
+if torem <> [] then
+    # cannot be consecutive at this point
+    po := copy(po);
+    for i in torem do
+	w := po[i];
+	# eliminate join forward except for w = [...,T]
+	if w[3] = 'T' then
+	     for v in po do if v[3] = w[1] then v[3] := 'T' fi od
+	else for v in po do if v[1] = w[3] then v[1] := w[1] fi od
+	fi
+    od;
+    sts := [];
+    for st in threads do
+	sts := append( sts, SeqThread( st['Sequence'], st['label'],
+	    [seq(If(member(x,torem),NULL,x),x=st['NodeList'])] ))
+    od;
+    return( procname( PartialOrderMSA( sts, po, op(3..length(msa),msa) )))
+fi;
+
+# remove deletions (0-edges) which connect two nodes not connected otherwise.
+seen := {};
+for i to lpo do if po[i,2]=0 then
+    v := po[i];
+    linked := false;
+    for e1 in remember(SuccessorEdges(v[1],po)) minus {i} do
+	v2 := po[e1];
+	if v2[3] = v[3] or member(v[3],remember(SuccessorClosure(v2[3],po)))
+	    then linked := true;  break fi;
+    od;
+    if linked or {v[1],v[3]} intersect seen <> {} then next fi;
+    seen := seen union {v[1],v[3]};
+    
+    if po2=0 then po2 := copy(po) fi;
+    if v[1]='S' then
+	 for w in po2 do
+	     if w=v then next fi;
+	     if w[3]=v[3] then w[3] := 'S' fi;
+	     if w[1]=v[3] then w[1] := 'S' fi;
+	 od
+    else for w in po2 do
+	     if w=v then next fi;
+	     if w[3]=v[1] then w[3] := v[3] fi;
+	     if w[1]=v[1] then w[1] := v[3] fi;
+         od
+    fi;
+    torem := append(torem,i);
+    break;	# do one at a time, otherwise can cause loops
+fi od;
+if torem <> [] then
+    sts := [];
+    for st in threads do
+	sts := append( sts, SeqThread( st['Sequence'], st['label'],
+	    [seq(If(member(x,torem),NULL,x),x=st['NodeList'])] ))
+    od;
+    return( procname( PartialOrderMSA( sts, po2, op(3..length(msa),msa) )))
+fi;
+
+msa
+end:
+
+############################################
+# Renumber the states of a PartialOrderMSA #
+############################################
+PartialOrderMSA_renumber := proc( msa:PartialOrderMSA )
+threads := msa['SeqThreads']:
+n := length(threads);
+po := msa['PO'];
+allnodes := {seq(po[i,3],i=1..length(po))};
+newnode := table();
+for i to length(allnodes) do newnode[allnodes[i]] := i od;
+newnode['S'] := 'S';  newnode['T'] := 'T';
+newpo := copy(po);
+for w in newpo do w[1] := newnode[w[1]];  w[3] := newnode[w[3]] od;
+PartialOrderMSA(msa['SeqThreads'],newpo,msa['Tree'],msa['AllAll'])
+end:
+
+
+############################
+# Verify a PartialOrderMSA #
+############################
+PartialOrderMSA_verify := proc( msa:PartialOrderMSA )
+threads := msa['SeqThreads']:
+po := msa['PO'];
+# loop detection
+remember(SuccessorClosure('S',po));
+
+for st in threads do
+    if length(st['Sequence']) <> sum(po[w,2],w=st['NodeList']) then
+	error(st,'sequence length and threaded edges have different lengths')
+    fi;
+    node := 'S';
+    for w in st['NodeList'] do
+	if po[w,1] <> node then error(node,po[w],st,'broken edge sequence') fi;
+	node := po[w,3];
+    od;
+    if node <> 'T' then
+	error(node,st,'edge sequence does not terminate in T') fi;
+od;
+NULL end:
+
+
+#######################
+# Ancillary functions #
+#######################
+
+##########################################
+# circular tour of a subset of sequences #
+##########################################
+CT_DM := proc( map:list(posint), AllAll )
+    #global CTG; # debug output added by DD 13.7.10
+    r := remember(CTfromAllAll(map,AllAll));
+    #if assigned(CTG) and type(CTG, set) and length(r) > 3 then CTG := append(CTG, r) fi:
+    r := [op(r),r[1]];
+    [ r, [seq(AllAll[r[i],r[i+1],DayMatrix], i=1..length(map))] ]
+end:
+
+
+
+############################################################################
+# CTfromAllAll computes a circular tour of a subset of an All x All matrix #
+############################################################################
+# This is using the assumption that the complete tour is the
+# right one and we are happy that for any subset of the nodes we use
+# the corresponding subset of the complete tour.
+#
+# This approach has two advantages: time efficiency and consistency.
+#
+#       CTfromAllAll uses two tables to improve its efficiency:
+#
+#       CTfromAllAll_seq_hash[ <sequence> ] -> set(hash-of-AllAll)
+#
+#	CTfromAllAll_hash_rank[ hash-of-AllAll ] -> rank-table
+#
+#	rank-table[ <sequence> ] -> ranking in CT
+#
+#       Gaston H. Gonnet (July 10th, 2010)
+#
+CTfromAllAll := proc( map:list(posint), AllAll:matrix )
+global CTfromAllAll_seq_hash, CTfromAllAll_hash_rank;
+if length(map) < 4 then return(map)
+elif not type(CTfromAllAll_seq_hash,table) then
+     CTfromAllAll_seq_hash := table({});
+     CTfromAllAll_hash_rank := table();
+fi;
+seqs := [ seq( If( w=1, AllAll[1,2,'Seq1'], AllAll[1,w,'Seq2']), w=map )];
+comm := intersect();
+for s in seqs while comm <> {} do
+     comm := comm intersect CTfromAllAll_seq_hash[s] od;
+if comm = {} then
+     # there is no useful entry computed earlier, compute now
+     n := length(AllAll);
+     D := CreateArray(1..n,1..n);
+     for i to n do for j from i+1 to n do
+        D[i,j] := D[j,i] := AllAll[i,j,PamDistance]
+     od od;
+     t := ComputeQuarticTSP( D, round(2*sqrt(n)) );
+     h_r := table();
+     for i to n do
+	 h_r[ If( t[i]=1, AllAll[1,2,'Seq1'], AllAll[1,t[i],'Seq2']) ] := i;
+     od;
+     haa := hash(AllAll);
+     CTfromAllAll_hash_rank[haa] := h_r;
+     for i to n do
+	s := If( i=1, AllAll[1,2,'Seq1'], AllAll[1,i,'Seq2']);
+	CTfromAllAll_seq_hash[s] := CTfromAllAll_seq_hash[s] union {haa}
+     od;
+else h_r := CTfromAllAll_hash_rank[comm[1]];
+fi;
+r := sort( [seq( [h_r[seqs[i]],map[i]], i=1..length(map))] );
+[seq(w[2],w=r)]
+end:
+
+
+##########################################
+# Compute the score of an edge using CTs #
+##########################################
+CT_Edge := proc( map:list(posint), seqs:list(string), len:posint, AllAll )
+    if length(map) = 2 then
+	dm := AllAll[map[1],map[2],DayMatrix];
+	s1 := seqs[1];  s2 := seqs[2];
+	return( sum( dm[Sim,s1[k],s2[k]], k=1..len ) )
+    fi;
+    t := 0;
+    seqs2 := CreateArray(1..length(AllAll),'');
+    for i to length(seqs) do seqs2[map[i]] := seqs[i] od;
+    for k to len do
+	map2 := [seq( If( seqs[j,k] <> 'X', map[j], NULL), j=1..length(map) )];
+	if length(map2) < 2 then next fi;
+	r := remember(CT_DM(map2,AllAll));  tour := r[1];  dms := r[2];
+	t := t + sum( dms[j,Sim,seqs2[tour[j],k], seqs2[tour[j+1],k]],
+	    j=1..length(map2));
+    od;
+    t/2
+end:
+
+
+ScoreUpperBound := proc( seqs:list(string), aa )
+n := length(seqs);
+if type(aa,matrix({0,Alignment})) then
+     s := CreateArray(1..n,1..n);
+     for i to n do
+	for j from i+1 to n do s[i,j] := s[j,i] := aa[i,j,Score] od od;
+     ms := max(s);
+     for i to n do
+	for j from i+1 to n do s[i,j] := s[j,i] := ms-s[i,j] od od;
+     tour := ComputeTSP(s);
+     n*ms - sum( s[tour[i-1],tour[i]], i=2..n ) - s[tour[1],tour[n]]
+elif type(DMS,list(DayMatrix)) then
+     lens := [seq(length(w),w=seqs)];
+     (sum(lens)-max(lens)+min(lens)) * max(DMS[1,Sim]) / 2
+else lens := [seq(length(w),w=seqs)];
+     (sum(lens)-max(lens)+min(lens)) * 10
+fi
+end:
+
+end: # end module
+
+
+#
+#	Build a PartialOrderMSA by finding the anchors and
+#	working on the inter-anchor parts with EvolutionaryOptimization
+#
+#	Gaston H. Gonnet (April 7th, 2010)
+#
+
+module external PartialOrderMSA_MAlign, PartialOrderMSA_Anchors;
+
+
+##################################################
+# find all anchors (as offset vectors) of an MSA #
+##################################################
+PartialOrderMSA_Anchors := Anchors := proc( msa:PartialOrderMSA )
+threads := msa['SeqThreads'];
+n := length(threads);
+po := msa['PO'];
+anch := intersect();
+for i to n do anch := anch intersect { op(threads[i,'NodeList']) } od;
+sa := sum( po[w,2], w=anch );
+
+offs := CreateArray(1..sa,1..n,'-');
+for i to n do
+    j1 := j2 := 0;
+    sq := threads[i,'Sequence'];
+    for w in threads[i,'NodeList'] do
+	if member(w,anch) then
+	    for j to po[w,2] do offs[j1+j,i] := j2+j od;
+	    j1 := j1 + po[w,2];
+	fi;
+	j2 := j2 + po[w,2];
+    od;
+    assert( j1=sa and j2=length(sq) );
+od;
+{op(offs)}
+end:
+
+
+##################################################################
+# Run the EvolutionaryOptimization algorithm over some sequences #
+##################################################################
+EvoOpt := proc( seqs:list(string), Ids:list, aa:matrix ;
+	(Pop={}):set([numeric,PartialOrderMSA]) )
+global Global_MAlignment, ComputeTSP_table;
+n := length(seqs);
+
+# special cases
+if n < 1 then error('no sequences to align')
+elif n = 1 then 
+     return( [0,PartialOrderMSA( [SeqThread(seqs[1],Ids[1],[1])],
+	 PartialOrder( ['S',length(seqs[1]),'T'] ), 0, [[0]] )])
+elif min( seq(length(w),w=seqs) ) = 0 then
+     map := [];
+     for i to n do if seqs[i] <> '' then map := append(map,i) fi od;
+     n2 := length(map);
+     aa2 := CreateArray(1..n2,1..n2);
+     for i to n2 do for j from i+1 to n2 do
+	aa2[i,j] := aa2[j,i] := aa[map[i],map[j]] od od;
+     r := procname( [seq(seqs[i],i=map)], [seq(Ids[i],i=map)], aa2 );
+     newpo := append(copy(r[2,'PO']),['S',0,'T']);
+
+     thrs := [ seq( SeqThread(seqs[i],Ids[i],[length(newpo)]), i=1..n )];
+     for i to n2 do thrs[map[i]] := r[2,'SeqThreads',i] od;
+     msa := PartialOrderMSA( thrs, newpo, 0, aa );
+     return( [-PartialOrderMSA_score(msa),msa] )
+fi;
+
+ComputeTSP_table := table();	# table may get to be too large
+glold := Global_MAlignment;
+la := max(seq(length(w),w=seqs));
+Global_MAlignment := MAlignment( seqs,
+    [seq(w.CreateString(la-length(w),'_'),w=seqs)], Ids, 'EvoOpt',
+    [seq(i,i=1..n)], 0, 0, 0, aa );
+if printlevel >= 3 then printf( 'EvoOpt called with: %A\n', seqs ) fi;
+
+for i to 7 do assign( symbol( PartialOrderMSA_Constructor.i._used ), false ) od;
+ToMinimize := proc( a:[numeric,PartialOrderMSA] ) -a[1] end:
+sols := EvolutionaryOptimization(
+	# PartialOrderMSA_Constructor6,7 removed for abismal performance
+        [ seq( symbol(PartialOrderMSA_Constructor.i), i=1..5 )],
+        [ seq( symbol(PartialOrderMSA_Mutate.i), i=1..9 ) ],
+	[ PartialOrderMSA_Merge1, PartialOrderMSA_Merge2 ],
+        ToMinimize,
+	# see TimeEstimate.drw
+        MaxTime=min(6*3600,max(100,sum(length(w),w=seqs)^1.1*n^0.15)),
+	MaxIter=DBL_MAX, TimeExponent=1/2,
+        PopulationSize=130, IniPopulation=Pop, MaxNoImprov=100 ):
+Global_MAlignment := glold;
+sols[1]
+end:
+
+
+##########################################################
+# Build a PartialOrderMSA by dividing into anchors first #
+##########################################################
+PartialOrderMSA_MAlign := proc( seqs:list(string), Ids:list,
+	aa:matrix({0,Alignment}); (algo='G'):{'G','D'} )
+global Global_MAlignment, DynProgBoth_PartOrd;
+
+DynProgBoth_PartOrd_G;
+if algo = 'G' then
+    DynProgBoth_PartOrd := DynProgBoth_PartOrd_G
+else
+    DynProgBoth_PartOrd_D;
+    DynProgBoth_PartOrd := DynProgBoth_PartOrd_D
+fi:
+
+
+n := length(seqs);
+la := max(seq(length(w),w=seqs));
+Global_MAlignment := MAlignment( seqs,
+    [seq(w.CreateString(la-length(w),'_'),w=seqs)], Ids, 'PartialOrder',
+    [seq(i,i=1..n)], 0, 0, 0, aa );
+# seed CTfromAllAll with a complete AllAll matrix
+if n > 3 then CTfromAllAll([1,2,3,4],aa) fi;
+
+for i to 5 do assign( symbol( PartialOrderMSA_Constructor.i._used ), false ) od;
+a1 := PartialOrderMSA_Constructor1():  if printlevel >= 3 then lprint() fi;
+a2 := PartialOrderMSA_Constructor2():  if printlevel >= 3 then lprint() fi;
+a3 := PartialOrderMSA_Constructor3():  if printlevel >= 3 then lprint() fi;
+a4 := PartialOrderMSA_Constructor4():  if printlevel >= 3 then lprint() fi;
+a5 := PartialOrderMSA_Constructor5():  if printlevel >= 3 then lprint() fi;
+
+ans1 := Anchors(a1[2]):
+ans2 := Anchors(a2[2]):
+ans3 := Anchors(a3[2]):
+ans4 := Anchors(a4[2]):
+ans5 := Anchors(a5[2]):
+all := ans1 intersect ans2 intersect ans3 intersect ans4 intersect ans5;
+if length( all minus {[seq(1,n)]} ) = 0 then
+     # no anchors has to do the entire alignment with EvoOpt
+     return( EvoOpt( seqs, Ids, aa, {a1,a2,a3,a4,a5} )[2] )
+fi;
+all := all union {[seq(length(w)+1,w=seqs)]}:
+
+# go through the anchor vectors in order and find contiguous anchors
+# and areas of indels, alt/splicings
+curr := [seq(0,n)];
+lrun := 1;
+newpo := [];
+prevnode := 'S';
+nls := CreateArray(1..n,[]):
+for off in all do
+    dif := off-curr;
+    assert( min(dif) >= 1 );
+    if max(dif) = 1 then
+	 lrun := lrun+1;
+    else t := NewNodeName();
+	 # anchor node
+	 newpo := append(newpo,[prevnode,If(prevnode='S',lrun-1,lrun),t]);
+	 for i to n do nls[i] := append(nls[i],length(newpo)) od;
+	 prevnode := t;
+	 lrun := 1;
+
+	 # variable part nodes
+	 a := EvoOpt( [seq( seqs[i,curr[i]+1..off[i]-1], i=1..n )], Ids, aa );
+	 threads := a[2,'SeqThreads'];
+	 t := NewNodeName();
+	 tr := table( proc(x) external tr; tr[x] := NewNodeName() end );
+	 tr['S'] := prevnode;
+	 tr['T'] := t;
+	 offpo := length(newpo);
+	 for w in a[2,'PO'] do
+	     newpo := append(newpo, [ tr[w[1]], w[2], tr[w[3]]] ) od;
+	 for i to n do for w in threads[i,'NodeList'] do
+	     nls[i] := append(nls[i], w+offpo ) od od;
+	 prevnode := t;
+	 for i to n do assert( off[i]-1 = sum(newpo[w,2],w=nls[i]) ) od;
+    fi;
+    curr := off;
+od:
+if lrun > 1 then
+    t := NewNodeName();
+    newpo := append(newpo,[prevnode,If(prevnode='S',lrun-2,lrun-1),t]);
+    for i to n do nls[i] := append(nls[i],length(newpo)) od;
+    prevnode := t;
+fi;
+for w in newpo do if w[3]=prevnode then w[3] := 'T' fi od;
+newpo := PartialOrder(op(newpo));
+PartialOrderMSA( [seq( SeqThread(seqs[i], Ids[i], nls[i]), i=1..n)],
+	newpo, 0, aa )
+end:
+
+end: # end module
+
+
+#############################################################################
+# Global (and efficient) Successor/Predecessor functions and their closures #
+#############################################################################
+# WARNING: do not change PartialOrders if you are using these functions,    #
+#	create new POs before modifying them.  Else there is no way to	    #
+#	prevent these functions from working incorrectly.		    #
+#############################################################################
+module external Successor, Predecessor,
+	SuccessorEdges, PredecessorEdges,
+	SuccessorClosure, PredecessorClosure,
+	TotalOrder, InBetween, StrictlyInBetween;
+
+# Successor(node) -> set(node)
+Successor := proc( node, po:PartialOrder ) -> set;
+{ seq( po[w,3], w = remember(MakeSuccessorTable( po ))[node] )} end:
+
+# Predecessor(node) -> set(node)
+Predecessor := proc( node, po:PartialOrder ) -> set;
+{ seq( po[w,1], w = remember(MakePredecessorTable( po ))[node] )} end:
+
+# Successor(node) -> set(posint)  (the posint is an index to the po)
+SuccessorEdges := proc( node, po:PartialOrder ) -> set;
+remember(MakeSuccessorTable( po ))[node] end:
+
+# Predecessor(node) -> set(posint)  (the posint is an index to the po)
+PredecessorEdges := proc( node, po:PartialOrder ) -> set;
+remember(MakePredecessorTable( po ))[node] end:
+
+MakeSuccessorTable := proc( po:PartialOrder )
+t := table({});
+for i to length(po) do w := po[i,1];  t[w] := t[w] union {i} od;
+t end:
+
+MakePredecessorTable := proc( po:PartialOrder )
+t := table({});
+for i to length(po) do w := po[i,3];  t[w] := t[w] union {i} od;
+t end:
+
+# closure of Successor
+SuccessorClosure_count := 0;
+SuccessorClosure := proc( node, po:PartialOrder ) -> set;
+global SuccessorClosure_count;
+  SuccessorClosure_count := SuccessorClosure_count+1;
+  if SuccessorClosure_count > length(po)+1 then
+	error('PartialOrder has a cycle',po) fi;
+  r := {node};
+  for w in remember(Successor(node,po)) do
+	r := r union remember(procname(w,po)) od;
+  SuccessorClosure_count := SuccessorClosure_count-1;
+  r
+end:
+
+# closure of Predecessor
+PredecessorClosure := proc( node, po:PartialOrder ) -> set;
+  r := {node};
+  for w in remember(Predecessor(node,po)) do
+	r := r union remember(procname(w,po)) od;
+  r
+end:
+
+# return a list(node) in order consistent with the PartialOrder #
+TotalOrder := proc( po:PartialOrder )
+t := [];
+po2 := po:
+  proc( node ) external t;
+    if SearchArray(node,t) = 0 then
+	for nn in remember(Predecessor(node,po2)) do procname(nn) od;
+	t := append(t,node)
+    fi
+  end( 'T' );
+allnodes := {seq(po[i,1],i=1..length(po)), seq(po[i,3],i=1..length(po))};
+assert( length(allnodes) = length(t) );
+t
+end:
+
+# nodes which are successors of a and predecessors of b
+# (does not include a,b)
+InBetween := proc( a, b, po:PartialOrder ) -> set;
+( remember(SuccessorClosure(a,po)) minus remember(SuccessorClosure(b,po)) )
+intersect
+( remember(PredecessorClosure(b,po)) minus remember(PredecessorClosure(a,po)) )
+end:
+
+# Like InBetween, but there are no incoming or outgoing edges.  In case of
+# incoming or outgoing edges, it returns FAIL.  I.e. every path in the
+# StrictlyInBetween can only come in through a and go out through b.
+# The result R satisfies:  Succ(R+a) <= R+b and Pred(R+b) <= R+a
+StrictlyInBetween := proc( a, b, po:PartialOrder )
+af := remember(SuccessorClosure(a,po));
+bf := remember(SuccessorClosure(b,po));
+bb := remember(PredecessorClosure(b,po));
+ab := remember(PredecessorClosure(a,po));
+if not member(b,af) or not member(a,bb) then return(FAIL) fi;
+rf := af minus bf;  rfma := rf minus {a};
+rb := bb minus ab;
+if rfma <> rb minus {b} then return(FAIL) fi;
+if {seq( op(remember(Successor(w,po))), w=rf )} minus rb = {} and
+   {seq( op(remember(Predecessor(w,po))), w=rb )} minus rf = {} then rfma
+else FAIL fi
+end:
+
+end: # end module
+
+
+PartialOrderMSA_ScoreDetails := proc( msa:PartialOrderMSA )
+threads := msa['SeqThreads'];
+n := length(threads);
+po := msa['PO'];
+
+anch := intersect();
+for i to n do anch := anch intersect {op(threads[i,'NodeList'])} od;
+
+sco1 := PartialOrderMSA_score(msa);
+tots := totn := 0;
+for w in Indices(Successor_Scores) do
+    tots := tots + Successor_Scores[w];
+    totn := totn + 1
+od;
+printf( 'score: %.4f (%d edges) %+.4f (indels, %d nodes) = %.4f\n',
+    sum(Edge_Scores), sum( If(w<>0,1,0), w=Edge_Scores), tots, totn, sco1 );
+
+totord := sort( [seq(i,i=1..length(po))],
+	x -> -length(remember(SuccessorClosure(x,po))) );
+
+for i in totord do
+    if member(i,anch) then
+	 printf( 'anchor, %a, score %.4f\n', po[i], Edge_Scores[i] );
+	 for j to n do
+	     thrj := threads[j];
+	     sq := thrj['Sequence'];
+	     for w in thrj['NodeList'] while w <> i do sq := po[w,2]+sq od;
+	     printf( '\t%s\n', sq[1..po[i,2]] );
+	 od;
+    else printf( '\t%d, %a\n', i, po[i] )
+    fi;
+od;
+end:
+
+# check whether two POs are identical
+IdenticalPO := proc(PO1:PartialOrder, PO2:PartialOrder)
+    
+    CheckPaths := proc(t1:table, n1:anything, t2, n2:anything)
+        if t1[n1] = unassigned and t2[n2] = unassigned then
+            return(true)
+        elif t1[n1] = unassigned or t2[n2] = unassigned then
+            #printf('single unassigned node: %a, %a\n', n1, n2):
+            return(false)
+        else
+            nedges1 := length(t1[n1]); nedges2 := length(t2[n2]);
+            if nedges1 <> nedges2 then
+                #printf('%a, %a: number of outgoing edges doesn''t match\n', n1, n2):
+                return(false)
+            fi:
+            
+            corrPaths := CreateArray(1..nedges1, 0):
+            for i to nedges1 do
+                for j to nedges2 do
+                    if t1[n1,i,1] = t2[n2,j,1] then
+                        if t1[n1,i,3] = unassigned then
+                            #printf('calling with n1: %a, n2: %a\n', t1[n1,i,2], t2[n2,j,2]):
+                            r := CheckPaths(t1, t1[n1,i,2], t2, t2[n2,j,2]):
+                            #printf('return value from call with n1: %a, n2: %a: %a\n', t1[n1,i,2], t2[n2,j,2], r):
+                        else
+                        #    printf('chached value for n1: %a, n2: %a: %a\n', t1[n1,i,2], t2[n2,j,2], t1[n1,i,3]):
+                            r := t1[n1,i,3]
+                        fi:
+                        if r then
+                            corrPaths[i] := 1:
+                            break;
+                        fi:
+                    fi:
+                od:
+                if t1[n1,i,3] <> true then
+                    t1[n1,i,3] := If(corrPaths[i] = 1, true, unassigned)
+                fi
+            od:
+            
+            #printf('n1: %a, n2: %a - return: %a\n', n1, n2, evalb(sum(corrPaths) = nedges1)):
+            return(evalb(sum(corrPaths) = nedges1))
+        fi
+    end:
+    
+    po1len := length(PO1); po2len := length(PO2);
+    if po1len <> po2len then return(false) fi:
+    
+    po1tab := table():
+    po2tab := table():
+    
+    for i to po1len do
+        if po1tab[PO1[i,1]] = unassigned then po1tab[PO1[i,1]] := []: fi:
+        po1tab[PO1[i,1]] := append(po1tab[PO1[i,1]], [PO1[i,2], PO1[i,3], unassigned]):
+    od:
+    
+    for i to po2len do
+        if po2tab[PO2[i,1]] = unassigned then po2tab[PO2[i,1]] := []: fi:
+        po2tab[PO2[i,1]] := append(po2tab[PO2[i,1]], [PO2[i,2], PO2[i,3]]):
+    od:
+    
+    return(CheckPaths(po1tab, 'S', po2tab, 'S')):
+end:
+

@@ -1,0 +1,70 @@
+#
+#  PerIdentToPam( pi )  compute the PAM number that will
+#	result in the give percentage of identity.
+#
+#	(the argument is a percentage, i.e. between 0 and 100)
+#
+#				Gaston H. Gonnet (Oct 1991)
+PerIdentToPam := proc( pi:numeric )
+
+  if pi <= 0 or pi > 100 then error('invalid percentage range') fi;
+  if pi=100 then return(0) fi;
+  if type([args],[numeric,array(numeric,20,20)]) then
+    lp1 := args[2]
+  elif type(logPAM1,array(numeric,20,20)) then
+    lp1 := logPAM1
+  else error('must be called with a logPAM1 matrix') fi;
+  
+  AF := CreateArray(1..20);
+  M := exp(lp1);
+  for i to 20 do AF[i] := M[i,1]/M[1,i] od;
+  AF := AF/sum(AF);
+  asy := AF*AF;
+  if pi/100 <= asy then
+    error('pi cannot be less than the asymptotic value',100*asy)
+  fi;
+  
+  pam := -100*ln(pi/100-asy);
+  lo := 0;  hi := 5*pam;
+  while hi-lo > hi*DBL_EPSILON*10 do
+    mp := exp(pam*lp1);
+    m1p := lp1*mp;
+    num := -pi/100;
+    den := 0;
+    for i to 20 do
+      num := num + AF[i]*mp[i,i];
+      den := den + AF[i]*m1p[i,i]
+    od;
+    if num >= 0 then lo := pam else hi := pam fi;
+    incr := -num/den;
+    pam := pam + incr;
+    if abs(incr)^2 < abs(pam)*DBL_EPSILON then break fi;
+    if pam <= lo or pam >= hi then pam := (lo+hi)/2 fi
+  od;
+  pam
+end:
+
+#
+#  PamToPerIdent( pam )  compute the average percent identity
+#	by an evolution of distance pam.
+#
+#	(the result is a percentage, i.e. a value between 0 and 100)
+#
+#				Gaston H. Gonnet
+PamToPerIdent := proc( pam:numeric )
+
+  if pam < 0 then error('invalid percentage range') fi;
+  if type([args],[numeric,array(numeric,20,20)]) then
+    lp1 := args[2]
+  elif type(logPAM1,array(numeric,20,20)) then
+    lp1 := logPAM1
+  else error('must be called with a logPAM1 matrix') fi;
+  
+  num := den := 0;
+  M := exp(pam*lp1);
+  for i to 20 do
+    num := num + M[i,1]*M[i,i]/M[1,i];
+    den := den + M[i,1]/M[1,i]
+  od;
+  100*num/den
+end:

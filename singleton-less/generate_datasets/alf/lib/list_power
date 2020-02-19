@@ -1,0 +1,27 @@
+#
+#  list_power( b, e )
+#
+#	function called by the kernel for matrix exponentiation
+#
+#				Gaston H Gonnet (May 1998)
+#
+list_power := proc( b, e )
+if type(b,matrix(numeric)) and type(e,numeric) then
+     if length(b) <> length(b[1]) then error('matrix must be square') fi;
+     if e=0 then Identity(length(b))
+     elif type(e,posint) then
+	 if e=1 then b
+	 elif e=2 then b*b
+	 elif mod(e,2) = 1 then r := procname(b,(e-1)/2);  r*r*b
+	 else r := procname(b,e/2);  r*r fi
+     elif type(e,integer) then
+	 procname( matrix_inverse(b), -e )
+     else exp(e*ln(b)) fi
+elif type(b,numeric) and type(e,matrix(numeric)) then
+     if length(e) <> length(e[1]) then error('matrix must be square') fi;
+     exp( ln(b)*e )
+elif type(b,matrix) and (e='t' or e='T') then transpose(b)
+elif type(b,list) and type(e,posint) and not type(b[1],list) then
+     if mod(e,2)=1 then b * (b*b) ^ ((e-1)/2) else (b*b) ^ (e/2) fi
+else error('invalid arguments for exponentiation') fi
+end:

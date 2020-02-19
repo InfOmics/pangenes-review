@@ -1,0 +1,227 @@
+printtext := proc(msg);
+  width := Set(screenwidth=80);  
+  Set(screenwidth=width);
+  if msg <> 0  then 
+    l := length(msg);
+    times:=round(l/width+0.5);
+    for i to times-1 do
+        if length(msg)>width*(i-1)+1 then
+          printf('%a',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+        fi;
+    od;
+    if length(msg)>width*(i-1)+1 then
+      printf('%a',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+    fi;
+  fi;
+end:
+
+printall := proc(msg);
+  width := Set(screenwidth=80);  
+  Set(screenwidth=width);
+  if msg <> 0  then 
+    l := length(msg);
+    times:=round(l/width+0.5);
+    for i to times-1 do
+        if length(msg)>width*(i-1)+1 then
+          printf('%a',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+        fi;
+    od;
+    if length(msg)>width*(i-1)+1 then
+      printf('%a',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+    fi;
+  fi;
+end:
+
+
+CreateDB := proc(filename, title);
+ OpenWriting (filename);
+ printf('<DBDESCR>Database for %a</DBDESCR>\n', title);
+ OpenWriting(terminal); 
+ CallSystem ('touch  '.filename.'.tree');
+end: 
+  
+WriteDomainDB := proc(dom: Domain, filename);
+  OpenAppending (filename);
+  printf('<E>');  
+  printf('<DE>%a</DE>', dom['info']);
+  seq := dom['seq'];
+  printf('<SEQ>');
+  printall(seq);
+  printf('</SEQ>'); 
+  msa := dom['msa']:
+  if msa <> 0 then
+    WriteMsa(msa);
+  else print('0');
+  fi;  
+  printf('<ID>');
+  printf('%a', dom['ID']);
+  printf('</ID>'); 
+  printf('<LEFT>');
+  printf('%a', dom['LEFT']);
+  printf('</LEFT>'); 
+  printf('<RIGHT>');
+  printf('%a', dom['RIGHT']);
+  printf('</RIGHT>'); 
+  printf('<ENT>');
+  printf('%a', dom['entries']);
+  printf('</ENT>'); 
+  printf('<HIST>');
+  printf('%a', dom['hist']);
+  printf('</HIST>'); 
+  printf('</E>');
+  OpenWriting(terminal);
+end:
+
+CreateSeqDB := proc(msa: MultiAlign, filename: string);
+  CreateDB(filename, msa['title']); 
+  seq := msa['seq'];
+  ref := msa['ref'];
+  OpenAppending(filename);
+  for i to length(seq) do
+     printf('<E>');
+     if ref[i] <> 0 then
+      printf('<ID>');
+     if type(ref[i]) = string then printtext(ref[i]);
+     else print(ref[i]); fi;
+    else print('0');
+    fi; 
+    printf('</ID>'); 
+    
+    if seq[i] <> 0 then
+      printf('<SEQ>');
+      printtext(seq[i]);
+    else print('0');
+    fi; 
+    printf('</SEQ>'); 
+    printf('<DE>No description</DE>'); 
+    printf('</E>');
+  od;
+  OpenWriting(terminal);
+end:
+
+WriteMsa := proc(msa: MultiAlign);
+  printf('<REF>');
+  ref := msa['ref'];
+  if ref <> 0 then
+    printf('[\n');
+    for j to length(ref)-1 do
+      printf('''');printtext(ref[j]);printf('''');
+      printf(',');
+    od;
+    printf('''');printtext(ref[j]);printf('''');
+    printf(']\n');
+  else print('0');
+  fi; 
+  printf('</REF>'); 
+  printf('<MSA>');
+  seq := msa['ma'];
+  if seq <> 0 then
+    printf('[\n');
+    for j to length(seq)-1 do
+      printf('''');printtext(seq[j]);printf('''');
+      printf(',');
+    od;
+    printf('''');printtext(seq[j]);printf('''');
+    printf(']\n');
+  else print('0');
+  fi;  
+  printf('</MSA>');
+  printf('<TREE>');
+  tree := msa['tree'];
+  if tree <> 0 then print(tree);
+  else print('0');
+  fi;  
+  printf('</TREE>');
+end:
+
+WriteMSADB := proc(msa: MultiAlign, filename);
+  OpenAppending (filename);
+  printf('<E>');  
+  printf('<DE>%a</DE>', msa['title']);
+  WriteMsa(msa);
+  printf('</E>');
+  OpenWriting(terminal);
+end:
+
+RemoveGaps := proc(ma: array(string));
+  n := length(ma);
+  manew := CreateArray(1..n);
+  for i to n do 
+    seq := '';
+    for j to length(ma[i]) do 
+      if SearchString( ma[i,j], 'ACDEFGHIKLMNPQRSTVWYX_' ) >= 0 then
+	seq := seq.ma[i,j];
+      fi;
+    od;
+    manew[i] := copy(seq);
+  od;
+  return(manew);
+end:
+
+Parse := proc(what: string)
+global tmp;
+  nr := trunc(Rand()*10000);
+  dir := '/tmp/';
+  file := 'parse'.nr.'.tmp';
+  OpenWriting(dir.file);
+  printtext(what);lprint(';');
+  lprint();
+  OpenWriting(terminal);
+  ReadProgram(dir.file); 
+  CallSystem ('rm -f '.dir.file);
+end:
+
+ReadDomain := proc(ent: Entry);
+  dom := Domain();  
+  dom['id'] := atoi(GetEntryInfo(ent, 'ID')[2]);
+  dom['left'] := atoi(GetEntryInfo(ent, 'LEFT')[2]);
+  dom['right'] := atoi(GetEntryInfo(ent, 'RIGHT')[2]);
+  dom['seq'] := GetEntryInfo(ent, 'SEQ')[2];
+  dom['info'] := GetEntryInfo(ent, 'DE')[2];
+  temp := GetEntryInfo(ent, 'HIST')[2];  
+  temp := 'tmp := '.temp.';';
+  Parse(temp);
+  dom['hist'] := tmp; 
+  temp := GetEntryInfo(ent, 'ENT')[2];  
+  temp := 'tmp := '.temp.';';
+  Parse(temp);
+  dom['Entry'] := tmp;
+  if [GetEntryInfo(ent, 'MSA')] <> [] then
+    dom['msa'] := ReadMSA(ent);
+  fi;
+  return(dom);
+end:
+
+ReadMSA := proc(ent: Entry);
+  temp := GetEntryInfo(ent, 'MSA')[2];
+  temp := 'tmp := '.temp.';';
+  Parse(temp);
+ 
+#  ma := RemoveGaps(tmp);
+  ma := tmp;
+  
+  temp := GetEntryInfo(ent, 'REF')[2];  
+  temp := 'tmp := '.temp.';';
+  Parse(temp);
+  ref := tmp;
+  
+  seq := CleanSeq(ma);
+
+  msa := MultiAlign(seq, ref, ma);
+  
+  temp := GetEntryInfo(ent, 'TREE')[2];
+  temp := 'tmp := '.temp.';';
+  Parse(temp);
+  
+  msa['tree'] := tmp;
+return(msa);
+end:
+
+#test := proc();
+#  filename := '~/test.db';
+#  CreateDB(filename, 'test DB');
+#  WriteDomainDB(domains[1], filename);
+#  db := ReadDb(filename);
+#  ent := Entry(1);
+#  d := ReadDomain(ent);
+#end:

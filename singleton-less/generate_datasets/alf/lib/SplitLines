@@ -1,0 +1,16 @@
+#
+#	SplitLines( s:string )
+#
+#	Split a string into lines (ending in \n) and place them in a list
+
+SplitLines := proc( s:string )
+r := [];
+s1 := s;
+while length(s1) > 0 do
+    i := SearchString( '\n', s1 );
+    if i=-1 then r := append(r,s1);  break fi;
+    r := append(r,s1[1..i+1]);
+    s1 := i+1+s1
+    od;
+r
+end:

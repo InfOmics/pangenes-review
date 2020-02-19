@@ -1,0 +1,499 @@
+module external NJ, BioNJ, BioNJAdam, FastME, Protdist, Weighbor, TKFdist, TKF91, TKF92;
+
+WritePhylipMatrix := proc(fn, D, labs)
+    n := length(D);
+    gcp := Set(printgc=false);
+    OpenWriting(fn);
+    printf('%d\n', n);
+    for i to n do
+        printf('%s\n', labs[i]);
+        for j to n-1 do printf('%.10f ', D[i,j]); od;
+        printf('%.10f\n', D[i,j]);
+    od;
+    OpenWriting(previous);
+    Set(printgc=gcp);
+end:
+
+WriteAdamMatrix := proc(fn, D, labs)
+    n := length(D);
+    gcp := Set(printgc=false);
+    OpenWriting(fn);
+    printf('%d\n', n);
+    for i to n do printf('%s\n', labs[i]); od;
+    for i to n do
+        for j to n do printf('%.10f ', D[i,j]); od;
+        printf('\n');
+    od;
+    OpenWriting(previous);
+    Set(printgc=gcp);
+end:
+
+#	-a, --append
+#		Use this option to append results to existing output files (if any).
+#		By default output files will be overwritten.
+#
+#	-d datasets, --datasets=datasets
+#		Use this option to indicate the number of datasets in your input
+#		data file. By default, the number of datasets is 1.
+#
+#	-h, --help
+#		Display this usage.
+#
+#	-i input data file, --input_data=input data file
+#		The input data file contains distance matrix(ces).
+#
+#	-I output information file, --output_info=output information file
+#		Use this option if you want fastme to write information
+#		about its execution in the output information file.
+#
+#	-m method, --method=method
+#		fastme computes a tree using a distance algorithm.
+#		You may choose this method from:
+#		(b)alanced_GME (default), (O)LS_GME, B(I)ONJ,
+#		(N)J or (U)NJ.
+#
+#	-n NNI, --NNI=NNI
+#		This option sets the type of tree swapping (NNI)
+#		You may choose the NNI type from:
+#		(b)alanced_NNI (default), (O)LS_NNI or (n)one.
+#
+#	-o output tree file, --output_tree=output tree file
+#		fastme will write the infered tree into the output tree file.
+#
+#	-s, --SPR
+#		Use this option to do SPR postprocessing.
+#
+#	-S scoring matrix file, --input_scoring=scoring matrix file
+#		Use this option if you want fastme to compute distance from alignment
+#		using data in the scoring matrix file.
+#
+#	-t, --TBR
+#		Use this option to do TBR postprocessing.
+#
+#	-T input tree file, --input_topology=input tree file
+#		fastme may use an existing topology available in the input tree file
+#		which corresponds to the input dataset.
+#
+#	-v, --verbose
+#		Use this option to turn fastme in verbose mode.
+#
+#	-w branch, --branch_length=branch
+#		Use this option to indicate the branch length to assign to the tree.
+#		You may choose the branch length from: (b)alanced (default), (O)LS
+#		or (n)one. (n)one is only available with BIONJ, NJ or UNJ.
+#		Only helpful when not doing NNI.
+
+# using the defaults and -sO should correspond to traditional ME
+FastME:= proc(D:matrix(nonnegative), labs:list(string) ; 
+               'startTreeMeth'=(b_=('B'):{'B','O','I','N','U'}),
+               'NNItype'=(s_=('b'):{'b','o','n'}),
+               'doSPRPostProcessing'=((doSPRPostProcessing=false):boolean),
+               t:Tree,
+               'binary'=((binary=''):string))
+    global cput;
+    
+    selection := GetWrapperChoice('Tree/FastME_2.07/fastme_linux64', 'fastme', binary, 
+                     'relPath32'='Tree/FastME_2.07/fastme_linux32');
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'fastme';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Tree/FastME_2.07/fastme_linux64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'Tree/FastME_2.07/fastme_linux32';
+    else
+        error('no such selection');
+    fi;
+    
+    if b_ = 'B' then b := 'b' else b := b_ fi;
+    if s_ = 'o' then s := 'O' else s := s_ fi;
+    
+    n := length(D);
+    if length(labs) <> n then error('length missmatch in input'); fi;
+    fnPre := GetTmpDir().'t'.string(getpid()).'_'.string(Rand(1..1e8));
+    WritePhylipMatrix(fnPre.'infile', D, [seq(string(i),i=1..n)]);
+    
+    if type(t,Tree) then # ignore b arg
+        gcp := Set(printgc=false);
+        OpenWriting(fnPre.'starttopo');
+        lprint(Tree_Newick(start_tree).';');
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        startt := '-T '.fnPre.'starttopo';
+    else
+        startt := '-m '.b;
+    fi;
+    cmd :=  sprintf('%s -i %s %s -n %s %s -o %s',
+                    pathExec, fnPre.'infile', startt, s, If(doSPRPostProcessing,'-s',''), fnPre.'out.txt');
+    
+    if printlevel >= 2 then
+        printf('%s\n',cmd);
+    fi;
+    
+    cputime := time(all);
+    res := TimedCallSystem(cmd, 259200);
+    cputime := time(all) - cputime;
+    if res[1] <> 0 then error(sprintf('unsuccessful call: %s', cmd)) fi;
+    tr := ParseNewickTree(ReadRawFile(fnPre.'out.txt'));
+    for l in Leaves(tr) do
+        l[1] := labs[parse(l[1])];
+    od;
+    CallSystem('rm '.fnPre.'infile '.fnPre.'out.txt '.fnPre.'infile_fastme_stat.txt');
+    return(TreeResult(tr, 'Distance', 'Method'='FastME', 'CPUtime'=cputime));
+end:
+
+NJ := proc(D:matrix(nonnegative), labs:list(string))
+    treeRes := FastME(D, labs, 'startTreeMeth'='N', 'NNItype'='n');
+    treeRes['Method'] := 'NJ';
+    return(treeRes);
+end:
+
+BioNJ := proc(D:matrix(nonnegative), labs:list(string))
+    treeRes := FastME(D, labs, 'startTreeMeth'='I', 'NNItype'='n');
+    treeRes['Method'] := 'BioNJ';
+    return(treeRes);
+end:
+
+BioNJAdam := proc(D:matrix(nonnegative), labs:list(string) ; 
+                   'NJ'=((NJ=false):boolean),
+                   'binary'=((binary=''):string))
+    global cput;
+
+    selection := GetWrapperChoice('Tree/BioNJ_Adam_1.0/MyBioNJ_linux', 
+                     'MyBioNJ_linux', binary,
+                     'relPath32'='Tree/BioNJ_Adam_1.0/MyBioNJ_linux');
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'fastme';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Tree/BioNJ_Adam_1.0/MyBioNJ_linux';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'Tree/BioNJ_Adam_1.0/MyBioNJ_linux';
+    else
+        error('no such selection');
+    fi;
+
+
+    n := length(D);
+    if length(labs) <> n then error('length missmatch in input'); fi;
+    fnPre := GetTmpDir().'t'.string(getpid()).'_'.string(Rand(1..1e8));
+    WriteAdamMatrix(fnPre.'infile', D, labs);
+
+    cmd :=  sprintf('%s %s %s > %s', pathExec, If(NJ,'--nj',''), fnPre.'infile', fnPre.'out.txt');
+    cputime := time(all);
+    res := TimedCallSystem(cmd, 259200);
+    cputime := time(all) - cputime;
+    if res[1] <> 0 then error('unsuccessful call: %s', cmd) fi;
+    tr := ParseNewickTree(ReadRawFile(fnPre.'out.txt'));
+    CallSystem('rm '.fnPre.'infile '.fnPre.'out.txt ');
+    return(TreeResult(tr, 'Distance', 'Method'='BioNJAdam',
+           'CPUtime'=cputime));
+end:
+
+# Bruno, W. J., Socci, N. D. and Halpern, A. L., ``Weighted
+#    Neighbor Joining: A Fast Approximation to Maximum-Likelihood
+#    Phylogeny Reconstruction,'' Molecular Biology and Evolution,
+#    17(1): 189-197, (2000).
+
+Weighbor := proc(D:matrix(nonnegative), labs:list(string) ;
+                'binary'=((binary=''):string))
+    global cput;
+
+    selection := GetWrapperChoice('Tree/Weighbor_1.2/weighbor_linux64', 'weighbor', binary, 
+                     'relPath32'='Tree/Weighbor_1.2/weighbor_linux32');
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'fastme';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Tree/Weighbor_1.2/weighbor_linux64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'Tree/Weighbor_1.2/weighbor_linux32';
+    else
+        error('no such selection');
+    fi;
+
+    n := length(D);
+    if length(labs) <> n then error('length missmatch in input'); fi;
+    fnPre := GetTmpDir().'t'.string(getpid()).'_'.string(Rand(1..1e8));
+    WritePhylipMatrix(fnPre.'infile', D, [seq(string(i),i=1..n)]);
+
+    cmd :=  sprintf('%s -L 500 -b 20 -i %s -o %s',
+                    pathExec, fnPre.'infile', fnPre.'out.txt');
+
+    if printlevel >= 2 then
+        printf('%s\n',cmd);
+    fi;
+
+    cputime := time(all);
+    res := TimedCallSystem(cmd, 259200);
+    cputime := time(all) - cputime;
+    if res[1] <> 0 then error(sprintf('unsuccessful call: %s', cmd)) fi;
+    tr := ParseNewickTree(ReadRawFile(fnPre.'out.txt'));
+    for l in Leaves(tr) do
+        l[1] := labs[parse(l[1])];
+    od;
+    CallSystem('rm '.fnPre.'infile '.fnPre.'out.txt');
+    return(TreeResult(tr, 'Distance', 'Method'='Weighbor', 'CPUtime'=cputime));
+end:
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+Protdist := proc(msa:MAlignment; 'binary'=((binary=''):string))
+    nSeqs := length(msa['labels']);
+    pid    := getpid():
+    tmpdir := GetTmpDir().'protdist.tmpdir.'.pid:
+    TimedCallSystem('mkdir '.tmpdir):
+    infile  := tmpdir.'/infile':
+    outfile := tmpdir.'/outfile':
+    
+    pathExec := '';
+    selection := GetWrapperChoice('Other/phylip-3.69/src/protdist_64', 'protdist', binary, relPath32='Other/phylip-3.69/src/protdist_32');
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'protdist';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Other/phylip-3.69/src/protdist_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'Other/phylip-3.69/src/protdist_32';
+    else
+        error('no such selection known');
+    fi;
+    
+    pgc := Set(printgc=false);
+    OpenWriting(infile);
+    lprint(nSeqs,length(msa['AlignedSeqs',1]));
+    for i to nSeqs do
+        printf('%010d %s\n',i,ReplaceString('_','-',msa['AlignedSeqs',i]));
+    od;
+    OpenWriting(previous);
+    
+    cmd := 'cd '.tmpdir.'; echo \"Y\\n" | '.pathExec;
+    if printlevel >=2 then
+        printf('%s\n',cmd);
+    fi;
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if mod(res[1],256) <> 0 then error('coult not run protdist: '.res[2].'; code ='.res[1]) fi;
+    
+    lines := SearchDelim('\n',ReadRawFile(outfile));
+    D := CreateArray(1..nSeqs,1..nSeqs);
+    cl := 2;
+    for i to nSeqs do
+        words := SearchDelim(' ',ReplaceString('  ',' ',Trim(lines[cl])));
+        cl := cl + 1;
+        while length(words) < nSeqs+1 do
+            words := append(words,op(SearchDelim(' ',ReplaceString('  ',' ',Trim(lines[cl])))));
+            cl := cl + 1;
+        od;
+        
+        assert(parse(words[1]) = i);
+        
+        for j to nSeqs do
+            v := parse(words[j+1]);
+            if v < 0 then v := 10; fi;
+            D[i,j] := v;
+        od;
+    od;
+    res := TimedCallSystem('rm -rf '.tmpdir);
+    
+    Set(printgc=pgc);
+    
+    return(D);
+end;
+
+TKFdist := proc(msa:MAlignment; 'TKF'=((TKF='92'):{'91','92'}), 
+                                'Joint'=((Joint=true):boolean), 
+                                'binary'=((binary=''):string),
+                                'daymatrix'=((daymatrix=''):string),
+                                'Mu'=((Mu=-1):numeric),
+                                'r'=((r=-1):numeric),
+                                'Length'=((Length=-1):numeric)
+                                )
+    setenv('RC_TKF', GetWrapperDir().'Other/TKF');
+    nSeqs := length(msa['labels']);
+    pid    := getpid():
+    tmpdir := GetTmpDir().'TKFdist.tmpdir.'.pid:
+    TimedCallSystem('mkdir '.tmpdir):
+    infile  := tmpdir.'/infile':
+    outfile := tmpdir.'/outfile':
+    print(infile);
+    if daymatrix = '' then
+        daymatrix := getenv('RC_TKF').'/daymatrix.txt';
+    fi;
+    #pathExec := '';
+    #selection := GetWrapperChoice('Other/TKF/RC_TKF.r', 'RC_TKF.r', binary);
+    #if selection = BINARY_HARDCODED then
+    #    pathExec := binary;
+    #elif selection = BINARY_IN_PATH then
+    #    pathExec := 'RC_TKF.r';
+    #elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'Other/TKF/RC_TKF.r';
+    #else
+    #    error('no such selection known');
+    #fi;
+    
+    WriteFasta(msa['InputSeqs'], msa['labels'], infile);
+    sleep(1);
+    paramlist := [pathExec, '-T '.TKF, '-f '.infile, '-o '.outfile, '-d '.daymatrix, If(Joint, '-j', NULL), If(Mu=-1, NULL, '-M '.string(Mu)), If(r=-1, NULL, '-r '.string(r)), If(Length=-1, NULL, '-l '.Length)];
+    cmd := string(seq(string(i).' ', i = paramlist));
+    print(cmd);
+    
+    cputime := time(all);
+    res2 := traperror(TimedCallSystem(cmd));
+    cputime := time(all) - cputime;
+    
+    if res2[1] = -1 then
+        error('could not run TKF: '.res2[2].'; code= '.res2[1]);
+    fi;
+    
+    if length(FileStat(outfile)) = 0 then
+        error('File '.outfile.' does not exist.');
+        if TKF = '92' and Joint then
+            return([unassigned, unassigned, unassigned, unassigned, unassigned]);
+        elif TKF = '92' and not Joint then
+            return([unassigned, unassigned, unassigned]);
+        elif TKF = '91' and Joint then
+            return([unassigned, unassigned, unassigned, unassigned]);
+        elif TKF = '92' and not Joint then
+            return([unassigned, unassigned, unassigned]);
+        else
+            error('parameter combination error');
+        fi;
+    fi;
+    
+    wholeFile := ReadRawFile(outfile);
+    EntryTables := SearchDelim('\n', wholeFile);
+
+    D := CreateArray(1..nSeqs, 1..nSeqs, 0);
+    V := CreateArray(1..nSeqs, 1..nSeqs, 0);
+    MuMatrix := CreateArray(1..nSeqs, 1..nSeqs, 0);
+    rMatrix := CreateArray(1..nSeqs, 1..nSeqs, 0);
+    likelihoodMatrix := CreateArray(1..nSeqs, 1..nSeqs, 0);
+    k := 2;
+    CallSystem('rm -rf '.tmpdir);
+    if TKF = '92' and Joint then
+        for i from 1 to length(labels)-1 do
+            for j from i+1 to length(labels) do
+                line := SearchDelim('\t', EntryTables[k]);
+                D[i,j] := D[j,i] := parse(line[1]);
+                V[i,j] := V[j,i] := parse(line[7]);
+                MuMatrix[i,j] := MuMatrix[j,i] := parse(line[4]);
+                rMatrix[i,j] := rMatrix[j,i] := parse(line[5]);
+                likelihoodMatrix[i,j] := likelihoodMatrix[j,i] := parse(line[3]);
+                k := k + 1;
+            od;
+        od;
+        return(D,V,likelihoodMatrix, MuMatrix, rMatrix);
+    elif TKF = '92' and not Joint then
+        for i from 1 to length(labels)-1 do
+            for j from i+1 to length(labels) do
+                line := SearchDelim('\t', EntryTables[k]);
+                D[i,j] := D[j,i] := parse(line[1]);
+                V[i,j] := V[j,i] := parse(line[2]);
+                likelihoodMatrix[i,j] := likelihoodMatrix[j,i] := parse(line[3]);
+                k := k + 1;
+            od;
+        od;
+        return(D,V,likelihoodMatrix);
+    elif TKF = '91' and Joint then
+        for i from 1 to length(labels)-1 do
+            for j from i+1 to length(labels) do
+                line := SearchDelim('\t', EntryTables[k]);
+                D[i,j] := D[j,i] := parse(line[1]);
+                V[i,j] := V[j,i] := parse(line[6]);
+                MuMatrix[i,j] := MuMatrix[j,i] := parse(line[4]);
+                likelihoodMatrix[i,j] := likelihoodMatrix[j,i] := parse(line[3]);
+                k := k + 1;
+            od;
+        od;
+        return([D,V,likelihoodMatrix,MuMatrix]);
+    elif TKF = '91' and not Joint then
+        for i from 1 to length(labels)-1 do
+            for j from i+1 to length(labels) do
+                line := SearchDelim('\t', EntryTables[k]);
+                D[i,j] := D[j,i] := parse(line[1]);
+                V[i,j] := V[j,i] := parse(line[2]);
+                likelihoodMatrix[i,j] := likelihoodMatrix[j,i] := parse(line[3]);
+                k := k + 1;
+            od;
+        od;
+        return(D,V,likelihoodMatrix);
+    fi;
+end;
+
+### TKF 91 and 92 wrappers: the input is MAlignment. Output is a list of Distance, Variance, Likelihood matrix and Mu(if estimated jointly), r (if estimated jointly TKF92) matrix.
+### To run this wrapper, R is required. Additional packages: seqinr, getopt, expm. Packages can be easily installed by "install.packages("getopt") in R environment."
+### When the scripts(binaries) of TKF are moved to a new system, the shared object loaded by the TKF script should be compiled again with "R CMD SHLIB dynprog_TKF91.c", "R CMD SHLIB dynprog_TKF92.c" in SHELL command line.
+
+#TKF91Joint := proc(msa:MAlignment; 'binary'=((binary=''):string),
+#                                       'daymatrix'=((daymatrix=''):string),
+#                                       'Length'=((Length=-1):numeric)
+#                                        )
+#    result := TKFdist(msa, 'TKF'='91', 'Joint'=true, 'binary'=binary, 'daymatrix'=daymatrix, 'Length'=Length);
+#    return(result);
+#end;
+
+#TKF91Single := proc(msa:MAlignment, Mu:numeric; 'binary'=((binary=''):string),
+#                                       'daymatrix'=((daymatrix=''):string),
+#                                       'Length'=((Length=-1):numeric)
+#                                        )
+#    result := TKFdist(msa, 'TKF'='91', 'Joint'=false, 'binary'=binary, 'daymatrix'=daymatrix, 'Mu'=Mu, 'Length'=Length);
+#    return(result);
+#end;
+
+TKF91 := proc(msa:MAlignment; 'Mu'=((Mu=-1):numeric), 'binary'=((binary=''):string),
+                                          'daymatrix'=((daymatrix=''):string),
+                                          'Length'=((Length=-1):numeric)
+                                        )
+    if Mu = -1 then
+        result := TKFdist(msa, 'TKF'='91', 'Joint'=true, 'binary'=binary, 'daymatrix'=daymatrix, 'Length'=Length);
+    else
+        result := TKFdist(msa, 'TKF'='91', 'Joint'=false, 'binary'=binary, 'daymatrix'=daymatrix, 'Mu'=Mu, 'Length'=Length);
+    fi;
+    return(result)
+end;
+
+#TKF92Joint := proc(msa:MAlignment; 'binary'=((binary=''):string),
+#                                       'daymatrix'=((daymatrix=''):string),
+#                                       'Length'=((Length=-1):numeric)
+#                                        )
+#    result := TKFdist(msa, 'TKF'='92', 'Joint'=true, 'binary'=binary, 'daymatrix'=daymatrix, 'Length'=Length);
+#    return(result);
+#end;
+
+#TKF92Single := proc(msa:MAlignment, Mu:numeric, r:numeric; 'binary'=((binary=''):string),
+#                                       'daymatrix'=((daymatrix=''):string),
+#                                       'Length'=((Length=-1):numeric)
+#                                        )
+#    result := TKFdist(msa, 'TKF'='92', 'Joint'=false, 'binary'=binary, 'daymatrix'=daymatrix, 'Mu'=Mu, 'r'=r, 'Length'=Length);
+#    return(result);
+#end;
+
+TKF92 := proc(msa:MAlignment; 'Mu'=((Mu=-1):numeric), 'r'=((r=-1):numeric), 'binary'=((binary=''):string),
+                                       'daymatrix'=((daymatrix=''):string),
+                                       'Length'=((Length=-1):numeric)
+                                        )
+    if Mu = -1 or r = -1 then
+        result := TKFdist(msa, 'TKF'='92', 'Joint'=true, 'binary'=binary, 'daymatrix'=daymatrix, 'Length'=Length);
+    else
+        result := TKFdist(msa, 'TKF'='92', 'Joint'=false, 'binary'=binary, 'daymatrix'=daymatrix, 'Mu'=Mu, 'r'=r, 'Length'=Length);
+    fi;
+    return(result);
+end;
+
+end: # module

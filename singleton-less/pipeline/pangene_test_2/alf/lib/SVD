@@ -1,0 +1,80 @@
+#
+#	Compute a complete Singular Value Decomposition
+#
+#	for a matrix A (m x n), usually m > n, an SVD decomposition
+#	is A = U * Sigma * V^t, where
+#
+#	U is orthonormal, U^(-1) = U^t, ||U||=1, (m x m)
+#	V is orthonormal, V^(-1) = V^t, ||V||=1, (n x n)
+#	Sigma is a diagonal matrix of dimension (m x n) which
+#	contains the singular values.
+#
+#	The n singular values (the diagonal entries in Sigma)
+#	are returned as a vector by SVD
+#
+#	The singular values are returned in decreasing order.
+#
+#	Normally, U is very large and not needed, so this function
+#	will compute and return U only if the third argument is present.
+#
+#	Gaston H. Gonnet (July 18th, 2012)
+#
+SVD := proc( A:matrix, V:symbol, U:symbol )
+m := length(A);
+n := length(A[1]);
+#
+At := transpose(A);
+AtA := At*A;
+lam := Eigenvalues( AtA, V );
+for i to n do if |lam[i]| < n*DBL_EPSILON*|lam[n]| then lam[i] := 0 fi od;
+
+# reverse the order of singular values, larger first.
+Vt := transpose(eval(V));
+for i to floor(n/2) do
+    t := lam[i];  lam[i] := lam[n+1-i];  lam[n+1-i] := t;
+    t := Vt[i];  Vt[i] := Vt[n+1-i];  Vt[n+1-i] := t;
+od;
+V := transpose(Vt);
+sig := sqrt(lam);
+if nargs=2 then return(sig) fi;
+
+# compute U using U*Sigma = A*V
+Ut := Vt*At;
+for i to n while sig[i] > 0 do Ut[i] := 1/sig[i] * Ut[i] od;
+Ut := Ut[1..i-1];
+# fill in with orthonormal vectors using Gram-Schmidt
+for ind to m do
+    Uti := CreateArray(1..m);
+    Uti[ind] := 1;
+    for k to i-1 do Uti := Uti - (Uti*Ut[k]) * Ut[k] od;
+    norm := sqrt(Uti^2);
+    if norm < 1e-10 then next fi;
+    Ut := append( Ut, Uti / norm );
+    i := i+1;
+    if i > m then break fi;
+od;
+U := transpose(Ut);
+
+sig
+end:
+
+
+if WantToTest = true then
+     Set(gc=1e8);
+     m := Rand(1..10);  n := Rand(1..m);
+     A := CreateArray(1..m,1..n);
+     for i to m do for j to n do A[i,j] := Rand(-10..10) od od:
+     print(A);
+
+     sig := SVD(A,noeval(V),noeval(U));
+     S := CreateArray(1..m,1..n):
+     for i to n do S[i,i] := sig[i] od;
+     check := U*transpose(U) - Identity(m):  assert( max(check)-min(check) < 1e-12 );
+     check := V*transpose(V) - Identity(n):  assert( max(check)-min(check) < 1e-12 );
+     check := A - U*S*transpose(V):   assert( max(check)-min(check) < 1e-12 );
+
+     # problem case
+     A := [[-8, 9, 0, 8], [10, -10, 6, 0], [-5, 1, -4, -9], [-7, 2, 9, 7]];
+fi:
+
+

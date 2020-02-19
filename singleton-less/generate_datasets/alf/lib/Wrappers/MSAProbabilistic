@@ -1,0 +1,767 @@
+module external FsaMSA, StatAlignMSA, BAliPhyMSA, DiAlignMSA, HandleMSA, SateMSA, Sate227MSA, BAliPhy235MSA, HandAlignMSA;
+
+FSAReadStockholmScore := proc(fn:string)
+    WholeFile := ReadRawFile(fn);
+    EntryTables := SearchDelim('\n', WholeFile);
+    ResultList := [];
+    ScoreLine := EntryTables[length(EntryTables)-1];
+    for i to length(ScoreLine) do
+        if ScoreLine[i] <= '9' and ScoreLine[i] >= '0' then
+	    ResultList := append(ResultList, parse(ScoreLine[i])/10);
+	fi;
+    od;
+   return(ResultList);
+end:
+
+FsaMSA := proc(seqs:list(string), labels:list(string); 
+                (seqtype='AA'):{'AA','DNA','RNA'}, 
+                'binary'=((binary=''):string))
+    pid      := getpid();
+    seqin    := GetTmpDir().'seqs.fa.'.pid;
+    seqout1  := GetTmpDir().'seqs.fa.'.pid.'.stockholm';
+    
+    selection := GetWrapperChoice('MSA/fsa-1.15.9/src/main/fsa', 
+                                                'fsa', binary);
+    if selection = BINARY_HARDCODED then
+        FSAFn := binary;
+    elif selection = BINARY_IN_PATH then
+        FSAFn := 'fsa';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        FSAFn := GetWrapperDir().'MSA/fsa-1.15.9/src/main/fsa';
+    else
+        error('no such selection');
+    fi;
+    
+    WriteFasta(seqs, labels, seqin);
+    
+    cmd := sprintf('%s --stockholm %s > %s', FSAFn, seqin, seqout1);
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then error('could not run FSA: '.res[2].'; code='.res[1]) fi;
+    
+    aSeqs := ReadStockholmAlignment(seqout1, labels)[1];
+    lengthOfAlignedSeq := length(aSeqs[1]);
+    PosteriorProbability := FSAReadStockholmScore(seqout1);
+    assert( length(PosteriorProbability) = lengthOfAlignedSeq);
+    
+    DeleteFiles([seqin, seqout1, GetTmpDir().'tmp'.getpid()]);
+    msa := MAlignment(seqs, aSeqs, labels, 'Time'=cputime, 'PostProbs'=PosteriorProbability);
+    return(msa);
+end:
+
+ParseDiAlignFormat := proc(fn:string)
+    wholeFile := ReadRawFile(fn);
+    lines := SearchDelim('\n',wholeFile);
+    
+    cl := 1; # current line
+    
+    ## skip introductory blabla of the file
+    for i from 1 to length(lines) do
+    	lines[i] := Trim(lines[i]);
+	words := SearchDelim(' ',lines[i]);
+	if length(words) > 0 then
+	if words[1] = 'Aligned' then
+	   cl := i + 3;
+	   break;
+	fi;
+	fi;
+    od;
+    
+    ## parse labels
+    labels := [];
+    for i from cl to length(lines) do
+    	lines[i] := Trim(lines[i]);
+	words := SearchDelim(' ',lines[i]);
+	if length(words) < 1 then
+	   cl := i;
+	   break;
+	fi;
+	labels := append(labels,words[2]);
+    od;
+    
+    ## skip more blabla till Alignment (DIALIGN format)
+    for i from cl to length(lines) do
+    	lines[i] := Trim(lines[i]);
+	words := SearchDelim(' ',lines[i]);
+	if length(words) > 0 then
+	if words[1] = 'Alignment' then
+	   cl := i + 3;
+	   break;
+	fi;
+	fi;
+    od;
+
+    
+    ## parse the alignment itself
+    aSeqs := CreateArray(1..length(labels),'');
+    score := '';
+    while length(Trim(lines[cl])) > 0 do
+    for i from 1 to length(labels) do
+    	words := SearchDelim(' ',lines[cl,24..length(lines[cl])]);
+	for k from 1 to length(words) do
+	    aSeqs[i] := aSeqs[i].words[k];
+        od;
+	cl := cl + 1;
+    od;
+    
+    words := SearchDelim(' ',lines[cl+1]);
+    for k from 4 by -1 to 0 do 
+    	score := score.words[length(words)-k];
+    od;
+    cl := cl + 3;
+    od;
+    
+    ## create Alignment
+    seqs := CreateArray(1..length(labels),'');
+    for i from 1 to length(labels) do
+    	aSeqs[i] := uppercase(ReplaceString('-','_',aSeqs[i]));
+	seqs[i] := ReplaceString('_','',aSeqs[i]);
+    od;
+    probScore := CreateArray(1..length(score),0);
+    for i from 1 to length(score) do
+    	probScore[i] := parse(score[i])/10;
+    od;
+    msa := MAlignment(seqs, aSeqs, labels);
+    msa['PostProbs'] := probScore;
+    return(msa);
+end:
+
+DiAlignMSA := proc(seqs:list(string), labels:list(string); 
+                    (seqtype='AA'):{'DNA','AA'},
+                    'binary'=((binary=''):string))
+    
+    selection := GetWrapperChoice('MSA/dialign/dialign_2.2.1/src/dialign2-2_64', 
+                                  'dialign2-2', binary, 
+				  'relPath32'='MSA/dialign/dialign_2.2.1/dialign2-2_32');
+    DialignPth := GetWrapperDir().'MSA/dialign/dialign_2.2.1/dialign2_dir';
+    if selection = BINARY_HARDCODED then
+        DialignFn := binary;
+        assert(getenv('DIALIGN2_DIR')<>'');
+    elif selection = BINARY_IN_PATH then
+        DialignFn := 'dialign2-2';
+        assert(getenv('DIALIGN2_DIR')<>'');
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        DialignFn := GetWrapperDir().'/MSA/dialign/dialign_2.2.1/src/dialign2-2_64';
+        setenv('DIALIGN2_DIR', DialignPth);
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        DialignFn := GetWrapperDir().'/MSA/dialign/dialign_2.2.1/src/dialign2-2_32';
+        setenv('DIALIGN2_DIR', DialignPth);
+    else
+        error('no such selection');
+    fi;
+    
+    pid     := getpid();
+    seqin   := GetTmpDir().'seqs.fa.'.pid.'.fasta';
+    seqout1 := GetTmpDir().'seqs.fa.'.pid.'.ali';
+    pGnuTime := GetTimerFn();
+    
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s -fa -fn %s %s %s', DialignFn, seqout1,If(seqtype='DNA','-n',''), seqin);
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then error('could not run dialign: '.res[2]) fi;
+    seqout3 := seqout1.'.fa';
+    
+    aSeqs := ReadFastaWithCheck(seqout3, labels);
+    
+    lengthOfAlignedSeq := length(aSeqs[1]);
+    
+    msa := ParseDiAlignFormat(seqout1);
+    msa['Time'] := cputime;
+        
+    DeleteFiles([seqin, seqout1, seqout3, GetTmpDir().'tmp'.getpid()]);
+    
+    return(msa);
+end:
+
+ParseAlignmentUncertainty := proc(fileName:string, labels:list(string))
+    
+    file := ReadRawFile(fileName);
+    lines := SearchDelim('\n',file);
+    readLabels := SearchDelim(' ',Trim(lines[1]));
+    for i to length(readLabels) do
+    	readLabels[i] := Trim(readLabels[i]);
+    od;
+    
+    if length(labels) <> length(readLabels) then print('This should not happen!'); fi;
+    
+    mapping := CreateArray(1..length(labels),0);
+    for i to length(readLabels) do
+        found := false;
+    	for j from 1 to length(labels) do
+            if readLabels[i] = labels[j] then
+                mapping[i] := j;
+                found := true;
+                break;
+            fi;
+        od;
+        if not found then error('This should not happen!'); fi;
+    od;
+    
+    result := CreateArray(1..length(labels),0);
+    for i to length(labels) do
+    	result[i] := CreateArray(1..length(lines)-1,-1);
+    od;
+    
+    for i from 2 to length(lines) do
+    	nums := SearchDelim(' ',lines[i]);
+        for j to length(labels) do
+            result[j,i-1] := parse(nums[j]);
+        od;
+    od;
+    
+    return(result);
+end;
+
+BAliPhyMSA := proc(seqs:list(string), labels:list(string);'seqtype'=((seqtype='AA'):{'AA','DNA'}), tree:Tree)
+    
+    pid    := getpid();
+    seqin := GetTmpDir().'seqs.fa.'.pid.'.fastain';
+    treefile := GetTmpDir().'tree.'.pid.'.newick';
+    resfolder := GetTmpDir().'seqs.fa.'.pid.'.BAliPhyResult';
+    
+    ## Run bali-phy
+    WriteFasta(seqs, labels, seqin);
+    
+    setenv('PATH', GetWrapperDir().'MSA/BAli-Phy/bali-phy-2.1-build/src:'.getenv('PATH'));
+    wrapperExecPath := GetWrapperDir().'MSA/BaliPhyWrapper/bin/BaliPhyWrapper/BaliPhyWrapper';
+    
+    if type(tree,Tree) then
+        pgc := Set(printgc=false);
+        OpenWriting(treefile);
+        printf('%s;\n',  Tree_Newick(tree));
+        OpenWriting(previous);
+        Set(printgc=pgc);
+        cmd := sprintf('%s bali-phy %s --name %s --disable=topology --tree=%s', wrapperExecPath, seqin, resfolder, treefile);
+    else
+        cmd := sprintf('%s bali-phy %s --name %s ', wrapperExecPath, seqin, resfolder);
+    fi;
+    
+    if printlevel >= 2 then
+        printf('%s\n',cmd);
+    fi;
+    
+    resfolder := resfolder.'-1';
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    if res[1] <> 0 then
+        DeleteFiles([seqin, treefile]);
+        cmd := sprintf('rm -rf %s', resfolder);
+        TimedCallSystem(cmd);
+        error('could not run BAliPhy: '.res[2].'; code='.res[1]);
+    fi;
+    cputime := time('all') - cputime;
+    
+    res := table();
+    print('hello, before burn in');
+    ## BurnIn
+    burnin := parse(ReadRawFile(sprintf('%s/BurnIn.txt',resfolder)));
+    res['BurnIn'] := burnin;
+
+    ## Consensus tree
+    cmd := sprintf('trees-consensus --skip=%d %s/C1.trees --consensus-PP=0.5:%s/c50.PP.tree', burnin, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['ConsensusTree'] := ReadRawFile(resfolder.'/c50.PP.tree');
+    
+    ## MAP tree
+    cmd := sprintf('trees-consensus --skip=%d %s/C1.trees --map-tree=%s/MAP.tree', burnin, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    
+    res['MAPTree'] := ParseNewickTree(ReadRawFile(resfolder.'/MAP.tree'));
+    
+    ## The MPD alignment
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-max -p %s/P1-max.posterior -o %s/P1-max.fasta', burnin, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    aSeqs := ReadFastaWithCheck(resfolder.'/P1-max.fasta', labels);
+    
+    # parse posterior probability
+    WholeFile := ReadRawFile(resfolder.'/P1-max.posterior');
+    EntryTables := SearchDelim('\n', WholeFile);
+    PosteriorProbability := [];
+    for i to length(EntryTables) do
+        PosteriorProbability := append(PosteriorProbability, parse(EntryTables[i]));
+    od;
+    
+    msa := MAlignment(seqs, aSeqs, labels);
+    msa['Time'] := cputime;
+    msa['PostProbs'] := PosteriorProbability;
+    res['MPDAlignment'] := msa;
+
+    ## MAP alignment
+    cmd := sprintf('alignment-find < %s/C1.MAP > %s/P1-MAP.fasta', resfolder, resfolder);
+    TimedCallSystem(cmd);
+    aSeqsTmp := ReadFasta(resfolder.'/P1-MAP.fasta');
+    for i to length(aSeqsTmp[2]) do
+    	aSeqsTmp[2,i] := Trim(aSeqsTmp[2,i]);
+    od;
+    aSeqs := CreateArray(1..length(labels),0);
+    for i to length(labels) do
+    	found := false;
+    	for j to length(aSeqsTmp[1]) do
+	    if aSeqsTmp[2,j] = labels[i] then
+	       aSeqs[i] := aSeqsTmp[1,j];
+	       found := true;
+	       break;
+	    fi;
+	od;
+	if not found then error('This should not happen!'); fi;
+    od;
+    
+    msa := MAlignment(seqs, aSeqs, labels);
+    res['MAPAlignment'] := msa;
+    
+    ## MPD Uncertainty
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-gild %s/P1-max.fasta %s/MAP.tree > %s/P1-max.au', burnin, resfolder, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['MPDUncertainty'] := ParseAlignmentUncertainty(resfolder.'/P1-max.au', labels);
+    
+    ## MAP Uncertainty
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-gild %s/P1-MAP.fasta %s/MAP.tree > %s/P1-MAP.au', burnin, resfolder, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['MAPUncertainty'] := ParseAlignmentUncertainty(resfolder.'/P1-MAP.au', labels);
+    
+    # cleaning up
+    DeleteFiles([seqin, treefile]);
+    cmd := sprintf('rm -rf %s', resfolder);
+    TimedCallSystem(cmd);
+    
+    return(res);
+end:
+
+baliphyNotConverged := proc(reportFn:string)
+  file := ReadRawFile(reportFn);
+  lines := SearchDelim('\n',file);
+  line := lines[-4];
+  startIndex := SearchString('PSRF-80%CI <=', line);
+  if startIndex = -1 then
+    error('PSRF-80%CI not found');
+  fi;
+  endIndex := SearchString('(', line);
+  PSRF := parse(line[16..endIndex]);
+  if PSRF <= 1.01 then
+    return(false);
+  else
+    return(true);
+  fi;
+end:
+
+BAliPhy235MSA := proc(seqs:list(string), labels:list(string);
+                   'seqtype'=((seqtype='AA'):{'AA','DNA'}), tree:Tree
+                   )
+    # BAliphy version: 2.3.5
+    pid    := getpid();
+    seqin := GetTmpDir().'seqs.fa.'.pid.'.fastain';
+    treefile := GetTmpDir().'tree.'.pid.'.newick';
+    resfolder := GetTmpDir().'seqs.fa.'.pid.'.BAliPhyResult';
+    
+    ## Run bali-phy
+    WriteFasta(seqs, labels, seqin);
+    
+    setenv('PATH', GetWrapperDir().'MSA/BAli-Phy/bali-phy-2.3.5/bin/:'.getenv('PATH'));
+    baliphyDir := GetWrapperDir().'MSA/BAli-Phy/bali-phy-2.3.5/bin/';
+    wrapperExecPath := GetWrapperDir().'MSA/BaliPhyWrapper/bin/BaliPhyWrapper/BaliPhyWrapper.R';
+
+    if type(tree,Tree) then
+        pgc := Set(printgc=false);
+        OpenWriting(treefile);
+        printf('%s;\n',  Tree_Newick(tree));
+        OpenWriting(previous);
+        Set(printgc=pgc);
+        cmd := sprintf('%s --baliphy %s --fasta %s --out %s --fixTopology --tree %s', wrapperExecPath, baliphyDir, seqin, resfolder, treefile);
+    else
+        cmd := sprintf('%s --baliphy %s --fasta %s --out %s', wrapperExecPath, baliphyDir, seqin, resfolder);
+    fi;
+    
+    if printlevel >= 2 then
+        printf('%s\n',cmd);
+    fi;
+    
+    resfolder := resfolder.'-1';
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    if res[1] <> 0 then
+        DeleteFiles([seqin, treefile]);
+        cmd := sprintf('rm -rf %s', resfolder);
+        TimedCallSystem(cmd);
+        error('could not run BAliPhy: '.res[2].'; code='.res[1]);
+    fi;
+    cputime := time('all') - cputime;
+    
+    res := table();
+    print('hello, before burn in');
+    ## BurnIn
+    burnin := parse(ReadRawFile(sprintf('%s/BurnIn.txt',resfolder)));
+    res['BurnIn'] := burnin;
+
+    ## Consensus tree
+    cmd := sprintf('trees-consensus --skip=%d %s/C1.trees --consensus-PP=0.5:%s/c50.PP.tree', burnin, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['ConsensusTree'] := ReadRawFile(resfolder.'/c50.PP.tree');
+    
+    ## MAP tree
+    cmd := sprintf('trees-consensus --skip=%d %s/C1.trees --map-tree=%s/MAP.tree', burnin, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    
+    res['MAPTree'] := ParseNewickTree(ReadRawFile(resfolder.'/MAP.tree'));
+    
+    ## The MPD alignment
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-max -p %s/P1-max.posterior -o %s/P1-max.fasta', burnin, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    aSeqs := ReadFastaWithCheck(resfolder.'/P1-max.fasta', labels);
+    
+    # parse posterior probability
+    WholeFile := ReadRawFile(resfolder.'/P1-max.posterior');
+    EntryTables := SearchDelim('\n', WholeFile);
+    PosteriorProbability := [];
+    for i to length(EntryTables) do
+        PosteriorProbability := append(PosteriorProbability, parse(EntryTables[i]));
+    od;
+    
+    msa := MAlignment(seqs, aSeqs, labels);
+    msa['Time'] := cputime;
+    msa['PostProbs'] := PosteriorProbability;
+    res['MPDAlignment'] := msa;
+
+    ## MAP alignment
+    cmd := sprintf('alignment-find < %s/C1.MAP > %s/P1-MAP.fasta', resfolder, resfolder);
+    TimedCallSystem(cmd);
+    aSeqsTmp := ReadFasta(resfolder.'/P1-MAP.fasta');
+    for i to length(aSeqsTmp[2]) do
+    	aSeqsTmp[2,i] := Trim(aSeqsTmp[2,i]);
+    od;
+    aSeqs := CreateArray(1..length(labels),0);
+    for i to length(labels) do
+    	found := false;
+    	for j to length(aSeqsTmp[1]) do
+	    if aSeqsTmp[2,j] = labels[i] then
+	       aSeqs[i] := aSeqsTmp[1,j];
+	       found := true;
+	       break;
+	    fi;
+	od;
+	if not found then error('This should not happen!'); fi;
+    od;
+    
+    msa := MAlignment(seqs, aSeqs, labels);
+    res['MAPAlignment'] := msa;
+    
+    ## MPD Uncertainty
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-gild %s/P1-max.fasta %s/MAP.tree > %s/P1-max.au', burnin, resfolder, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['MPDUncertainty'] := ParseAlignmentUncertainty(resfolder.'/P1-max.au', labels);
+    
+    ## MAP Uncertainty
+    cmd := sprintf('cut-range --skip=%d < %s/C1.P1.fastas | alignment-gild %s/P1-MAP.fasta %s/MAP.tree > %s/P1-MAP.au', burnin, resfolder, resfolder, resfolder, resfolder);
+    TimedCallSystem(cmd);
+    res['MAPUncertainty'] := ParseAlignmentUncertainty(resfolder.'/P1-MAP.au', labels);
+    
+    # cleaning up
+    DeleteFiles([seqin, treefile]);
+    cmd := sprintf('rm -rf %s', resfolder);
+    TimedCallSystem(cmd);
+    
+    return(res);
+end:
+
+ParseStatAlignMSA := proc(fileName:string)
+  lines := SearchDelim('\n',ReadRawFile(fileName));
+  
+  labels := [];
+  aSeqs := [];
+  
+  cs := 0;
+  for i from 1 to length(lines) do
+    word := Trim(lines[i]);
+    if length(word) = 0 then
+      break;
+    elif word[1] = '>' then
+      labels := append(labels,ReplaceString(' ','_',word[2..length(word)]));
+      aSeqs := append(aSeqs,'');
+      cs := cs + 1;
+    else
+      aSeqs[cs] := aSeqs[cs].word;
+    fi;
+  od;
+  
+  postProb := CreateArray(1..length(aSeqs[1]),0);
+  for j from 1 to length(aSeqs[1]) do
+    word := Trim(lines[i+2+j]);
+    postProb[j] := parse(word);
+  od;
+  
+  seqs := CreateArray(1..length(aSeqs),'');
+  for i from 1 to length(seqs) do
+    aSeqs[i] := ReplaceString('-','_',uppercase(aSeqs[i]));
+    seqs[i] := ReplaceString('_','',aSeqs[i]);
+  od;
+  msa := MAlignment(seqs, aSeqs, labels);
+  msa['PostProbs'] := postProb;
+  return(msa);
+end;
+
+StatAlignMSA := proc(seqs:list(string), labels:list(string); 
+                        (seqtype='AA'):{'AA','DNA','RNA'},
+                        'binary'=((binary=''):string))
+
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid.'.fasta';
+    seqoutAli := seqin.'.mpd.ali';
+    seqoutScores := seqin.'.mpd.scores';
+
+    WriteFasta(seqs, labels, seqin);
+    
+    execPath := If(binary='',GetWrapperDir().'MSA/StatAlign-v3.2/StatAlign.jar',binary);
+    
+    cmd := sprintf('java -Djava.awt.headless=true -Xmx1024m -jar %s -mcmc=10k,100k,1k -ot=Fasta %s', execPath, seqin);
+    prints(cmd);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then
+        error('could not run StatAlign: '.res[2].'; code='.res[1]);
+    fi;
+    
+    aSeqs := ReadFastaWithCheck(seqoutAli, labels);
+
+    lines := SearchDelim('\n',ReadRawFile(seqoutScores));
+    postProb := CreateArray(1..length(aSeqs[1]),0);
+    for j from 1 to length(aSeqs[1]) do
+      postProb[j] := parse(lines[j]);
+    od;
+
+    # Read the ctree
+    ctree := SearchDelim('\n',ReadRawFile(seqin.'.ctree'));
+    ctree := ctree[-1]; 
+
+    msa := MAlignment(seqs, aSeqs, labels, 'tree'=ParseNewickTree(ctree),
+             'PostProbs'=postProb, 'Time'=cputime);
+    cmd := 'rm -rf '.seqin.'*';
+    TimedCallSystem(cmd);
+    
+    return(msa);
+end:
+
+
+
+ParseTKFDistances := proc(labels:list(string), dist:string)
+    file := ReadRawFile(dist);
+    lines := SearchDelim('\n',file);
+    if parse(lines[1]) <> length(labels) then error('number of lables must match'); fi;
+    D := CreateArray(1..length(labels),1..length(labels),0);
+    for i from 1 to length(labels) do
+    	words := SearchDelim('  ',lines[i+1]);
+	if words[1] <> labels[i] then error('labels must match!'); fi;
+	for j from 1 to length(labels) do
+	    D[i,j] := parse(words[j+1]);
+	od;
+    od;
+    return(D);
+end:
+
+OptimCorrectTreeDist := proc(seqs:list(string), labels:list(string), 
+		     gtree:Tree; dm:DayMatrix,(seqtype='AA'):string)
+    global HandleFn;
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    
+    pid := getpid();
+    seqin := GetTmpDir().'seqs.fa.'.pid.sprintf('%f',Rand());
+    dist := GetTmpDir().'dist.'.pid.sprintf('%f',Rand());
+    pGnuTime := GetTimerFn();
+    
+    WriteFasta(seqs, labels, seqin);
+    HandleFn := GetWrapperDir().'MSA/dart/bin/';
+    cmd := sprintf('%stkfdistance -autoseq %s > %s', HandleFn, seqin, dist);
+    res := TimedCallSystem(cmd);
+    if res[1] <> 0 then error('could not run tkfdistance: '.cmd.res[2].'; code='.res[1]) fi;
+    
+    D := ParseTKFDistances(labels,dist);
+    t := LeastSquaresTree(D,CreateArray(1..length(labels),1..length(labels),1),labels,gtree,'KeepTopology');
+    if RobinsonFoulds([t,gtree])[1,2] <> 0 then error('incorrect tree topology!'); fi;
+    DeleteFiles([seqin,dist]);
+    return(t);
+end:
+
+
+HandleMSA := proc(seqs:list(string), labels:list(string); dm:DayMatrix,
+		  (seqtype='AA'):string, gtree:Tree, 'singleSample'=((singleSample=false):boolean))
+    global HandleFn;
+    
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    
+    pid := getpid();
+    seqin := GetTmpDir().'seqs.fa.'.pid;
+    dist := GetTmpDir().'dist.'.pid;
+    tree := GetTmpDir().'tree.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    
+    HandleFn := GetWrapperDir().'MSA/dart/bin/';
+    
+    cputime := time('all');
+    
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%stkfdistance %s > %s', HandleFn, seqin, dist);
+    prints(cmd);
+    res := TimedCallSystem(cmd);
+    if res[1] <> 0 then error('could not run tkfdistance: '.cmd.res[2].'; code='.res[1]) fi;
+    if type(gtree, Tree) then
+        ParseTKFDistances(labels, dist);
+        t := OptimCorrectTreeDist(seqs, labels, gtree);
+        
+        pgc := Set(printgc);
+        Set(printgc=false);
+        OpenWriting(tree);
+        handletree := Tree_Newick(t, printBootstrapInfo=false);
+        printf(handletree[1..(length(handletree)-2)].';\n');
+        OpenWriting(previous);
+        Set(printgc=pgc);
+    else
+        cmd := sprintf('%sweighbor -i %s -o %s -L 500', HandleFn, dist, tree);
+        prints(cmd);
+        res := TimedCallSystem(cmd);
+        if mod(res[1],256) <> 0 then error('could not run weighbor: '.res[2].'; code='.res[1]) fi;
+    fi;
+    
+    k := length(seqs);
+    if singleSample then
+       cmd := sprintf('%stkfalign -s %d -r -rp %d -ub %s %s > %s', HandleFn, 1, 1, tree, seqin, seqout);
+    else
+       cmd := sprintf('%stkfalign -s %d -r -rp %d -ub %s %s > %s', HandleFn, ceil(10*(1+k*ln(k)/ln(2))*(1+k*ln(k)/ln(2))), ceil(10*(1+k*ln(k)/ln(2))), tree, seqin, seqout);
+    fi;
+    prints(cmd); 
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run tkfalign: '.res[2].'; code='.res[1]) fi;
+    
+    aSeqs := ReadStockholmAlignment(seqout, labels);
+    
+    DeleteFiles([seqin, tree, seqout, dist]);
+    return(MAlignment(seqs, aSeqs[1], labels, 'Time'=cputime)):
+end:
+
+SateMSA := proc(seqs:list(string), labels:list(string); dm:DayMatrix,
+		   (seqtype='AA'):string, gtree:Tree)
+
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    if type(gtree,Tree) then error('option gtree not implemented') fi;
+    
+    pid := getpid() + length(seqs[1]);
+    tmp := GetTmpDir().'sate'.pid.'/';
+    cmd := 'mkdir '.tmp;
+    TimedCallSystem(cmd);
+    seqin := tmp.'seqs.fa.'.pid;
+    SateFn := GetWrapperDir().'MSA/sate_dist/';
+    
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%sperl_32_bit/bin/perl %ssate/sate_basic.pl -r %d -w %ssate%d -d %s -l 1 -s 1 -a 5 -t A', SateFn, SateFn, pid, GetTmpDir(), pid, seqin);
+    setenv('PERL5LIB',SateFn.'perl_32_bit/lib/5.8.8');
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then 
+        DeleteFiles([seqin]);
+    	cmd := sprintf('rm -rf %s', tmp);
+    	error('could not run Sate: '.res[2].'; code='.res[1]) 
+    fi;
+    
+    aSeqs := ReadFastaWithCheck(tmp.'SATE_DAC.'.pid.'/align.best.mapped', labels);
+    
+    DeleteFiles([seqin]);
+    cmd := sprintf('rm -rf %s', tmp);
+    TimedCallSystem(cmd);
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+Sate227MSA := proc(seqs:list(string), labels:list(string); dm:DayMatrix,
+           (seqtype='AA'):string, gtree:Tree, (cores=1):posint)
+    # This is the new version of sate 2.2.7, which can run with multi-cores. 
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    if type(gtree,Tree) then error('option gtree not implemented') fi;
+    
+    if seqtype = 'AA' then
+        t := Protein;
+    elif seqtype = 'DNA' then
+        t := DNA;
+    else t := RNA;
+    fi;
+
+    pid := getpid();
+    tmp := GetTmpDir().'sate.'.pid.'/';
+    cmd := 'mkdir '.tmp;
+    TimedCallSystem(cmd);
+    seqin := tmp.'seqs.fasta';
+    SateFn := GetWrapperDir().'/MSA/sate_dist/satesrc-v2.2.7-2013Feb15/sate-core/';
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('python %s/run_sate.py -i %s -j %d --auto --datatype=%s --temporaries=%s --num-cpus=%d', SateFn, seqin, pid, t, tmp, cores);
+    prints(cmd);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then
+        DeleteFiles([seqin]);
+        cmd := sprintf('rm -rf %s', tmp);
+        error('could not run Sate: '.res[2].'; code='.res[1])
+    fi;
+    
+    aSeqs := ReadFastaWithCheck(tmp.pid.'.marker001.seqs.aln', labels);
+    sateTree := ParseNewickTree(ReadRawFile(tmp.pid.'.tre'));
+
+    DeleteFiles([seqin]);
+    cmd := sprintf('rm -rf %s', tmp);
+    TimedCallSystem(cmd);
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime, 'tree'=sateTree)): 
+end:
+
+HandAlignMSA := proc(seqs:list(string), labels:list(string); gtree:Tree,
+                  'binary'=((binary=''):string))
+  pid := getpid();
+  if type(gtree, Tree) then
+    seqin := GetTmpDir().'/HandAlign.'.pid.'.stockholm';
+    WriteStockholmAlignment(seqin, seqs, labels, gtree);
+  else
+    seqin := GetTmpDir().'/HandAlign.'.pid.'.fa';
+    WriteFasta(seqs, labels, seqin);
+  fi;
+  seqout := GetTmpDir().'/HandAlign.'.pid.'.outStockholm';
+ 
+  selection := GetWrapperChoice('MSA/dart/bin/handalign',
+                                              'handalign', binary);
+  if selection = BINARY_HARDCODED then
+      HandAlignFn := binary;
+  elif selection = BINARY_IN_PATH then
+      HandAlignFn := 'handalign';
+  elif selection = BINARY_IN_WRAPPER_FOLDER then
+      HandAlignFn := GetWrapperDir().'MSA/dart/bin/handalign';
+  else
+      error('no such selection');
+  fi;
+
+  cmd := sprintf('%s %s > %s', HandAlignFn, seqin, seqout);
+  prints(cmd);
+
+  cputime := time('all');
+  res := TimedCallSystem(cmd);
+  cputime := time('all') - cputime;
+  if res[1] <> 0 then 
+    error('could not run HandAlign: '.res[2].'; code='.res[1]) 
+  fi;
+  
+  ans := ReadStockholmAlignment(seqout, labels);
+  msa := MAlignment(seqs, ans[1], labels, 'tree'=ans[3,''], 'Time'=cputime);  
+  DeleteFiles([seqin, seqout]);
+
+  return(msa);
+end:
+
+
+end:

@@ -1,0 +1,1992 @@
+# Heuristics for gap alignment
+# Author:	Chantal Korostensky
+# Date:		23.03.98
+# Last Changes: 23.03.98
+#
+# *** CONTENT: ***
+#
+# 1. DATA STRUCTURES
+# -----------------
+# 1.1. Gap data structure and gap functions
+# 1.2  GapHeuristic data structure and functions
+# 1.3  Block data structure and functions
+# 1.4  Island data structure and functions
+#
+# 2. ALGORITHMS
+# -------------
+# 2.1  Fusion and shifting algorithm
+# 2.2  Island shifting algorithm
+# 2.3  Gap block left-right shifting algorithm
+# 2.4. Random gap block shifting algorithm
+#
+# 3. AUXILIARY FUNCTIONS
+#
+# 4. MAIN PROCEDURE: DoGapHeuristic
+
+
+# *************************** 1.1. GAP DATA STRUCTURE *************************
+
+Gap := proc( Pos:posint, Len:posint, Seq:integer, Flag:integer )
+ option polymorphic;
+  description
+  '
+Function: creates a gap data structure
+	The Gap starts at position Pos and is of length Len.
+
+Selectors:
+  	Pos,	- the position where the gap starts
+	Len,	- the length of the gap
+	Seq,	- the sequence number where the gap was found
+	Flag	- 1 if the gap appears identically in another sequence
+
+';
+
+  if nargs=0 then 
+      return (copy(noeval(Gap(0,0,0,0))));
+  elif  type([args], [integer, integer]) then
+      return (noeval(Gap(args, 0, 0)));
+  elif type([args], [integer, integer, integer]) then
+      return (noeval(Gap(args, 0)));
+  elif type([args], [integer, integer, integer, integer]) then
+      return (noeval(Gap(args)));
+  else
+      error ('Invalid Gap format');
+  fi:
+end:
+
+Gap_select := proc( u, select, val );
+  sel := uppercase(select);
+  if SearchString('END', sel) > -1 or sel = 'E' then
+      if nargs=3 then else u[1]+u[2]; fi;
+  fi;
+end:
+
+Gap_print := proc( gap:Gap );
+  lprint('Position:', gap['Pos'], '  Length:',gap['Len'],
+	'  Sequence:',gap['Seq'], '  Flag:',gap['Flag']);
+end:
+CompleteClass(Gap);
+
+# *************************** 1.3. BLOCK DATA STRUCTURE *************************
+
+Block := proc( GapList, Left, Right, Sum, NrGaps, NrAA, Score, Pos, Type )
+ option polymorphic;
+  description
+  '
+Function: creates a Block data structure
+
+Selectors:
+	GapList	1 -
+	Left	2 -
+	Right	3 -
+	Sum	4 -
+	NrGaps	5 -
+	NrAA	6 -
+	Score	7 -
+	Pos	8 -
+	Type	9 -
+
+  	gaps, left, right, sum, score, bestpos
+
+';
+
+  if nargs=0 then 
+       copy(noeval(Block([], 0, 0, 0, 0, 0, 0, 0, 0)));
+  elif nargs = 1 and type([args], array(array)) then
+       noeval(Block(args, 0, 0, 0, 0, 0, 0, 0, 0));
+  elif nargs = 7 then
+       noeval(Block(args, 0, 0));
+  elif nargs = 8 then
+       noeval(Block(args, 0));
+  elif nargs = 9 then
+       noeval(Block(args));
+  else error ('Invalid Block format');
+  fi:
+end:
+
+
+Block_select := proc( u, select, val );
+  sel := uppercase(select);
+  if sel = 'LEFT' then
+    if nargs=3 then u[2] := val else 
+      if u[2] = 0 then
+	res := GetBlockParameters(u[1]);
+        u[2] := res[1]; u[3] := res[2]; u[4] := res[3];
+	u[5] := res[4]; u[6] := res[5];
+      fi;
+      u[2];
+    fi;
+  elif sel = 'RIGHT' then
+    if nargs=3 then u[3] := val else 
+      if u[3] = 0 then
+	res := GetBlockParameters(u[1]);
+	u[2] := res[1]; u[3] := res[2]; u[4] := res[3];
+	u[5] := res[4]; u[6] := res[5];
+      fi;
+      u[3];
+    fi; 
+  elif 'SUM' = sel then
+    if nargs=3 then u[4] := val else 
+      if u[4] = 0 then
+	res := GetBlockParameters(u[1]);
+	u[2] := res[1]; u[3] := res[2]; u[4] := res[3];
+	u[5] := res[4]; u[6] := res[5];
+      fi;
+      u[4];
+    fi;   
+  elif 'NRGAPS' = sel or 'NRISLANDS' = sel or sel = 'NR' then
+    if nargs=3 then u[5] := val else 
+      if u[5] = 0 then
+	res := GetBlockParameters(u[1]);
+	u[2] := res[1]; u[3] := res[2]; u[4] := res[3];
+	u[5] := res[4]; u[6] := res[5];
+      fi;
+      u[5];
+    fi;  
+  elif 'NRAA' = sel or sel = 'NRA' then
+    if nargs=3 then u[6] := val else 
+      if u[6] = 0 then
+	res := GetBlockParameters(u[1]);
+	u[2] := res[1]; u[3] := res[2]; u[4] := res[3];
+	u[5] := res[4]; u[6] := res[5];
+      fi;
+      u[6];
+    fi;   
+  else error(args,'invalid selector')
+  fi;
+end:
+    
+Block_print := proc(b:Block);
+  lprint('Left:  ', b['left'], ' Right:', b['right'], ' Sum:', b['sum']);
+  lprint('Nrunits:', b['nrgaps'], ' Nraa: ', b['nraa'], ' Score:', b['Score']);
+  lprint();
+  print(b['GapList']);
+end:
+CompleteClass(Block):
+
+
+# made a module by GG, 16.2.06
+
+module external DoGapHeuristic, GetBlockParameters;
+
+
+GetGaplist := proc(msa:MAlignment)
+  description 'Searches a msa for gaps and returns a list of Gap structures
+  If a second parameter is present (true or false) this determines if terminal
+  gaps are taken or not.';
+  if nargs > 1 then terminal := args[2] else terminal := false; fi;
+  if nargs > 2 then mingaplen := args[3]; else mingaplen := 1; fi;
+  if nargs > 3 then maxgaplen := args[4] else maxgaplen := -1; fi;
+ 
+  Align := msa['AlignedSeqs'];
+  len := length(Align[1]);
+  Gaplist := CreateArray(1..length(Align), []);
+  total := 0;
+  for s to length(Align) do
+    i := 1;
+    while i < len do
+      start := 0;
+      ende := 0;
+      while i<=len and Align[s, i]<>'_' do i := i + 1; od;
+      if i <= len and i > 0 then start := i; fi;
+      while i<=len and (Align[s, i]='_') do i := i + 1; od;
+      if i <= len and i > 0 then ende := i; 
+      elif i > len then ende := len+1;
+      fi;
+      if start <> 0 and ende <> 0 then
+	gaplen := ende - start;
+	if (terminal = true or (start > 1 and ende < len)) 
+	  and (maxgaplen < 0 or maxgaplen >= gaplen) 
+	  and (mingaplen < 0 or mingaplen <= gaplen) then
+	  Gaplist[s] := append(Gaplist[s], Gap(start, gaplen, s));
+	  total := total + 1;
+	fi;
+      fi;
+    od;
+  od;
+  if printlevel > 4 then lprint('nr of gaps found:',total) fi;
+  
+  return(Gaplist);
+end:
+
+FlagSameGaps := proc(gaplist:array)
+  description 'Searches a gaplist for gaps of the same size at the same position and
+  flags the "double" ones with 1';
+  
+
+  poslist := []; # list of combinations of positions and length, sorted by pos then len
+  n := length(gaplist);
+  for i to n do # for each sequence
+    for j to  length(gaplist[i]) do
+      p := gaplist[i, j, 'Pos'];
+      l := gaplist[i, j, 'Len'];
+      what := [p, l];
+      if length(poslist) = 0 then
+	poslist := [what]; 
+      else
+	res := BinaryFind(what, poslist);
+        start := res[1];
+        flag := res[2];
+        if flag > 0 then
+	  gaplist[i, j, 'Flag'] := 1;
+	else
+	  if (start = length(poslist) and ((p > poslist[start,1]))
+	   or (p = poslist[start,1]) and (l > poslist[start,2]))  then
+	    start := start +1;
+	  fi;
+	  tmpleft := poslist[1..start-1];
+	  if start<=length(poslist) then 
+	    tmpright :=  poslist[start..-1];
+	  else
+	    tmpright :=[];
+	  fi;
+	  poslist := append(tmpleft, what);
+	  if tmpright<>[] then 
+	    poslist := append(poslist, op(tmpright));
+	  fi;
+	fi;
+      fi;
+    od;
+  od;
+  if printlevel > 6 then print(gaplist, poslist) fi;
+  return(gaplist);
+end:
+
+IncreaseGHValues := proc(gh:GapHeuristic, increment:integer);
+  gh['MAXg'] := min(5, gh['MAXg'] + increment);
+  gh['gd'] := min(40, gh['gd'] + increment);
+  gh['ex'] := gh['ex'] + 3*increment;
+  gh['MAXa'] := gh['MAXa'] + 3*increment;
+  gh['id'] := gh['id']+increment; 
+  gh['maxil'] := gh['maxil'] + 3*increment;  
+ # gh['mingl'] := gh['mingl']; 
+  gh['wi'] := gh['wi'] + increment;
+  gh['sd'] := gh['sd'] + 3*increment:
+end:
+
+RandomizeGHValues := proc(gh:GapHeuristic, maxgh:GapHeuristic);
+  gh['MAXg'] := trunc((maxgh['MAXg'] - 0.5)*Rand()+1);
+  gh['gd'] := trunc(maxgh['gd']*Rand()+0.5);
+  gh['ex'] := trunc(maxgh['ex']*Rand()+0.5); 
+  gh['MAXa'] := trunc(maxgh['MAXa']*Rand()+0.5);
+  gh['minil'] := trunc(maxgh['minil']*Rand()+0.5); 
+  gh['maxil'] := trunc(maxgh['maxil']*Rand()+0.5); 
+  gh['mingl'] := trunc(maxgh['mingl']*Rand()+0.5); 
+  gh['maxgl'] := trunc(maxgh['maxgl']*Rand()+0.5);
+  gh['wi'] := trunc((maxgh['wi'] - 0.5)*Rand()+1);
+  gh['sd'] := trunc(maxgh['sd']*Rand()+0.5):
+end:
+
+
+
+
+GetBlockParameters := proc(units) option internal;
+  left := 10000;
+  right := 0;
+  n := length(units);
+  sum := 0;
+  nrunits := 0;
+  nraa := 0;
+  summed := false;
+  for i to n do
+    if units[i] = 0 then m := 0 else m := length(units[i]) fi;
+    if m > nrunits then nrunits := m fi;
+    aa := 0;
+    if type(units[i], Island) then
+      if left>units[i, 'left'] then left := units[i, 'left'] fi;
+      if right < units[i, 'right'] then right := units[i, 'right'] fi;
+    else 
+      for j to m do 
+	  g := units[i, j]; 
+	  if not type(g, Gap) then g := op(g) fi;
+	  if summed = false then sum := sum +g['Len'] fi;
+	  if left>g['Pos'] then left := g['Pos'] fi;
+	  if right < g['ende'] then right := g['ende'] fi;      
+	  if j > 1 then aa := aa + g['Pos']-units[i, j-1, 'ende'] fi; 
+      od;
+    fi;
+    if aa > nraa then nraa := aa fi;					    
+    if sum > 0 then summed := true fi;
+  od;
+  return([left, right, sum, nrunits, nraa]);
+end:
+
+IsBlockConflict := proc(block:Block, blocklist:array(Block), window:integer)
+  description 'Returns true if block intersects with any block in the blocklist';
+    conflict := false;
+    left := block['left']-window;
+    right := block['right']+window;
+    for i to length(blocklist) while conflict = false do
+        le := blocklist[i, 'left']-window;
+        ri := blocklist[i, 'right']+window;
+        if (left >= le and left <= ri) or
+	  (le >= left and le <= right) then
+	    b := block['GapList'];
+	    n := length(b);
+	    if n > 0 and type(b[1], Island) then b := [b] fi;
+	    for j to n do if b[j]<>[] then return(true) fi od;
+        fi;
+    od;
+  return(false);
+end:
+  
+IsIslandBlockConflict := proc(block:Block, blocklist:array(Block), window:integer)
+  description 'Returns true if block intersects with any block in the blocklist';
+    conflict := false;
+    left := block['left']-window;
+    right := block['right']+window;
+    position := block['Pos'];
+    islandlen := op(block)[1,1, 'Len'];
+    
+    for i to length(blocklist) while conflict = false do
+      le := blocklist[i, 'left']-window;
+      ri := blocklist[i, 'right']+window;
+      po := blocklist[i, 'Pos']; 
+      len := op(blocklist[i])[1,1, 'Len'];
+      if (left >= le and left <= ri) or
+	(le >= left and le <= right) then
+	if (left < le and position+islandlen > po) or
+	  (le > left and po+len > position) then
+	    if printlevel > 4 then
+	      lprint('IsIslandBlockConflict: block ', block, ' and ', blocklist[i]);
+	    fi;
+	    return(true);
+	fi; 
+      fi;
+    od;
+  return(false);
+end:
+  
+
+IsNiceBlock := proc(block)
+  description 'Only blocks that either have more than one gap or blocks with gaps
+that do not start at the same position are taken';
+   allsame := true;
+    r := 1;
+    s := 1;
+    pos := 0;
+    while allsame = true and r = 1  and s <= length(block) do
+      n := length(block[s]);
+      if n > 1 then
+        r := n;
+      elif n > 0 then
+	g :=  block[s, 1];
+	if type(g, array) then
+	  posblock := op(g)['Pos'];
+	else
+	  posblock := g['Pos'];
+	fi;
+	
+	if pos = 0 then 
+	  pos := posblock;
+	elif pos <> posblock then
+	  allsame := false;
+	fi;
+      fi;
+      s := s + 1;
+    od;
+    if r > 1 or allsame = false then
+      return(true);
+    else
+      return(false);
+    fi;
+end:
+
+GetIslandlist := proc(gaplist:array, minlen:integer, maxlen:integer)
+  description 'Returns a  list of islands. Delta is the max. size of island';
+  n := length(gaplist);
+  Isllist := [];
+  # for each gaplist in a sequence
+  for s to n do
+    glen := length(gaplist[s]);
+    # there can only be an island if there are at least two gaps...
+    if glen > 0 then
+      gap1 := gaplist[s, 1];
+      len := gap1['Pos']-1;
+      if (len <=maxlen or maxlen < 0) and (len >=minlen or minlen < 0) then
+	pos := 1;
+	isl := Island(pos, len, s, 1, gap1['Pos'] + gap1['Len']-1);
+	Isllist := append(Isllist, isl);
+      fi;
+    fi;
+    if glen > 1 then 
+      for g to glen-1 do
+	gap1 := gaplist[s, g];
+	gap2 := gaplist[s, g+1];
+	# if nr of aa between gap is smaller than delta => island
+	len := gap2['Pos'] - gap1['Pos'] - gap1['Len'];
+	if (len <=maxlen or maxlen < 0) and (len >=minlen or minlen < 0) then
+	  pos := gap1['Pos'] + gap1['Len'];
+	  isl := Island(pos, len, s, gap1['Pos'], gap2['Pos'] + gap2['Len']-1);
+	  Isllist := append(Isllist, isl);
+	fi;
+      od;
+    fi;
+  od;
+return(Isllist);
+end:
+
+
+MoveIsland := proc(seq:string, x:posint, y:posint, len:posint)
+  description 'Moves an island in sequence Seq from position x to 
+  position y, where len is the length of the island';
+   lseq := length(seq);
+   s := copy(seq); 
+   if x + len - 1 > lseq or y + len - 1 > lseq then return(seq) fi;
+   if x>y then 	# move left
+	# if a previous move filled the area, do not move
+	for p from y to x-1 do if s[p] <> '_' then return(seq) fi od;
+	for p from 0 to len-1 do s[p+y] := s[p+x] od; 
+	for p from max(x,y+len) to x+len-1 do s[p] := '_' od;
+   else		# move right
+	# if a previous move filled the area, do not move
+	for p from x+len to y+len-1 do if s[p] <> '_' then return(seq) fi od;
+	for p from len-1 to 0 by -1 do s[p+y] := s[p+x] od;
+	for p from x to y-1 do s[p] := '_' od;
+   fi; 
+   # if the move overlapped, then it cannot move the island successfully,
+   # some aa are lost, and it fails.
+   if sum(If(seq[i]='_',0,1),i=1..lseq) = sum(If(s[i]='_',0,1),i=1..lseq)
+	then s else seq fi
+end:
+
+# *************************** 2.1 GAP FUSION ALGORITHM  *************************
+
+GetBestGapRow :=  proc(gaplistseq, gap:integer, maxgaps:integer, maxaa:integer, maxgapsum:integer, maxleft:integer, maxright:integer, gapdelta:integer);
+# returns the best matching sum and the number of gaps that were combined
+ 
+  n := length(gaplistseq);
+  for skip from 0 to n do
+    # if gap sum is no good, then skip a gap
+    g := gap + skip; 
+    start := g;  
+    left := 0;     
+    gapsum := 0;
+    aasum := 0;
+    right := 0;
+    # only include the next gap if
+    # a) there are less than maxaa in total between the gaps
+    # b) the number of gaps is smaller than maxgaps
+    # c) the left and right position of the gap block is between maxleft and maxright,
+    #    unless they are 0 (first gaps in block)
+    # d) the gapsum +- gapdelta is maxgapsum, unless 0, => first gaps in block
+    while g-gap < min(maxgaps+skip, n-gap+1 ) 
+    and ( (maxgapsum - gapsum) > gapdelta or maxgapsum = 0 or gapdelta > maxgapsum) 
+    and ( aasum < maxaa or aasum = 0) 
+    and ( maxleft<=left or left = 0 or maxleft = 0) 
+    and ( maxright>=right or maxright = 0 ) 
+    and ( g <= n) do
+      if left = 0 then left := gaplistseq[ gap, 'Pos']; fi;
+      gapsum := gapsum + gaplistseq[ g, 'Len'];
+      if right <> 0 then 
+	aasum := aasum + gaplistseq[ g, 'Pos']-right; 
+      fi;
+      right := gaplistseq[ g, 'Pos'] + gaplistseq[ g, 'Len'];
+      g := g + 1;
+    od;
+
+    # there is a list of gaps that fulfills all criteria
+    if g > gap 
+      and (abs(gapsum - maxgapsum) <= gapdelta  or maxgapsum = 0)
+      and (maxright >= right or maxright = 0) 
+      and (maxleft <= left or left = 0) 
+      and (aasum < maxaa or aasum = 0) then
+      skip := n;
+    else
+      gapsum := 0;
+      start := 0; 
+    fi;
+    if gapdelta < 0 or (aasum >=maxaa and maxaa <> 0) then break; fi;
+  od;
+  return([gapsum, start, g-1, left, right]);
+end:
+
+GetBestGapPermblock := proc(gaplist:array(list(Gap)), sequence:integer,
+	gapsum:integer, maxgaps:integer, maxaa:integer,  left:integer,
+	right:integer, gaprow:list, gapdelta:integer)
+  description 'return a list of gaps that form a block with this sum and return a reduced gaplist.
+  Does not combine more than r gaps, and then ending positions of all the gaps have to be 
+  within a range of p+-s
+  ';
+  n := length(gaplist);
+  permblock := CreateArray(1..n,[]);
+  permblock[sequence] := [copy(gaprow)];
+
+  for seq to n do
+    if seq <> sequence then
+      nrgaps := length(gaplist[seq]);
+      if nrgaps > 0 then
+	# find the first gap that lies within the range left..right
+	startgap := 1;
+	pl :=gaplist[seq, startgap, 'Pos'];;
+	while pl < left and startgap < nrgaps do
+	  startgap := startgap + 1;
+	  pl := gaplist[seq, startgap, 'Pos'];
+	od;
+	# as long as there is at least one gap, find the gaplist has the correct sum
+	# we want to find ALL possible gaprows in the range left..right. This is the
+	# exponential part of the gap searching algorithm
+	while startgap <= nrgaps and startgap > 0 do
+	  res := remember(GetBestGapRow(gaplist[seq], startgap, maxgaps, maxaa, gapsum, left, right, gapdelta));
+	  sum := res[1];
+	  # if there is a list with sum = gapsum then add it to the permblock
+	  if sum > 0 then
+	    start := res[2]; # startig gapnr of gaprow
+	    fin := res[3];   # ending gapnr
+	    # add it to the permblock
+	    permblock[seq] := append(permblock[seq], gaplist[seq, start..fin]);     
+	    startgap := start + 1;
+	  else
+	    # we are done searching for gaprows, because the GetBestGapRow procedure
+	    # continues to the right until it finds something. If it doesnt, then we stop
+	    startgap := nrgaps+1;
+	  fi; # end if there is a gaplist
+	  # we want to find other gaprows further right, as long as we find gaprows
+	od; # end if ther was at least one gap left
+      fi;
+    fi;
+  od;
+  return(permblock);
+end:
+
+ExpandPermblock := proc(permblock:array);
+  # expands a permblock to all possible blocks that can be formed with it
+  # this is of course exponential!
+  blocklist := [];  
+  cpermblock := copy(permblock);
+  result := [cpermblock, blocklist];
+  ExpandPermblock_r(result);
+  blocklist := result[2];
+  return(blocklist);
+end:
+
+
+ExpandPermblock_r := proc(result:array);
+  permblock := result[1];
+  blocklist := result[2];
+  n := length(permblock);
+  # step 1: take the first gaprow in each row, and
+  # form a block with it
+  block := CreateArray(1..n, []);
+#  block := CreateArray(1..n);
+  for k to n do
+    if permblock[k]<>[] then
+      if type(permblock[k, 1], list) then
+	block[k] := permblock[k, 1];
+      else
+	block[k] := copy(permblock[k]);
+      fi;
+    fi;
+  od;
+  # append this block to the list if it has not been found yet
+  # and check the remainder
+  if SearchArray(block, blocklist) = 0 then
+    blocklist := append(blocklist, block);
+    result[2] := blocklist;
+    # for each row check if something can be removed
+    # if so, call the procedure again recursively
+    for i to n do
+      # then remove the current gaprow  
+      # until we haven eaten off all gaprows
+      # IN THE CURRENT ROW!
+      if permblock[i] <> [] and type(permblock[i, 1], list) and length(permblock[i])>1 then
+	permblock[i] := permblock[i, 2..-1];
+	result[1] := permblock;
+	row := block[i];
+
+	flag := 0;
+	for j to length(row) while flag = 0 do
+	  flag := flag + row[j, 'Flag'];
+	od;
+	if  flag = 0 then
+	  ExpandPermblock_r(result);
+	fi;
+      fi;
+    od;
+  fi;
+end:
+
+
+GetGapBlocklist := proc(oldmsa:MAlignment, gh:GapHeuristic, score:boolean);
+ maxgaps := gh['MAXg'];
+ maxaa := gh['MAXa'];
+ extension := gh['ex'];
+ gapdelta := gh['gd'];
+ mingaplen := gh['mingl'];
+ maxgaplen := gh['maxgl'];
+ 
+  msa := copy(oldmsa,1);
+  gaplist := GetGaplist(msa, true, mingaplen, maxgaplen);
+  gaplist := FlagSameGaps(gaplist);
+  
+  n := length(gaplist);  
+  blocklist:= [];
+  # test
+  if printlevel > 4 then lprint('...getting blocklist') fi;
+  for seq to n do 
+    m := length(gaplist[seq]);
+    for g to m do
+      if gaplist[seq, g, 'Flag'] < 1 then
+	for r to min(maxgaps, m-g+1) do
+	  # For each gap in the msa, and for each number of gaps, find all the
+	  # permblocks in the specified range and add them to the permblocklist
+	  for i from g to min(g+r, m) do
+	    maingaprow := GetBestGapRow(gaplist[seq], i, r, maxaa,
+		0, 0, 0, gapdelta);
+	    gapsum := maingaprow[1];
+	    if gapsum > 0  then
+	      left :=maingaprow[4];
+	 right := maingaprow[5];
+	      start := maingaprow[2];
+	      fin := maingaprow[3];
+	      gaprow := CreateArray(1..(fin-start)+1);
+	      for k from start to fin do
+		gaprow[k-start+1] := gaplist[seq, k];
+	      od;
+	      
+	      # get the next best possible permblock for this sum, r and seq
+	      maxleft := max(1, left-extension);
+	      maxright := right+extension;
+	      permblock := GetBestGapPermblock(gaplist, seq, gapsum, maxgaps,
+		   maxaa, maxleft, maxright, gaprow, gapdelta);    
+	      templist := ExpandPermblock(permblock);
+	      for k to length(templist) do
+		block := templist[k];
+		if (score = false or IsNiceBlock(block) = true) 
+		  and SearchArray(block, blocklist) = 0 then
+		  blocklist := append(blocklist, block);  
+		fi;
+	      od; # next block of permblock
+	    fi; # end if gapsum  > 0
+	  od; # next gap in range left..right
+	od; # next r 
+      fi;
+    od; # next gap in sequence
+  od; # next sequence
+
+  if score = true then
+      if printlevel > 4 then lprint('...scoring each block') fi;
+      for i to length(blocklist) do 
+          blocklist[i] := Block(blocklist[i]); 
+          res := ShiftGapBlock(msa, blocklist[i], gapdelta):
+          if printlevel > 5 then lprint('   ...block', i); fi:
+          newmsa := res[1]:
+          scoredelta := res[2];
+          maxpos := res[3];
+          blocklist[i, 'Pos'] := maxpos;
+          blocklist[i, 'Score'] := scoredelta;
+      od:
+  else 
+      for i to length(blocklist) do blocklist[i] := Block(blocklist[i]) od:
+      return(blocklist);
+  fi;
+  
+ 
+ blocklist:= sort(blocklist, x->-x[7]);
+ for i to length(blocklist) while blocklist[i, 'Score'] > 0 do od;
+ if i > 1 then blocklist := blocklist[1..i-1]
+ else 
+     blocklist := [];
+     if printlevel > 4 then lprint('no good blocks found'); fi:
+ fi;
+ 
+ return(blocklist);
+end:
+
+NoGapConflict := proc(block:Block, msa:MAlignment, pos:integer);
+  align := msa['AlignedSeqs']:
+  noothergap := true; 
+  n := length(align);
+  for j to n while noothergap = true do 
+    blockrow := block['GapList',j];
+    if blockrow <> [] then
+      left := blockrow[1,'Pos']-1;  
+      last := blockrow[length(blockrow)]; 
+      right := last['Pos']+last['Len']+1;
+         
+      if pos < left then
+	for p from pos to left while noothergap = true do
+	  if align[j, p] = '_' then noothergap := false; fi;
+	od;
+      fi; 
+      if pos > right then
+	for p from right to pos while noothergap =true do
+	  if align[j, p] = '_' then noothergap := false; fi;
+	od;
+      fi;
+    fi;
+  od;
+  return(noothergap);
+end:
+  
+ShiftGapBlock := proc( msa:MAlignment, block:Block, gapdelta:integer ;
+	(theposition=0):{0,posint} );
+  
+  GetPositions := proc(block:Block, gapsum, left, right, gapdelta);
+    poslist := {};
+    for z in block['GapList'] do
+	for g in z do
+	    pos := g['Pos'];
+	    if pos + gapsum <= right then poslist := poslist union {pos} fi;
+	    if pos+g['Len']-gapsum >= left then
+		  poslist := poslist union {pos+g['Len']-gapsum}
+	    fi;
+	od;
+    od;
+    if printlevel > 5 then lprint('Shifting positions:',poslist) fi;
+    return(poslist);
+  end:
+ 
+  align := msa['AlignedSeqs'];
+  len := length(align[1]);
+  n := length(align);
+  newmsa := copy(msa,1):
+  tmpmsa := copy(msa,1);
+  bestalign := align;
+  left := max(1,block['left']-1-gapdelta);
+  right := min(len, block['right']+1+gapdelta);   
+  orig := GetNewScore(msa, left, right);
+
+  if printlevel > 6 then
+      lprint('original score from ', left,' to ', right, ': ', orig) fi;
+
+  gapsum := block['sum'];
+  if theposition = 0 then
+      poslist := GetPositions(block, gapsum, left, right, gapdelta);
+  else
+      poslist := {theposition};
+  fi;
+
+  maxi := -10000;
+  maxpos := 0;
+ 
+  for pos in poslist do    
+     # first check if there is another gap in the way between
+     # the blocklist and the position.  If this is true for any row,
+     # dont do it!  We cannot switch gaps, because in this case
+     # we would have to update all the gaps we hopped over... 
+   
+     if NoGapConflict(block, msa, pos) = true then
+	temp := copy(align);   
+	for j to n do
+	  if block['GapList', j] <> [] then #there is a gap 
+	    blockrow := block['GapList', j];
+	    newgap := FuseGaps(blockrow, pos);
+	    if GoodGap(blockrow, temp[j]) then next fi;
+	    temp[j] := ReplaceGaps(blockrow, newgap, temp[j]);
+	  fi;
+	od:
+	tmpmsa['AlignedSeqs'] := temp;
+	sc := GetNewScore(tmpmsa, left, right);
+	
+	if sc >= maxi and sc >= orig  then
+	  bestalign := temp;
+	  maxi := sc;
+	  maxpos := pos;
+	fi:
+      fi;
+  od:
+
+  if maxi > -10000 then
+      newmsa['AlignedSeqs'] := bestalign;
+      newmsa['Score']:= 0; 
+      if printlevel > 5 then
+          lprint(' *** New Max found in ShiftGapBlock ***');
+          lprint();
+          print(newmsa);
+      fi;
+  fi;
+ 
+ return([newmsa, maxi-orig, maxpos]);
+end:
+
+FuseGaps :=proc(blockrow:array(Gap), pos:integer);
+  Gap( pos, sum( z['Len'], z=blockrow ))
+end:
+
+#
+#	TestGap: test whether the gaps are consistent with the sequence
+#		The gaps must also be ordered.
+TestGap := proc( gaps:array(Gap), seq:string)
+  if not GoodGap(args) then error( args, 'gaps are inconsistent with sequence') fi
+end:
+GoodGap := proc( gaps:array(Gap), seq:string)
+  lseq := length(seq);
+  for i from 2 to length(gaps) do
+  	if gaps[i-1,'Pos'] + gaps[i-1,'Len'] >= gaps[i,'Pos'] then
+	     return( false ) fi od;
+  for g in gaps do
+	gp := g['Pos'];  gl := g['Len'];
+	if gp < 1 or gp+gl-1 > lseq then return( false )
+	elif seq[gp..gp+gl-1] <> CreateString(gl,'_') then return( false )
+	fi
+  od;
+true
+end:
+
+# Purpose:	extracts a sequence e.g. from an alignment matrix
+#               '-', '_', blanks etc are removed
+CleanSeq := proc(MA:array(string));
+ n := length(MA); Seq := CreateArray(1..n);
+ for i to n do
+   p := 0; l := length(MA[i]);
+   temp := CreateString(l);
+   for j to l do
+     a := MA[i,j];
+     if a < 'Z' and a >= 'A' then p := p + 1; temp[p] := MA[i,j]
+     else MA[i,j] := '_'; fi;
+   od;
+   Seq[i] := temp[1..p];
+ od;
+ Seq;
+end:
+
+
+ReplaceGaps := proc(blockrow:array(Gap), newgap:Gap, seq:string);
+  # replaces a list of gaps with a single gap
+
+  if sum(z['Len'],z=blockrow) <> newgap['Len'] then
+      error(blockrow,newgap,'new gap length does not add to old') fi;
+  if newgap['Pos'] < 1 or newgap['Pos']+newgap['Len']-1 > length(seq) then
+      error(newgap,seq,'new gap falls outside sequence') fi;
+  TestGap(blockrow, seq);
+
+  # first remove all the old gaps from right to left
+  seq1 := seq;
+  for i from length(blockrow) by -1 to 1 do
+      z := blockrow[i];
+      seq1 := seq1[1..z['Pos']-1] . seq1[z['Pos']+z['Len']..-1]
+  od;
+
+  # insert new gap
+  seq1 := seq1[1..newgap['Pos']-1] . CreateString(newgap['Len'],'_') .
+	seq1[newgap['Pos']..-1];
+  TestGap( [newgap], seq1 );
+
+  count := sum( If(seq[i]='_',1,0), i=1..length(seq) );  
+  count1 := sum( If(seq1[i]='_',1,0), i=1..length(seq1) );
+  tmp := CleanSeq([seq, seq1]);
+ 
+  if count1 <> count or tmp[1] <> tmp[2] then
+      prints(seq);
+      prints(seq1);
+      error( count, count1, tmp, blockrow, 'error in ReplaceGaps' );
+  fi;
+  return(seq1);
+end:
+
+ShiftGapBlocklist := proc(msa:MAlignment, blocklist:array(Block),
+	gapdelta:integer);
+  n := length(blocklist);
+  newmsa := copy(msa,1):
+  if printlevel > 4 then lprint('...shifting each block'); fi;
+  for i to n while blocklist[i, 'Score'] >= 0 do
+    block := blocklist[i];
+    if i=1 or IsBlockConflict(block,blocklist[1..i-1], 0) = false then 
+      res := ShiftGapBlock(newmsa, block, gapdelta, block['Pos']);
+      newmsa := res[1];  
+    fi:
+  od:
+  return(newmsa);
+end:
+
+
+# *************************** 2.2. ISLAND SHIFTING ALGORITHM *************************
+ 
+GetIslandBlocks := proc(isllist:array, minlen:integer, maxlen:integer, msa:MAlignment, score:boolean);
+  islpos := sort(isllist);
+  islblocklist := [];    
+  if printlevel > 4 then lprint('...getting islandlblocklist') fi;
+  anzahl := length(islpos);
+  for size from minlen to maxlen do
+    start := 1;
+    while start <= anzahl do
+      i := start;
+      isl := islpos[start];
+      islblock := [copy(isl)];
+      len := isl['Len'];
+      if len = size then
+	pos := isl['Pos'];
+	while  i < anzahl and islpos[i+1, 'Pos'] = pos do
+	  i := i + 1;
+          if islpos[i, 'Len'] = len then islblock := append(islblock, islpos[i]); fi;
+	od;
+	if i <= anzahl then
+	  bl := Block(islblock);
+	  bl['Type'] := 'ISLAND';
+	  islblocklist := append(islblocklist, bl);
+	fi;
+      fi;
+      start := i + 1;
+    od:
+  od:
+  
+  if printlevel > 4 then
+    lprint('nr of blocks found: ',length(islblocklist));
+    if printlevel > 5 then
+      for i to length(islblocklist) do
+	print(islblocklist[i]);
+      od;
+    fi;
+  fi;
+  
+  if score = true then
+    if printlevel > 4 then lprint('...scoring each block'); fi;
+    
+    for i to length(islblocklist) do 
+      res := ShiftIslands(msa, islblocklist[i]):
+      if printlevel > 4 then lprint('   ...block', i); fi;
+      newmsa := res[1]:
+      scoredelta := res[2];
+      maxpos := res[3];
+      if printlevel > 5 then
+	lprint('GetIslandBlocks: result of ShiftIslands: ');
+	lprint('scoredelta = ', scoredelta, ' maxpos=', maxpos);
+      fi;
+      
+      islblocklist[i, 'Pos'] := maxpos;
+      islblocklist[i, 'Score'] := scoredelta;
+    od:
+    
+    islblocklist:= sort(islblocklist, x->-x[7]);
+    for i to length(islblocklist) while islblocklist[i, 'Score'] > 0 do od;
+    if i > 1 then islblocklist := islblocklist[1..i-1]
+    else islblocklist := []; 
+    fi;
+  fi;
+  
+  return(islblocklist);
+end:
+ 
+#  minlen :=gh['minil'];
+#  maxlen := gh['maxil'];
+#  delta := gh['id'];
+#  score := true;
+
+GetIslandBlocklist := proc(msa:MAlignment, minlen:integer, maxlen:integer, delta:integer, score:boolean);
+  gaplist := GetGaplist(msa, true);
+  isllist := GetIslandlist(gaplist, minlen, maxlen);
+  
+  islblocklist := GetIslandBlocks(isllist, minlen, maxlen, msa, score);
+  if printlevel > 4 then
+    lprint('GetIslandBlockList: nr of blocks found: ',length(islblocklist));
+  fi;
+  return(islblocklist);
+end:
+
+GetIslandBlock := proc( isllist:array(list(Island)), sum:integer,
+	delta:integer, pl:integer)
+  description 'return a list of islands that form a block with this sum
+  and return a reduced island list.
+  The ending positions of all the islands have to be 
+  within a range of p+-s';
+
+  n := length(isllist);
+  islblock := CreateArray(1..n, []);
+  shorter := CreateArray(1..n, []);
+  for seq to n do
+    if length(isllist[seq]) > 0 then
+      isl := isllist[seq, 1];
+      if abs(isl['Len']- sum) <= delta and isl['Pos'] = pl then 
+	islblock[seq] := [copy(isl)];
+	if length(isllist[seq]) > 1 then 
+	  shorter[seq] := append(shorter[seq], op(isllist[seq, 2..-1]));
+	fi;
+      else
+	shorter[seq] := append(shorter[seq], op(isllist[seq]));
+      fi;
+    fi;
+  od;
+  return([islblock, shorter]);
+end:
+
+
+
+ShiftIslands := proc(msa:MAlignment, islblock:Block ;
+    (theposition=0):{0,posint} )
+
+  if printlevel > 5 then lprint('ShiftIsland: checking islblock:', islblock) fi;
+  
+  GetPositions := proc(islblock:array);
+    left := {};
+    right := {};
+    for i to length(islblock) do
+      if islblock[i] <> [] then
+	  isl := islblock[i];
+	  left := left union {isl['left']};
+	  right := right union {isl['right'] - isl['Len']+1};
+      fi;
+    od;
+    if left <> {} then
+        return({max([op(left)]), min([op(right)])});
+    else
+        return({});
+    fi;
+  end:
+  
+  align := copy(msa['AlignedSeqs']);
+  len := length(align[1]);
+  n := length(align);
+  newmsa := copy(msa,1):
+  tmpmsa := copy(msa,1);
+  bestalign := align;
+  left := max(1,islblock['left']-1);
+  right := min(len, islblock['right']+1);   
+  orig := GetNewScore(msa, left, right);
+
+  block := islblock['GapList'];
+ 
+  if theposition = 0 then
+      poslist := GetPositions(block);
+  else
+      poslist := {theposition};
+  fi;
+ 
+  maxi := -10000;
+  maxpos := 0;
+ 
+  for pos in poslist do
+    if pos > 1 and pos <len then
+      temp := copy(align);
+      for j to length(block) do
+        isl := block[j];
+	seq := isl['Seq'];
+	if isl['Pos'] <> pos then # move the gap
+	  temp[seq] := MoveIsland(temp[seq], isl['Pos'], pos, isl['Len']);
+	fi;          
+      od:
+      
+      # if left or total right border -> score should be bigger,
+      # because we dont want sequences at the end for 
+      # "optical" reasons
+      if (left <= 1 and pos <=1) or (right >=len and pos+isl['Len'] >= len) then
+	delta := -1;
+       else 
+	delta := 0.1; 
+      fi;
+      
+      sc := GetNewScore(tmpmsa, left, right) + delta;
+      if sc  > maxi and sc > orig  then
+	bestalign := temp;
+	maxi := sc;
+	maxpos := pos;
+      fi:
+    fi:
+  od:
+  
+  if maxi > -10000 then
+    newmsa['AlignedSeqs'] := bestalign;
+    newmsa['Score'] := 0;
+  fi;
+  
+ return([newmsa, maxi-orig, maxpos]);
+end:
+
+ShiftIslandBlocklist := proc(msa:MAlignment, blocklist:array(Block));
+  n := length(blocklist); 
+  newmsa := copy(msa,1):
+  if printlevel > 4 then lprint('...shifting each block'); fi;
+  for i to n while blocklist[i, 'Score'] > 0 do
+    block := blocklist[i];
+    if i=1 or IsIslandBlockConflict(block,blocklist[1..i-1], 0) = false then 
+      res := ShiftIslands(newmsa, block, block['Pos']):
+      if printlevel > 4 then lprint('   ...block',i); fi;
+      tempmsa := res[1];
+      if (tempmsa['Score'] >= newmsa['Score']) then
+	newmsa := tempmsa;
+	if printlevel > 5 then
+	  lprint(' *** New Max found in ShiftIslands: KEEPING CHANGE ***');
+	  print(newmsa);
+	fi;
+      fi;
+    fi:
+  od:
+  return(newmsa);
+end:
+
+
+
+# *************************** 2.3 LEFT-RIGHT GAPBLOCK SHIFTING ALGORITHM *************************
+ 
+LRBlocklistShifting := proc(msa:MAlignment, blocklist:array(Block), window:integer);
+  n := length(blocklist);
+  newmsa := copy(msa,1);
+  if printlevel > 4 then lprint('...shifting all blocks'); fi; 
+  for i to n do   
+    if printlevel > 5 then lprint('   ...block',i); fi; 
+    if i=1 or IsBlockConflict(blocklist[i],blocklist[1..i-1], window) = false then 
+      res := LRBlockShifting(newmsa, blocklist[i], window):
+      newmsa := res[1]:
+      blocklist[i, 'Score'] := res[2]:
+      blocklist[i, 'Pos']:= res[3]:
+    fi:
+  od:
+  return(newmsa);
+end:
+
+ShiftBlockDelta := proc(msa:MAlignment, block:Block, delta:integer); 
+  n := length(block['GapList']);
+  newmsa := copy(msa,1):
+  align := newmsa['AlignedSeqs']; 
+  maxlen := length(align[1]);
+ 
+  temp := copy(align);
+  for j to n do
+    if block['GapList', j] <> [] then #there is a gap 
+      b := block['GapList', j];
+      for gap in b do  
+	pos := gap['Pos'];
+	len := gap['Len'];
+	if pos+delta > 0 and pos+delta+len < maxlen then
+	  temp[j] := MoveGap(temp[j], gap, pos+delta);
+	fi;
+      od; 
+    fi;
+  od:
+  newmsa['AlignedSeqs'] := temp;
+  return(newmsa);
+end:
+
+
+LRBlockShifting := proc(msa:MAlignment, block:Block, window:integer);
+  n := length(block['GapList']);
+  newmsa := copy(msa,1):
+  align := newmsa['AlignedSeqs']; 
+  maxlen := length(align[1]);
+  left := max(1,block['left']-1-window);
+  right := min(maxlen, block['right']+1+window);   
+  orig := GetNewScore(newmsa, left, right);
+  bestmsa := msa:
+  tmpmsa := copy(msa,1):
+
+  maxi := orig;
+  maxpos := 0;
+  if printlevel > 6 then
+    lprint('BEGIN Shifting block:',block);
+    print(msa);
+  fi;
+  
+  if (block['left'] - window) < 0 then
+    start := -block['left'];
+  else
+    start := -window;
+  fi;
+  
+  for delta from start to window do 
+    if delta < 0 then pos := max(1,left+delta) else pos := min(right+delta, maxlen); fi;
+    if delta <> 0 and NoGapConflict(block, msa, pos) = true then
+      block1 := copy(block);
+      tmpmsa := ShiftBlockDelta(newmsa, block1, delta);
+      sc := GetNewScore(tmpmsa, left, right);  
+      if sc > maxi then
+	bestmsa := tmpmsa;
+	if printlevel > 5 then 
+	  lprint('Score difference:',sc - maxi,  '-> NEW MAX FOUND');
+	fi; 
+	maxpos := delta;
+	maxi := sc;
+      fi:
+    fi:
+  od:
+  if printlevel > 6 then
+    lprint('END Shifting block:',block);
+    print(msa);
+  fi;
+  if maxi > -10000 then
+    newmsa := bestmsa;
+    newmsa['Score'] := 0;
+    newmsa['RecalcScore']; 
+    return([newmsa, maxi-orig, maxpos]); 
+  else
+    return([msa, orig, 0]);
+  fi;
+end:
+
+# *************************** 2.4. RANDOM GAPBLOCK SHIFTING ALGORITHM *************************
+
+RandomBlocklistShifting := proc(msa:MAlignment, blocklist:array(Block), window:integer, times:integer);
+  n := length(blocklist);
+  newmsa := copy(msa,1);	 
+  align := copy(newmsa['AlignedSeqs']); 
+  maxlen := length(align[1]);
+  bestmsa := newmsa;
+  moved := []; 
+  if printlevel > 4 then lprint('...shifting all blocks'); fi; 
+  for i to n do    
+    block := blocklist[i]; 
+    left := max(1,block['left']-1-window);
+    right := min(maxlen, block['right']+1+window);   
+    orig := GetNewScore(newmsa, left, right);
+    maxi := orig;
+    maxpos := 0;    
+    if printlevel > 5 then lprint('   ...block',i); fi; 
+    if i=1 or IsBlockConflict(block,moved, abs(delta)) = false then 
+      for t to times do
+	delta := round(Rand()*window-window/2);
+	if printlevel > 6 then
+	  lprint('...random shifting by ',delta);
+	fi;
+	block := copy(blocklist[i]);
+	tmpmsa := ShiftBlockDelta(newmsa, block, delta):
+	sc := GetNewScore(tmpmsa, left, right);
+  
+	if sc > maxi then
+	  bestmsa := tmpmsa;
+	  if printlevel > 5 then 
+	    lprint('Score difference:',sc - maxi,  '-> NEW MAX FOUND');
+	  fi;  
+	  maxi := sc;
+	  maxpos := delta;
+	fi:
+      od:
+      if maxi > -10000 then
+	moved := append(moved, block);
+      fi;
+      blocklist[i, 'Score'] := maxi-orig:
+      blocklist[i, 'Pos']:= maxpos:
+    fi:
+  od:
+  return(bestmsa);
+end:
+
+
+
+# *************************** 2.4 LEFT-RIGHT ISLANDBLOCK SHIFTING ALGORITHM *************************
+ 
+LRIslandBlocklistShifting := proc(msa:MAlignment, blocklist:array(Block), window:integer);
+  n := length(blocklist);
+  newmsa := copy(msa,1);
+  if printlevel > 4 then lprint('...shifting all blocks'); fi; 
+  for i to n do   
+    if printlevel > 5 then lprint('   ...block',i); fi; 
+    if i=1 or IsBlockConflict(blocklist[i],blocklist[1..i-1], window) = false then 
+      res := LRIslandBlockShifting(newmsa, blocklist[i], window):
+      newmsa := res[1]:
+      blocklist[i, 'Score'] := res[2]:
+      blocklist[i, 'Pos']:= res[3]:
+    fi:
+  od:
+  return(newmsa);
+end:
+
+ShiftIslandBlockDelta := proc(msa:MAlignment, block:Block, position:integer); 
+  n := length(block['GapList']);
+  newmsa := copy(msa,1):
+  align := newmsa['AlignedSeqs']; 
+  maxlen := length(align[1]); 
+  temp := copy(align);
+  for j to length(block['GapList']) do
+    isl := block['GapList',j];
+    seq := isl['Seq'];
+    temp[seq] := MoveIsland(temp[seq], isl['Pos'], position, isl['Len']);
+  od:
+  
+  newmsa['AlignedSeqs'] := temp;
+  return(newmsa);
+end:
+
+LRIslandBlockShifting := proc(msa:MAlignment, block:Block, window:integer);
+  n := length(block['GapList']);
+  newmsa := copy(msa,1):
+  align := newmsa['AlignedSeqs']; 
+  maxlen := length(align[1]);
+  left := max(1,block['left']+1);
+  len := block['GapList', 1, 'Len'];  
+  right := min(maxlen, block['right']-1);  
+  orig := GetNewScore(newmsa, left, right);
+  tmpmsa := copy(msa,1):
+  bestmsa := tmpmsa:
+
+  maxi := orig;
+  maxpos := 0;
+  for position from left to right - len do 
+    if delta <> 0 and NoGapConflict(block, newmsa, position) = true then
+      if printlevel > 6 then
+	lprint('...shifting by',delta);
+      fi;
+      tmpmsa := ShiftIslandBlockDelta(newmsa, block, position):
+      if printlevel > 6 then
+	lprint('Temporary msa:');
+        print(tmpmsa):
+      fi;
+      sc := GetNewScore(tmpmsa, left, right);  
+      if sc > maxi and sc > orig  then
+	bestmsa := tmpmsa;
+	if printlevel > 5 then 
+	  lprint('Score difference:',sc - maxi,  '-> NEW MAX FOUND');
+	fi; 
+	maxpos := delta;
+	maxi := sc;
+      elif printlevel > 6 then
+        lprint('Score difference:', sc - maxi,' -> NO max');
+      fi:
+    fi:
+  od:
+  
+  if maxi > -10000 then
+      newmsa['Score'] := 0;
+      newmsa['RecalcScore']; 
+  fi;
+  
+ return([newmsa, maxi-orig, maxpos]);   
+end:
+
+# *************************** 3. AUXILIARY FUNCTIONS  *************************
+MoveGap := proc(seq:string, g:Gap, y:integer)
+  description 'Moves a gap in sequence Seq from position x to 
+  position y, where len is the length of the gap';
+  s := copy(seq);
+  x := g['Pos'];
+  len := g['Len'];
+  left := min(x, y);
+  right := max(x, y)+len-1;
+    
+  if left < 1 then return(s); fi;
+  if right > length(seq) then return(s); fi;
+  count := 0;
+  for i from left to right do if seq[i] = '_' then count := count + 1;  fi; od;
+  if x>y then   # move left
+    for p from x+len - 1 to y+len by -1 do
+      s[p] := s[p-len];
+    od;
+  else          # move right
+    for p from x to y-1 do
+      s[p] := s[p+len];
+    od;
+  fi;
+  for p from y to y+len-1 do s[p] := '_'; od;
+  count1 := 0;  
+  for i from left to right do if s[i] = '_' then count1 := count1 + 1;  fi; od;
+  if count1 <> count then
+    lprint('error IN MOVEGAP! AA HAVE BEEN DELETED');
+    lprint('Nr gaps before=',count,' nr gaps after=',count1);
+    lprint('seq:',seq, '  from(x):',x,'  to(y):', y,'  len:',len);
+    lprint(seq[min(x, y)..max(x, y)+len]);
+    lprint(s[min(x, y)..max(x, y)+len]);
+  fi;
+  g['Pos'] := y;
+  return(s);
+end:
+
+BinaryRangeFind := proc(x:integer, which:integer, a:array, left:integer, right:integer)
+  description 'Searches x in array that is composed of a list. 
+  Which describes which position in the list to search. 
+  Left and right is the range that needs to be searched. 
+  
+  The array has to be sorted in position which in this range.
+  Returns the position and a flag. The flag is 1 if what was found,
+  -1 if not found. The position if x was not found is the next element';
+  half := trunc((right-left+1)/2);
+  delta := half;
+  start := min(right, left+half);
+  found := false;
+  counter := 0;
+  while start>=left and start<=right and counter<=2 and found = false do
+    delta := round(delta/2);
+    if x > a[start, which] then
+      start := start + delta;
+    elif x < a[start, which] then
+      start := start - delta;
+    else
+      found := true;
+    fi;
+    if delta <2  then counter := counter+1; fi;
+  od;
+  if found = false then
+    if start < left then start := left; fi;
+    if start > right then start := right; fi;   
+    if x > a[start, which] and start <right then start := start + 1; fi;
+    return([start, -1]);
+  else
+    return([start, 1]);
+  fi;
+end:
+
+
+BinaryFind := proc(what:list, a:array)
+  description 'Searches what=[x, y] in array that is composed of a list of [x, y]
+  the array has to be sorted first in x then in y
+  Returns the position and a flag. 
+  The flag is 1 if [x, y] was found in a,
+  0 if y was not found and -1 if x and y were not found. 
+  The position if what was *not* found is the next element in the array';
+  x := what[1];
+  y := what[2];
+  n := length(a);
+  left := 1; right := n; which := 1;
+  res := BinaryRangeFind(x, which, a, left, right);
+  start := res[1];
+  flag := res[2];
+  
+  if flag > -1 then
+    left := start; right := start;
+    while x=a[start, 1] and start>1 do start := start-1; od;
+    if start > 1 then left := start+1; else left := start; fi;
+    start := right;
+    while x=a[start, 1] and start<n do start := start+1; od;
+    if start <= n and x<>a[start, 1] then right := start-1; else right := start; fi;
+    which := 2;
+    res := BinaryRangeFind(y, which, a, left, right);
+    start := res[1];
+    flag := res[2];
+    if flag > -1 then
+      return([start, 1]);
+    else
+      return([start, 0]);
+    fi;
+  else
+    return([start, -1]);
+  fi;
+end:
+
+
+
+
+DeleteGaps := proc(msa:{MAlignment, list(string)})
+  description 'Removes gaps that are present in all sequences 
+  at the same position. A is an array of aligned sequences';
+  if type(msa, MAlignment) then
+       A := copy(msa['AlignedSeqs']);
+  else A := copy(msa):
+  fi;
+  
+  if length(A[1]) <1 then return(msa); fi;
+  l := length(A[1]); 
+  nr_seq := length(A); 
+  ok := false; 
+  p := 1; 
+  while ok = false do
+    gaps := true;
+    for i to nr_seq while gaps do
+        if A[i, p]<>'_' then gaps := false; fi; 
+    od; 
+    if gaps=true then
+        for i to nr_seq do A[i] := A[i,1..p-1] . A[i,p+1..-1] od;
+        l := l - 1
+    else p := p+1; fi; 
+    if p>l then ok := true; fi; 
+  od; 
+  if type(msa, MAlignment) then
+      newmsa := copy(msa,1);
+      newmsa['AlignedSeqs'] := A; 
+      return(newmsa);
+  else
+      return(A);
+  fi;
+end:
+
+
+# *************************** 4. MAIN PROCEDURE: DoGapHeuristic *************************
+
+DoGapHeuristic_r := proc(msa:MAlignment, gh:{GapHeuristic, list(GapHeuristic)}); 
+  newmsa := copy(msa,1):
+  typenr := gh[1];
+  
+  origscore := newmsa['RecalcScore'];
+  oldscore := origscore;
+  
+  counter := gh['counter'];
+  maxblocks := gh['maxblocks'];
+  
+  flag := gh[14];
+  
+  if flag = 1 then 
+       increment := 0;
+  elif flag = 2 then
+       increment := 1;
+       if gh['counter'] > 3 then gh['counter'] := 3; fi;
+       counter := gh['counter']:
+  elif flag = 3 then
+       maxgh := copy(gh);
+  fi;
+  
+  # TYPENR = 1 MEANS DO ALL HEURISTICS  
+  finished := false;
+
+  while not finished and counter <> 0 do 
+    if typenr = 2 or typenr = 1 then # FUSION 
+      if printlevel > 4 then lprint('*** GAP FUSION ALGORITHM ***');fi;
+      
+      blocklist := GetGapBlocklist(newmsa, gh,false):
+      if length(blocklist) > 0  and (length(blocklist) < maxblocks or maxblocks < 0) then
+	  newmsa := ShiftGapBlocklist(newmsa, blocklist, gh['gd']):
+      fi:
+    fi:
+    if typenr = 3  or typenr = 1 then # ISLAND 
+      if printlevel > 4 then lprint('*** ISLAND SHIFTING ALGORITHM ***'); fi;
+      blocklist := GetIslandBlocklist(newmsa, gh['minil'],gh['maxil'], gh['id'], true):
+      if printlevel > 5 then lprint('Island Blocklist:', blocklist) fi;
+      if length(blocklist) > 0  and (length(blocklist) < maxblocks or maxblocks < 0) then
+	  newmsa := ShiftIslandBlocklist(newmsa, blocklist):
+      fi;
+    fi:
+    if typenr = 4 or typenr = 1 then  # STACKING 
+      if printlevel > 4 then lprint('*** GAPBLOCK STACKING ALGORITHM ***');fi; 
+      gh1 := copy(gh);
+      gh1['maxg'] := 1; gh1['maxa'] := 1; gh1['gd'] := gh['sd'];   
+      blocklist := GetGapBlocklist(newmsa, gh1, false):
+      if length(blocklist) > 0  and (length(blocklist) < maxblocks or maxblocks < 0) then
+	  newmsa := ShiftGapBlocklist(newmsa, blocklist, gh['sd']):
+      fi;
+    fi:
+    if typenr = 5 or typenr = 1 then  # GAPSHIFTING 
+      if printlevel > 4 then lprint('*** LEFT-RIGHT GAP BLOCK SHIFTING ALGORITHM***');  fi;  
+      gh1 := copy(gh);
+      gh1['maxg'] := 1; gh1['maxa'] := 1; 
+      blocklist := GetGapBlocklist(newmsa, gh1, false):
+      if length(blocklist) > 0 and (length(blocklist) < maxblocks or maxblocks < 0)  then
+	  newmsa := LRBlocklistShifting(newmsa, blocklist, gh['wi']):
+      fi;
+    fi:
+    if typenr = 6 or typenr = 1 then  # STACKSHIFTING 
+      if printlevel > 4 then lprint('*** LEFT-RIGHT STACK SHIFTING ALGORITHM***');  fi; 
+      gh1 := copy(gh);
+      gh1['maxg'] := 1; gh1['gd'] := gh['sd'];  
+      blocklist := GetGapBlocklist(newmsa, gh1, false):
+      if length(blocklist) > 0  and (length(blocklist) < maxblocks or maxblocks < 0) then
+	  newmsa := LRBlocklistShifting(newmsa, blocklist, gh['wi']):
+      fi;
+    fi:
+    if typenr = 8 or typenr = 1 then # RANDOM 
+      if printlevel > 4 then lprint('*** RANDOM GAPBLOCK SHIFTING ALGORITHM ***'); fi; 
+      gh1 := copy(gh);
+      gh1['maxg'] := 1; gh1['maxa'] := 1; gh1['gd'] := gh['sd'];  
+      blocklist := GetGapBlocklist(newmsa, gh1, false):
+      if length(blocklist) > 0  and (length(blocklist) < maxblocks or maxblocks < 0) then
+	  newmsa := RandomBlocklistShifting(newmsa, blocklist, gh['wi'], gh['ti']):
+      fi;
+    fi;
+  
+    newmsa := DeleteGaps(newmsa):
+    newmsa['Score'] := 0;
+    score := newmsa['RecalcScore'];   
+    if score > oldscore or flag = 2 or flag = 3 then     
+      oldscore := score;
+      if flag = 2 then
+          IncreaseGHValues(gh, increment);    
+	  if printlevel > 4 then print(gh) fi;
+      elif flag = 3 then
+          RandomizeGHValues(gh, maxgh);
+          if printlevel > 4 then  print(gh) fi;
+      fi;
+    else 
+      finished := true;
+    fi; 
+    counter := counter - 1; 
+   
+  od;
+
+  return(newmsa);
+end:
+
+
+DoGapHeuristic := proc(msa:MAlignment, gaph:GapHeuristic)
+description 'Heuristics for gap alignment. The following algorithms are implemented:
+  a) gap fusion and shifting
+  b) stacking of gap blocks
+  c) left-right shifting of gap blocks
+  d) random shifting of gap blocks
+
+Parameters:
+  msa: MAlignment data structure. An alignment must exist
+  gh:  GapHeuristic data structure. See the description there. 
+       It holds all parameteres needed for the gap heuristics, such as
+       the maxgaps (max. number of gaps to combine) etc.
+       with "gh := GapHeuristic()" default values are used.
+       
+  As a third parameter the algorithm can be specified (it can also be specified
+  in the GapHeuristic data structure). The following values are valid:
+  
+  ALL:      all heuristics are used
+  FUSION:   gap fusion and shifting is used
+  STACKING: gap block stacking 
+  SHIFTING: gap block left-right shifting is used
+  RANDOM:   random gap block shifting is used
+  
+  As a FOURTH parameter a flag can be specified (it can also be specified
+  in the GapHeuristic data structure). The following values are valid:
+  
+  NORMAL:      in each round the values thay the same
+  INCREMENTAL: in each round the values are increased by one
+  RANDOM:      in each round the values are changed randomly
+               the maximum values are the ones initially used
+';
+
+  ShowMsa := proc(msa:MAlignment);
+    if printlevel > 5 then
+      lprint();
+      lprint(' ** New maximum found in DoGapHeuristic **');
+      lprint();
+      print(msa);
+      lprint(); 
+    elif printlevel > 4 then 
+      lprint();
+      lprint('+ New highest score found');
+      lprint();
+    fi;
+  end:
+  
+  newmsa := copy(msa,1):
+  if type(gh, list) then
+    for i to length(gh) do
+      newmsa := DoGapHeuristic(newmsa, gh[i]);
+    od;
+  fi;
+  
+ 
+  gh := copy(gaph):
+  
+  
+  if printlevel > 4 then
+    lprint('*** GAP HEURISTICS ***');
+    print(gh);
+    lprint();
+  fi;
+
+  if nargs > 2 then 
+      gh['Type'] := args[3]; 
+      if nargs > 3 then gh['Flag'] := args[4] fi;
+  fi;
+
+  origgh := copy(gh):
+  typenr := gh[1];
+  if typenr = 1 then
+    for i from 2 to 8 do    
+      gh := copy(origgh):
+      gh[1] := i;
+      newmsa := DoGapHeuristic_r(newmsa, gh):
+    od:
+  else
+    newmsa := DoGapHeuristic_r(newmsa, gh);
+  fi;
+ 
+ 
+  if printlevel > 5 then
+    lprint();
+    lprint(' +++ Alignment BEFORE DoGapHeuristics +++');
+    lprint();
+    print(msa); 
+    lprint();
+    lprint(' +++ Alignment AFTER DoGapHeuristics +++');
+    lprint();
+    print(newmsa);    
+  fi;
+  return(newmsa);
+end:
+
+end:  # end module
+
+# *************************** 1.2. GAP HEURISTIC DATA STRUCTURE *************************
+
+GapHeuristic := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a gap heuristic data structure
+
+Selectors:
+  	Type:       can be ALL, FUSION, ISLAND, STACKING, GAPSHIFT, STACKSHIFT, ISLANDSHIFT, RANDOM
+	            default value: ALL (type 1)
+
+GAP PARAMETERS:
+	Mingaplen:    Minimum length of gaps to process.
+		      default value: 1
+	Maxgaplen:    Maximum length of gaps to process. Values < 0 mean
+		      unlimited.  default value: -1
+	Maxgaps:      maximum number of gaps that can be fused
+	              default value: 2 (should be from 1 - 5)
+        Gapdelta:     maximum allowed difference in gap sum. This should be
+		      small. If it is greater than zero, then the gap sum in
+		      a block can vary by this value.  default value: 1
+	Stackdelta:   maximum number of amino acids to left and right of a
+		      given block where other blocks should be seeked. 
+		      This is needed for the stacking of gap-blocks. 
+		      default value: 20
+	
+ISLAND PARAMETERS:
+        Minislandlen: maximum length of an island to group and shift around 
+	              (aa between two gaps)
+	              default value: 1
+	Maxislandlen: minimum length of an island to group and shift around 
+	              default value: 10
+	Islanddelta:  maximum variation of the island length in number of
+		      amino acids.  Should be zero.  default value: 0
+	
+		      
+LEFT RIGHT SHIFTING AND RANDOM SHIFTING PARAMETERS:
+	Window:       This value is needed for the shifting of gap blocks to
+		      the left and right, AND for the random shifting
+		      (meandistance for shifting).  Each block in an alignment
+		      is shifted by this to left and right, and all positions
+		      in between are checked for a better score
+		      default value: 5
+	Times:        How many times each gapblock is randomly shifted
+	              default value: 5 
+
+OTHER PARAMETERS:	    
+	Maxaa:        maximum sum of number of amino acids between gaps
+	              default value: 10
+	Extension:    maximum number of amino acids to the left/right of a
+		      gaprow where the program should look for other gaps
+		      default value: 10
+	Flag:         NORMAL: the values stay the same in each round
+	              INCREMENTAL: in each round the values are increased
+		      RANDOM: random values are used each round - the maximum
+			      values are the ones initially set
+		      default value: NORMAL (1)
+	Counter:      Maximum number of times the heuristics should be repeated.
+	              Values < 0 mean unlimited - i.e
+	              until the score no longer increases
+		      default value: 10
+	MaxBlocks:    Maximum number of blocks to process. 
+	               f the number of blocks is very lage ( > 100) then it can
+	              take very long to compute the alignment. 
+		      In this case the parameters should be decreased.
+		      Values < 0 mean unlimited.
+		      default value: 100
+	
+';
+  if nargs=0 then return (copy(noeval(
+	GapHeuristic(1, 1, -1, 2, 1, 20, 1, 10, 0, 10, 5, 20, 20, 1, 10, 100))))
+  elif nargs = 16 and type([args], list(integer)) then
+        return( noeval(GapHeuristic(args)) )
+  elif nargs = 1 and type(args[1], string) then
+    sel := uppercase(args[1]);
+    if sel = 'SMALL' then
+      gh := GapHeuristic():
+      gh['maxislandlen'] := 5; 
+      gh['islanddelta'] := 0; 
+      gh['gapdelta'] := 0;
+      gh['maxgaps'] := 1;  
+      gh['maxaa'] := 10; 
+      gh['extension'] := 20;
+      gh['maxgaplen'] := -1;
+      gh['stackdelta'] := 10;
+      gh['counter'] := 5;
+      gh['window'] := 10;
+   elif sel = 'MEDIUM' then
+      gh := GapHeuristic():
+      gh['maxislandlen'] := 7; 
+      gh['islanddelta'] := 1; 
+      gh['gapdelta'] := 2;
+      gh['maxgaps'] := 1;  
+      gh['maxaa'] := 20; 
+      gh['extension'] := 30;
+      gh['maxgaplen'] := -1;
+      gh['stackdelta'] := 20;
+      gh['counter'] := 5;
+      gh['window'] := 10;
+    elif sel = 'LARGE' then
+     gh := GapHeuristic():
+     gh['maxislandlen'] := 30; 
+     gh['islanddelta'] := 10; 
+     gh['gapdelta'] := 0;
+     gh['maxgaps'] := 3;  
+     gh['maxaa'] := 20; 
+     gh['extension'] := 20;
+     gh['maxgaplen'] := -1;
+     gh['stackdelta'] := 20;
+     gh['counter'] := 5;
+     gh['window'] := 10; 
+   elif sel = 'HUGE' then
+     gh := GapHeuristic():
+     gh['maxislandlen'] := 50; 
+     gh['islanddelta'] := 10; 
+     gh['gapdelta'] := 2;
+     gh['maxgaps'] := 3;  
+     gh['maxaa'] := 50; 
+     gh['extension'] := 50;
+     gh['maxgaplen'] := -1;
+     gh['stackdelta'] := 50;
+     gh['counter'] := 5;
+     gh['window'] := 30; 
+   elif sel = 'GIGA' then
+     gh := GapHeuristic():
+     gh['maxislandlen'] := 50; 
+     gh['islanddelta'] := 10; 
+     gh['gapdelta'] := 5;
+     gh['maxgaps'] := 4;  
+     gh['maxaa'] := 50; 
+     gh['extension'] := 50;
+     gh['maxgaplen'] := -1;
+     gh['stackdelta'] := 50;
+     gh['counter'] := 5;
+     gh['window'] := 30;
+   else
+     gh := GapHeuristic();
+   fi;
+   return(gh);
+  else
+    print(GapHeuristic);
+    error ('Invalid GapHeuristic format');
+  fi:
+end:
+
+GapHeuristic_type := noeval(structure(anything, GapHeuristic)):
+
+GapHeuristic_select := proc( u, select, val ) option internal;
+  sel := uppercase(select); 
+  if SearchString('TYPE', sel) > -1 or sel = 'TY' then 
+    types := ['ALL', 'FUSION', 'ISLAND',  'STACKING', 'GAPSHIFTING', 'STACKSHIFTING', 'ISLANDSHIFT', 'RANDOM']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(v, types[i])>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid GapHeuristic type ',v,'. Legal types are ',types);
+        lprint('The type is now set to ALL');
+        i :=1;
+      fi;
+      u[1] := i;
+    else types[u[1]]; fi;  
+  elif SearchString('MINGAPLEN', sel) > -1 or sel = 'MINGL' then
+    if nargs=3 then 
+      u[2] := val;
+    else u[2]; fi; 
+  elif SearchString('MAXGAPLEN', sel) > -1 or sel = 'MAXGL' then
+    if nargs=3 then 
+      u[3] := val;
+    else u[3]; fi;
+  elif sel = 'MAXGAPS' or sel = 'MAXG' then
+    if nargs=3 then 
+      if val <1 or val >10 then
+	error('MAXGAP cannot be ',val,' it must be between 1 and 10');
+      fi;
+      u[4] := val; 
+    else u[4] fi; 
+  elif SearchString('GAPDELTA', sel) > -1 or sel = 'GD' then
+    if nargs=3 then 
+      if val <0 or val >50 then
+	error('GAPDELTA cannot be ',val,' it must be between 0 and 50');
+      fi;
+      u[5] := val;
+    else u[5]; fi;
+  elif SearchString('STACKDELTA', sel) > -1 or sel = 'SD' then
+    if nargs=3 then 
+      if val <0 or val >100 then
+	error('MAXGAP cannot be ',val,' it must be between 0 and 100');
+      fi;
+      u[6] := val;
+    else u[6]; fi;
+  
+  elif SearchString('MINISLANDLEN', sel) > -1 or sel = 'MINIL' then
+    if nargs=3 then 
+      if val <1 or val >5000 then
+	error('MINISLANDLEN cannot be ',val,' it must be between 1 and 5000');
+      fi;
+      u[7] := val;
+    else u[7]; fi; 
+  elif SearchString('MAXISLANDLEN', sel) > -1 or sel = 'MAXIL' then
+    if nargs=3 then 
+      if val <1 or val >5000 then
+	error('MAXISLANDLEN cannot be ',val,' it must be between 1 and 5000');
+      fi;
+      u[8] := val;
+    else u[8]; fi;
+  elif SearchString('ISLANDDELTA', sel) > -1 or sel = 'ID' then
+    if nargs=3 then 
+      if val <0 or val >100 then
+	error('ISLANDDELTA cannot be ',val,' it must be between 0 and 20');
+      fi;
+      u[9] := val;
+    else u[9]; fi;
+  
+  elif SearchString('WIN', sel) > -1 or sel = 'WI' then
+    if nargs=3 then 
+      if val <0 or val >1000 then
+	error('WINDOW cannot be ',val,' it must be between 0 and 1000');
+      fi;
+      u[10] := val;
+    else u[10]; fi;
+  elif SearchString('TIMES', sel) > -1 or sel = 'TI' then
+    if nargs=3 then 
+      if val <1 or val >100 then
+	error('TIMES cannot be ',val,' it must be between 1 and 100');
+      fi;
+      u[11] := val;
+    else u[11]; fi;
+  
+  elif SearchString('MAXAA', sel) > -1 or sel = 'MAXA' then
+    if nargs=3 then 
+      if val < 0 or val > 50 then
+	error('MAXAA cannot be ',val,' it must be between 0 and 50');
+      fi;
+      u[12] := val;
+    else u[12] fi; 
+  elif SearchString('EXTENSION', sel) > -1 or sel = 'EX' then
+    if nargs=3 then
+      if val < 0 or val > 50 then
+	error('EXTENSION cannot be ',val,' it must be between 0 and 50');
+      fi; 
+      u[13] := val;
+    else u[13] fi;  
+  elif SearchString('FLAG', sel) > -1 or sel = 'FL' then 
+    types := ['NORMAL', 'INCREMENT', 'RANDOM']; 
+    n := length(types);
+    if nargs=3 then  
+      v := uppercase(val);
+      found := false;
+      i := 0;
+      while found = false and i < n do
+	i := i + 1;
+	if SearchString(types[i], v)>-1 then found := true; fi;
+      od;
+      if found = false then
+	lprint('Invalid GapHeuristic flag ',v,'. Legal types are ',types);
+        lprint('The type is now set to NORMAL');
+        i :=1;
+      fi;
+      u[14] := i;
+    else types[u[14]]; fi;  
+  elif SearchString('COUNTER', sel) > -1 or sel = 'CO' then
+    if nargs=3 then 
+      u[15] := val;
+    else u[15]; fi; 
+  elif SearchString('MAXBLOCKS', sel) > -1 or sel = 'MAXB' then
+    if nargs=3 then 
+      u[16] := val;
+    else u[16]; fi; 
+  else 
+    lprint('Invalid GapHeuristic selector ',sel);
+    print(GapHeuristic);
+  fi;
+end:
+
+GapHeuristic_print := proc() option internal;
+  gh :=  noeval(args);   
+  lprint('Parameters for gap heuristics data structure:');
+  lprint('---------------------------------------------');
+  lprint('Type:        ',gh['Type']);
+  lprint();
+  lprint('GAP PARAMETERS');
+  lprint('Mingaplen:   ',gh['mingl'],' \tMaxgaplen:   ',gh['maxgl']); 
+  lprint('Gapdelta:    ',gh['gd'],   ' \tStackdelta:  ',gh['sd']); 
+  lprint('Maxgaps:     ',gh['MAXg']);
+  lprint();
+  lprint('ISLAND PARAMETERS');
+  lprint('Minislandlen:',gh['minil'],' \tMaxislandlen:',gh['maxil']); 
+  lprint('Islanddelta: ',gh['id']);
+  lprint();
+  lprint('SHIFTING AND RANDOM PARAMETERS:');
+  lprint('Window:      ',gh['wi'] ,  ' \tTimes:       ',gh['times']);
+  lprint();
+  lprint('OTHER PARAMETERS:');
+  lprint('Maxaa:       ',gh['MAXAA'],' \tExtension:   ',gh['ex']);
+  lprint('Counter:     ',gh['co'],   ' \tMaxblocks:   ',gh['MAXb']); 
+  lprint('Flag:        ',gh['Flag']);
+  lprint();
+end:
+
+# *************************** 1.4. ISLAND DATA STRUCTURE  *************************
+
+Island := proc( Pos:posint, Len:posint, Seq:posint, left:posint,
+	right:posint )
+option NoIndexing;
+if nargs <> 5 then error('invalid number of arguments')
+else noeval(procname(args)) fi end:
+CompleteClass( Island );

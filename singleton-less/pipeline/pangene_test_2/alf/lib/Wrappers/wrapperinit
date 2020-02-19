@@ -1,0 +1,94 @@
+GetTmpDir := noeval(ReadLibrary('Wrappers/Common',GetTmpDir)):
+GetWrapperDir := noeval(ReadLibrary('Wrappers/Common',GetWrapperDir)):
+GetWrapperChoice := noeval(ReadLibrary('Wrappers/Common',GetWrapperChoice)):
+DeleteFiles := noeval(ReadLibrary('Wrappers/Common', DeleteFiles)):
+
+ClustalMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', ClustalMSA)):
+Clustalw18MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Clustal18MSA)):
+PoaMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', PoaMSA)):
+ProgressiveGraphMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', ProgressiveGraphMSA)):
+ProgressiveGraphMSA_CS := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', ProgressiveGraphMSA_CS)):
+ProgressiveGraphMSA_TR := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', ProgressiveGraphMSA_TR)):
+PrankMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', PrankMSA)):
+Prank081202MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank081202MSA)):
+Prank091016CMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank091016CMSA)):
+Prank091016PMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank091016PMSA)):
+Prank091016MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank091016MSA)):
+Prank100802MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank100802MSA)):
+Prank111130MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank111130MSA)):
+Prank140603MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', Prank140603MSA)):
+MafftMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', MafftMSA)):
+Mafft7MSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers',Mafft7MSA));
+DialigntMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', DialigntMSA)):
+DialigntxMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', DialigntxMSA)):
+KalignMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', KalignMSA)):
+DcaMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', DcaMSA)):
+MuscleMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', MuscleMSA)):
+ClustaloMSA := noeval(ReadLibrary('Wrappers/MSAScoringMatrixWrappers', ClustaloMSA)):
+
+RAxML := noeval(ReadLibrary('Wrappers/MLTreeWrappers',RAxML)):
+RAxML8 := noeval(ReadLibrary('Wrappers/MLTreeWrappers',RAxML8));
+PhyML := noeval(ReadLibrary('Wrappers/MLTreeWrappers',PhyML)):
+PhyML_2_0 := noeval(ReadLibrary('Wrappers/MLTreeWrappers',PhyML_2_0)):
+#CodonPhyML := noeval(ReadLibrary('Wrappers/MLTreeWrappers', CodonPhyML));
+MLTreeResult := noeval(ReadLibrary('Wrappers/MLTreeWrappers',MLTreeResult)):
+WritePHYLIP := noeval(ReadLibrary('Wrappers/MLTreeWrappers',WritePhylip)):
+FastTree := noeval(ReadLibrary('Wrappers/MLTreeWrappers',FastTree));
+
+FastME := noeval(ReadLibrary('Wrappers/DistTreeWrappers',FastME)):
+NJ := noeval(ReadLibrary('Wrappers/DistTreeWrappers',NJ)):
+BioNJ := noeval(ReadLibrary('Wrappers/DistTreeWrappers',BioNJ)):
+BioNJAdam := noeval(ReadLibrary('Wrappers/DistTreeWrappers',BioNJAdam)):
+Weighbor := noeval(ReadLibrary('Wrappers/DistTreeWrappers',Weighbor)):
+Protdist := noeval(ReadLibrary('Wrappers/DistTreeWrappers', Protdist)):
+TKFdist := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKFdist)):
+TKF91Joint := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF91Joint)):
+TKF91Single := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF91Single)):
+TKF92Joint := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF92Joint)):
+TKF92Single := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF92Single)):
+TKF91 := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF91)):
+TKF92 := noeval(ReadLibrary('Wrappers/DistTreeWrappers', TKF92)):
+
+KatohPaup := noeval(ReadLibrary('Wrappers/ParsTreeWrappers', KatohPaup)):
+
+ReadFastaWithCheck := noeval(ReadLibrary('Wrappers/InputOutput',ReadFastaWithCheck)):
+ReadStockholmAlignment := noeval(ReadLibrary('Wrappers/InputOutput',ReadStockholmAlignment)):
+WriteStockholmAlignment := noeval(ReadLibrary('Wrappers/InputOutput',WriteStockholmAlignment)):
+Trim := noeval(ReadLibrary('Wrappers/InputOutput',Trim)):
+ReadGCGWithCheck := noeval(ReadLibrary('Wrappers/InputOutput',ReadGCGWithCheck)):
+ReadGCG := noeval(ReadLibrary('Wrappers/InputOutput',ReadGCG)):
+
+FsaMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',FsaMSA)):
+StatAlignMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',StatAlignMSA)):
+BAliPhyMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',BAliPhyMSA)):
+DiAlignMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',DiAlignMSA)):
+HandleMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',HandleMSA)):
+HandAlignMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',HandAlignMSA));
+SateMSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',SateMSA)):
+Sate227MSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',Sate227MSA)):
+BAliPhy235MSA := noeval(ReadLibrary('Wrappers/MSAProbabilistic',BAliPhy235MSA)):
+
+TcoffeeMSA := noeval(ReadLibrary('Wrappers/MSAConsistencyWrappers',TcoffeeMSA)):
+ProbconsMSA := noeval(ReadLibrary('Wrappers/MSAConsistencyWrappers',ProbconsMSA)):
+ProbalignMSA := noeval(ReadLibrary('Wrappers/MSAConsistencyWrappers',ProbalignMSA)):
+MummalsMSA := noeval(ReadLibrary('Wrappers/MSAConsistencyWrappers',MummalsMSA)):
+MSAProbsMSA := noeval(ReadLibrary('Wrappers/MSAConsistencyWrappers',MSAProbsMSA)):
+
+Gblocks := noeval(ReadLibrary('Wrappers/MSAFilter',Gblocks)):
+Gblocks_relaxed := noeval(ReadLibrary('Wrappers/MSAFilter',Gblocks_relaxed)):
+Aliscore := noeval(ReadLibrary('Wrappers/MSAFilter',Aliscore)):
+Noisy := noeval(ReadLibrary('Wrappers/MSAFilter',Noisy)):
+trimAl_generic :=noeval(ReadLibrary('Wrappers/MSAFilter',trimAl_generic)):
+trimAl_gappyout := noeval(ReadLibrary('Wrappers/MSAFilter', trimAl_gappyout));
+trimAl_strict :=noeval(ReadLibrary('Wrappers/MSAFilter',trimAl_strict)):
+probmask := noeval(ReadLibrary('Wrappers/MSAFilter',probmask)):
+guidance := noeval(ReadLibrary('Wrappers/MSAFilter',guidance)):
+guidanceFull := noeval(ReadLibrary('Wrappers/MSAFilter',guidanceFull)):
+NoFilter := noeval(ReadLibrary('Wrappers/MSAFilter',NoFilter)):
+DummyFilter := noeval(ReadLibrary('Wrappers/MSAFilter',DummyFilter)):
+RandFilter := noeval(ReadLibrary('Wrappers/MSAFilter',RandFilter)):
+MostGaps := noeval(ReadLibrary('Wrappers/MSAFilter',MostGaps)):
+PSAR := noeval(ReadLibrary('Wrappers/MSAFilter',PSAR)):
+BMGE := noeval(ReadLibrary('Wrappers/MSAFilter',BMGE)):
+
+

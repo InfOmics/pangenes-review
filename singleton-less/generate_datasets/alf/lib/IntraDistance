@@ -1,0 +1,123 @@
+#
+#	IntraDistance: compute the average distance between a set of trees
+#
+#	Usage: IntraDistance( Trees ; DistanceFunction )
+#
+#	returns: a table of the 3 first moments of the distances indexed
+#		by the size of the overalpping trees.
+#
+#	If no DistanceFunction is given, IntraDistances uses the Robinson-
+#	Foulds distance.  In this case, branches which are of length <= MinLen
+#	are considered to be of length 0 and not counted as part of any
+#	topological difference.
+#
+#	Copied from OMAGroups/lib/Analysis3, coded originally on Oct 16th, 2010
+#
+#	Gaston H. Gonnet (Dec 21st, 2010)
+#
+IntraDistance := proc( Trees:list(Tree) ; DistanceFunction:procedure )
+
+
+ts := table();
+
+#################################################################
+# place all trees in a table by leaf-set, group identical trees #
+#################################################################
+for t in Trees do
+    specs := []:
+    for w in Leaves(t) do specs := append(specs,w[1]) od:
+    specs := {op(specs)};
+    if ts[specs] = unassigned then ts[specs] := table(0) fi;
+    tsk := ts[specs];
+    found := false;
+    for s in Indices(tsk) do
+	# this use of the distance is to detect identity
+	if BipartiteSquared(s,t,2,'RF') = 0 then
+	    tsk[s] := tsk[s] + 1;  found := true;  break
+	fi
+    od;
+    if not found then tsk[t] := 1 fi;
+od:
+
+LeafSets := []:
+sumd := table([],[0,0,0]);
+for s in Indices(ts) do LeafSets := append(LeafSets,s) od:
+m := length(LeafSets):
+if printlevel >= 3 then printf( 'IntraDistance: %d trees, %d leaf-sets\n',
+	length(Trees), m ) fi;
+
+
+
+#############################################
+# Trim a Tree to have only the given leaves #
+#############################################
+SelectLeaves := proc( t:Tree, lvs:set )
+if type(t,Leaf) then
+     if member(t[1],lvs) then t else 0 fi
+else t1 := procname( t[1], lvs );
+     t3 := procname( t[3], lvs );
+     if t1=0 then t3
+     elif t3=0 then t1
+     elif t[1]=t1 and t[3]=t3 then t
+     else Tree(t1,t[2],t3) fi
+fi end:
+
+
+###################################################################
+# doing the all-all is too expensive we do the single leaf-groups #
+# completely and then sample across groups.                       #
+###################################################################
+for ls in LeafSets do
+    n := length(ls);
+    assert( n > 3 );
+    tsk := ts[ls];
+    tss := [];
+    for t in Indices(tsk) do tss := append(tss,t) od;
+    for j1 to length(tss) do
+	    sumd[n] := sumd[n] + [tsk[tss[j1]] * (tsk[tss[j1]]-1) / 2, 0,0];
+	    for j2 from j1+1 to length(tss) do
+	        bs := If( nargs=1, BipartiteSquared(tss[j1],tss[j2],2,'RF'),
+		    DistanceFunction(tss[j1],tss[j2]) );
+	        no := tsk[tss[j1]] * tsk[tss[j2]];
+	        sumd[n] := sumd[n] + [no, bs*no, bs^2*no];
+    od od;
+od:
+
+#######################################
+# compare trees of different LeafSets #
+#######################################
+ptogo := 0;
+st := st1 := time():
+for ls1 to m do for ls2 from ls1+1 to m do
+    rls := LeafSets[ls1] intersect LeafSets[ls2];
+    n := length(rls);
+    if n <= 3 then next fi;
+    tsk1 := ts[LeafSets[ls1]];
+    tsk2 := ts[LeafSets[ls2]];
+    for t1 in Indices(tsk1) do
+	    for t2 in Indices(tsk2) do
+		bs := If( nargs=1, BipartiteSquared( SelectLeaves(t1,rls),
+		    SelectLeaves(t2,rls), 2, 'RF' ),
+		    DistanceFunction( SelectLeaves(t1,rls),
+		    SelectLeaves(t2,rls)) );
+		no := tsk1[t1] * tsk2[t2];
+	        sumd[n] := sumd[n] + [no, bs*no, bs^2*no];
+	    od;
+    od;
+    if printlevel >= 3 and time()-st > 600 then
+	st := time();
+	idone := (ls1-1)*m - ls1*(ls1-1)/2 + ls2-ls1;
+	togo := (time()-st1) * (m*(m-1)/2 - idone) / idone / 3600;
+	printf( '# %.3f hrs done, %.3f hrs to go', time()/3600, togo );
+	if ptogo <> 0 then printf( ', delta: %.3f hrs', ptogo - togo ) fi;
+	ptogo := togo;
+	lprint();
+	printf( 'LeafSets[%d]: ', ls1 );
+	if length(LeafSets[ls1]) < 11 then printf( '%a', LeafSets[ls1] )
+	else printf( '%a...', {op(1..9,LeafSets[ls1])} ) fi;
+	lprint();
+    fi;
+od od:
+
+sumd
+end:

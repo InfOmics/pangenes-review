@@ -1,0 +1,40 @@
+#
+#   Calculate the score between two sequences, as is, no alignment done
+#   Sequences may contain '_' indicating an indel.
+#					Gaston H. Gonnet (Dec 2001)
+CalculateScore := proc( seq1:string, seq2:string, DM:DayMatrix )
+l1 := length(seq1);
+if l1 <> length(seq2) then
+    error('sequences must be of the same length') fi;
+
+if l1 < 100000 then
+    s := traperror( EstimatePam(seq1,seq2,[DM])[1] );
+    if s<>lasterror then return( s ) fi;
+fi;
+
+Del := proc( k:posint, DM )
+if DM[DelCost] = NULL then DM[FixedDel] + (k-1)*DM[IncDel]
+else DM[DelCost]( k, DM[PamDistance] ) fi
+end:
+
+s := del1 := del2 := 0;
+for i to l1 do
+    if seq1[i] = '_' then
+	 # a deletion in both sequences (like in an MSA, forced by some other
+	 # insertion) has to be completely eliminated
+	 if seq2[i] = '_' then next fi;
+	 if del2 > 0 then s := s + Del(del2,DM);  del2 := 0 fi;
+	 del1 := del1 + 1;
+    elif seq2[i] = '_' then
+	 if del1 > 0 then s := s + Del(del1,DM);  del1 := 0 fi;
+	 del2 := del2 + 1;
+    else s := s + DM[Sim,seq1[i],seq2[i]];
+	 if del2 > 0 then s := s + Del(del2,DM);  del2 := 0 fi;
+	 if del1 > 0 then s := s + Del(del1,DM);  del1 := 0 fi;
+    fi
+od;
+if del1 > 0 then s := s + Del(del1,DM);  del1 := 0 fi;
+if del2 > 0 then s := s + Del(del2,DM);  del2 := 0 fi;
+
+s
+end:

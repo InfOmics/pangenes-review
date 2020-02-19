@@ -1,0 +1,67 @@
+#
+#	Compute the (possibly complex) eigenvalue/eigenvector
+#	decomposition of a square matrix by calling maple
+#
+#	This computes a matrix U and U' such that
+#
+#	U * U' = I
+#	L = U' * A * U		(where L is the diagonal matrix of eigenvalues)
+#	A = U * L * U'
+#	U = [v1,v2,v3,...vn]	(the columns of U are the eigenvectors,
+#				 with |vi|=1 )
+#
+#	For some matrices, U cannot be found (U is singular).
+#	For some other matrices, U^t = U' (in particular symmetric matrices)
+#	For some other matrices U and L are real (in particular for symmetric)
+#
+#				Gaston H. Gonnet (Oct 25, 2006)
+#
+ComplexEigenvalues := proc( A:matrix, U:symbol, U1:symbol )
+	->list({numeric,Complex});
+global I, NumberFormat;
+
+n := length(A);
+if length(A[1]) <> n then error('matrix must be square') fi;
+tmpname := tmp.Rand(1e8..1e9);
+oNF := NumberFormat;  NumberFormat := '%.18g';
+
+OpenWriting( tmpname );
+lprint( 'interface(quiet): Digits := 25:' );
+printf( 'A:=%A: n:=%d:\n', A, n );
+lprint( 'r := sort([linalg[eigenvectors](evalf(A))],(a,b)->evalb(Re(a[1])<=Re(b[1]))):' );
+lprint( 'U := array(1..n,1..n):  j := 0:  lambda := array(1..n):' );
+lprint( 'for z in r do' );
+lprint( '    nz := nops(z[3]);' );
+lprint( '    if z[2] <> nz then quit fi;' );
+lprint( '    for i to z[2] do' );
+lprint( '	j := j+1;' );
+lprint( '	lambda[j] := z[1];' );
+lprint( '	w := z[3][i];' );
+lprint( '	f := 1 / sqrt( add( Re(w[k])^2 + Im(w[k])^2, k=1..n ));' );
+lprint( '	for k to n do U[k,j] := f*w[k] od;' );
+lprint( '    od;' );
+lprint( 'od:' );
+lprint( 'printf( `ComplexEigenvalues_U1:=%A:\\n`, convert(linalg[inverse](U),listlist) ):' );
+lprint( 'printf( `ComplexEigenvalues_U:=%A:\\n`, convert(U,listlist) ):' );
+lprint( 'printf( `ComplexEigenvalues_lambda:=%A:\\n`, convert(lambda,list) ):' );
+OpenWriting( previous );
+NumberFormat := If( oNF='NumberFormat', noeval(NumberFormat), oNF );
+
+SystemCommand( maplepath, tmpname, tmpname.'.drw' );
+oI := I;
+I := Complex(0,1);
+ReadProgram( tmpname.'.drw' );
+I := If( oI='I', noeval(I), oI );
+CallSystem( 'rm -f ' . tmpname . '.drw ' . tmpname );
+
+if nargs > 1 then U := ComplexEigenvalues_U fi;
+if nargs > 2 then U1 := ComplexEigenvalues_U1 fi;
+ComplexEigenvalues_lambda
+
+end:
+
+
+#A :=  [[-15, -6, -8, 4, -8], [-10, 9, 2, -2, 23], [-1, -13, 1, -13, 17],
+#   [-1, -2, 13, 0, 3], [-3, -3, 4, 8, 12]] :
+#lambda := ComplexEigenvalues(A,noeval(U), noeval(U1));
+

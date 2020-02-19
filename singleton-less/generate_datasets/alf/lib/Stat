@@ -1,0 +1,731 @@
+#################################################################
+#################################################################
+#								#
+#  Univariate statistics: Stat					#
+#								#
+#  Data structure, selectors and functions			#
+#								#
+#			Gaston H. Gonnet (Nov 1992)		#
+#								#
+#  Based on:							#
+#								#
+#	Basic statistics package				#	
+#			Gaston H. Gonnet (1983)			#
+#								#
+#################################################################
+#################################################################
+
+#
+# Definition of a new data structure to gather statistical
+# information:
+#
+#  Stat() or Stat('description of variable')
+#
+Stat := proc()
+
+if   nargs=9 then noeval(Stat(args))
+elif nargs=0 then noeval(Stat(0,0.99*DBL_MAX,-0.99*DBL_MAX,0,0,0,0,0,''))
+elif nargs=1 and type(args[1],string) then
+     noeval(Stat(0,0.99*DBL_MAX,-0.99*DBL_MAX,0,0,0,0,0,args[1]))
+else error('invalid format for univariate statistics') fi
+end:
+
+Stat_type := noeval(structure(anything,Stat)):
+
+#################################################################
+#								#
+# Stat_selector: functions allow the extraction of useful	#
+#    statistical data from the information collected		#
+#    in a Stat data structure.					#
+#								#
+#	See the file background/Stat for the			#
+#		mathematical derivations			#
+#								#
+#################################################################
+
+Stat_select := proc( w:Stat, sel, val:numeric )
+
+if sel='Number' then
+     # returns the number of datapoints used
+     if nargs=2 then w[1] else w[1] := val fi
+elif sel='Mean' or sel='Average' then
+     # return the mean of information collected
+     if nargs=2 then
+	if w[1] > 0 then w[4]/w[1] + w[8] else 999999 fi
+     else error('invalid assignment') fi
+elif sel='Variance' then
+     # return the variance of the information collected
+     if nargs=2 then
+	if w[1] >= 2 then max( 0, (w[5]-w[4]^2/w[1]) / (w[1]-1) )
+	else 999999 fi
+     else error('invalid assignment') fi
+elif sel='VarVariance' then
+     # return the variance of the variance from w
+     if nargs=2 then
+	if w[1]>=4 and w[1]^3 < DBL_MAX/10/(w[7]+1) then
+             max( 0, ((( (6-4*w[1])*(w[4]^4/w[1]) + (8*w[1]-12)*w[5]*w[4]^2 +
+                (3-w[1]^2)*w[5]^2 ) / (w[1]-1)^2 - 4*w[6]*w[4] )
+                / w[1] + w[7] ) / (w[1]-2) / (w[1]-3) )
+	else 999999 fi
+     else error('invalid assignment') fi
+elif sel='Skewness' then
+     # return the skewness of the distribution recorded in w
+     if nargs=2 then
+	x3 := w[Variance];
+	if w[1] >= 3 and x3 > 0 then
+             (w[1]*w[6]-3*w[4]*w[5]+2*w[4]^2*w[4]/w[1]) /
+		((w[1]-1)*(w[1]-2)) / (x3*sqrt(x3))
+	else 999999 fi
+     else error('invalid assignment') fi
+elif sel='Excess' then
+     # return the excess of the distribution recorded in w
+     if nargs=2 then
+	t1 := w[1]^2;
+	t2 := w[7]*t1;
+	t3 := w[6]*w[4];
+	t4 := w[4]^2;
+	t5 := w[5]*t4;
+	t6 := w[5]^2;
+	t7 := t4^2;
+	t8 := t7-t2-4*t3+(t1+3)*t6+(4*t3+w[7]-3*t6-2*t5)*w[1];
+	if w[1] >= 4 and t8 > 0 then
+	     (9*t6-3*t7+(w[1]-2)*t2+(-4*t1-12)*t3+
+		(3*w[7]+6*t5-6*t6+8*t3)*w[1]) / t8 - 3;
+        else 999999 fi
+     else error('invalid assignment') fi
+elif sel='Minimum' or sel='Min' then
+     # return the minimum value recorded in w
+     if nargs=2 then w[2] else w[2] := val fi
+elif sel='Maximum' or sel='Max' then
+     # return the maximum value recorded in w
+     if nargs=2 then w[3] else w[3] := val fi
+elif sel='Description' then
+     if nargs=2 then w[9] else w[9] := val fi
+elif sel='MeanVar' then
+     # return the mean with its 95% confidence interval as a string
+     if nargs <> 2 then error('invalid assignment') fi;
+     x1 := If( w[1]>0, w[4]/w[1] + w[8], 999999);
+     if w[1] >= 2 then
+	  x3 := max( 0, (w[5]-w[4]^2/w[1]) / (w[1]-1) )
+     else x3 := 999999 fi;
+     if w[1] >= 2 then
+	  x2 := 1.9599639845401 * sqrt( x3/w[1] )
+     else x2 := 999999 fi;
+     if x2 <= (abs(x1)/10000000.0) then x2 := 1 - exp( ln(0.05)/w[1] ) fi;
+     Stat_printpm(x1,x2);
+elif sel='StdErr' then
+     # return the 95% confidence interval of the mean
+     if nargs <> 2 then error('invalid assignment') fi;
+     x1 := If( w[1]>0, w[4]/w[1] + w[8], 999999);
+     if w[1] >= 2 then
+          x3 := max( 0, (w[5]-w[4]^2/w[1]) / (w[1]-1) )
+     else x3 := 999999 fi;
+     if w[1] >= 2 then
+          1.9599639845401 * sqrt( x3/w[1] )
+     else 999999 fi;
+elif sel='CV' then
+     # return the coefficient of variance
+     if nargs <> 2 then error('invalid assignment') fi;
+     if w[4]<>0 then 
+	sqrt(w['Variance'])/w['Mean']
+     else 999999 fi;
+elif sel='VarVar' then
+     x4 := w['VarVariance'];
+     if x4 <> 999999 then x4 := 1.9599639845401 * sqrt(x4) fi;
+     Stat_printpm(w['Variance'],x4)
+elif sel='ShortForm' then
+     sprintf( '%s: %s', w['Description'], w['MeanVar'] );
+else error('invalid selector for Stat')
+     fi
+end:
+
+
+Stat_printpm := proc( a:numeric, b:numeric )
+option internal;
+if b>9.5           then sprintf('%.0f +- %.0f',a,b)
+elif b>0.95        then sprintf('%.1f +- %.1f',a,b)
+elif b>0.095       then sprintf('%.2f +- %.2f',a,b)
+elif b>0.0095      then sprintf('%.3f +- %.3f',a,b)
+elif b>0.00095     then sprintf('%.4f +- %.4f',a,b)
+elif b>0.000095    then sprintf('%.5f +- %.5f',a,b)
+elif b>0.0000095   then sprintf('%.6f +- %.6f',a,b)
+elif b>0.00000095  then sprintf('%.7f +- %.7f',a,b)
+elif b>0.000000095 then sprintf('%.8f +- %.8f',a,b)
+else                    sprintf('%.9f +- %.9f',a,b) fi
+end:
+
+Stat_string := proc( w ) option internal;
+
+#################################################################
+#    compute and print basic statistic measures of sample	#
+#								#
+#								#
+#          w1 - n						#
+#          w2 - minimum value					#
+#          w3 - maximum value					#
+#          w4 - sum of data values (shifted by w8)		#
+#          w5 - sum of squares (shifted by w8)			#
+#          w6 - sum of cubes (shifted by w8)			#
+#          w7 - sum of fourth powers (shifted by w8)		#
+#	   w8 - first value of the sample			#
+#	   w9 - title of the collected variable			#
+#								#
+#								#
+#################################################################
+
+
+w1 := w[Number];
+if w1<=0 then
+    return( sprintf( 'No data collected for %a\n', w[Description] )) fi;
+
+If( length(w[Description])=0, '\n', sprintf('\n %a:',w[Description]) ) .
+sprintf(' number of sample points=%g\n',w1) .
+sprintf(' mean = %s\n', w[MeanVar] ) .
+sprintf(' variance = %s\n', w[VarVar] ) .
+sprintf(' skewness=%g,   excess=%g\n', w[Skewness], w[Excess]) .
+sprintf(' minimum=%g,     maximum=%g\n', w[Min], w[Max]);
+end:
+Stat_print := proc( w ) option internal; printf( '%s', string(w) ) end:
+
+# ignore format, just print as a string
+Stat_printf := proc( fmt, w ) option internal; string(w) end:
+
+
+UpdateStat := proc( w:Stat, val:numeric )
+	if w[1]=0 then
+		w[2] := val;
+		w[3] := val;
+		w[8] := val	fi;
+	w[1] := w[1]+1;
+	if val<w[2] then w[2] := val fi;
+	if val>w[3] then w[3] := val fi;
+	w[4] := w[4] + val-w[8];
+	w[5] := w[5] + (val-w[8])^2;
+	w[6] := w[6] + (val-w[8])^3;
+	w[7] := w[7] + (val-w[8])^4;
+NULL
+end:
+
+Stat_plus := proc(a,b)
+if type(a,Stat) and type(b,numeric) then UpdateStat(a,b); a
+elif type(b,Stat) and type(a,numeric) then UpdateStat(b,a); b
+else error('invalid arguments for Stat updating') fi
+end:
+
+
+Stat_times := proc(a,b);
+if type(a,Stat) and type(b,numeric) then return(procname(b,a)) fi;
+if a < 0 then
+     Stat( b[1], a*b[3], a*b[2], a*b[4], a^2*b[5], a^3*b[6], a^4*b[7],
+	a*b[8], b[9] )
+else Stat( b[1], a*b[2], a*b[3], a*b[4], a^2*b[5], a^3*b[6], a^4*b[7],
+	a*b[8], b[9] )
+fi
+end:
+
+
+Stat_union := proc (x:Stat, y:Stat)
+option internal;
+
+  if x[1] = 0 then y
+  elif y[1] = 0 then x
+  else
+    z8 := (x[1] * x[8] + y[1] * y[8]) / (x[1] + y[1]);
+    dx := x[8] - z8; dy := y[8] - z8;
+    x4 := x[4] + dx * x[1];
+    y4 := y[4] + dy * y[1];
+    x5 := x[5] + dx * (x[4] + x4);
+    y5 := y[5] + dy * (y[4] + y4);
+    x6 := x[6] + dx * (3 * (x[5] + x5) - x[1] * dx^2) / 2;
+    y6 := y[6] + dy * (3 * (y[5] + y5) - y[1] * dy^2) / 2;
+    x7 := x[7] + dx * (2 * (x[6] + x6) - dx^2 * (x[4] + x4));
+    y7 := y[7] + dy * (2 * (y[6] + y6) - dy^2 * (y[4] + y4));
+    Stat(x[1]+y[1],
+	  min(x[2],y[2]),
+	  max(x[3],y[3]),
+	  x4 + y4,
+	  x5 + y5,
+	  x6 + y6,
+          x7 + y7,
+	  z8,
+	  If(length(x[9])=0,y[9],If(length(y[9])=0 or x[9]=y[9],x[9],
+		x[9].' and '.y[9])))
+  fi
+end:
+#
+#
+#  Compute a multivariate linear regresion
+#	LinearRegression( Y, X1, X2, ... ) -->  [a0,a1,a2,...]
+#
+#       where Y[i] ~ a0 + a1*X1[i] + a2*X2[i] + ...
+#	  approximated by least squares
+#	(leaves in SumSq the sum of the squares of the errors)
+#
+#	Change to compute subtracting the average of each variable
+#	to improve the numerical accuracy in some limit cases.
+#	(GhG, January 28, 2010)
+#
+#	If it receives a table, assume that the table is of
+#	values which will be analyzed wrt the argument.
+#
+#				Gaston H. Gonnet
+#
+LinearRegression := proc( y:{array(numeric),table}, x1:array(numeric) )
+  global SumSq;
+
+if type(y,table) then
+     if nargs <> 1 then
+	error('when used over a table, a single argument must be used') fi;
+     rx := [];
+     ry := [];
+     for w in Indices(y) do
+	v := y[w];
+	if not type(v,numeric) then
+	     error(w,v,'is not a numeric value in table') fi;
+	rx := append(rx,w);
+	ry := append(ry,v);
+     od;
+     if type(rx,list(numeric)) then return(procname(ry,rx))
+     elif type(rx,matrix(numeric)) then return(procname(ry,op(transpose(rx))))
+     else error('inconsistent arguments of table',rx) fi;
+fi;
+
+n := length(y);
+if length(x1) <> n then error('non-matching dimensions') fi;
+for i from 3 to nargs do
+    if not type(args[i],array(numeric,n)) then
+	error('invalid arguments') fi
+od;
+m := nargs-1;
+avey := sum(y)/n;
+avex := [ seq( sum(args[i])/n, i=2..nargs )];
+
+LHS := CreateArray(1..m,1..m);
+RHS := CreateArray(1..m);
+for i to m do
+    xi := args[i+1];
+    RHS[i] := sum( (y[k]-avey)*(xi[k]-avex[i]), k=1..n );
+    for j from i to m do
+	xj := args[j+1];
+	LHS[i,j] := LHS[j,i] := sum( (xi[k]-avex[i])*(xj[k]-avex[j]), k=1..n )
+    od
+od;
+
+a := GaussElim(LHS,RHS);
+a0 := avey - avex*a;
+SumSq := sum( (y[k]-avey)^2, k=1..n );
+for i to m do
+    SumSq := SumSq + a[i]*a[i]*LHS[i,i] - 2*a[i]*RHS[i];
+    for j from i+1 to m do SumSq := SumSq + 2*a[i]*a[j]*LHS[i,j] od
+od;
+
+[a0,op(a)]
+end:
+#
+#  ExpFit( y:array(numeric), x:array(numeric) ):
+#
+#  Compute a least squares fit of the type:
+#	y[i] ~ a + b * exp(c*x[i])
+#
+#  Output: the vector: [a,b,c,sumsq]
+#   where a,b and c are the parameters of the approximation
+#   and sumsq is the sum of the squares of the errors of
+#   the approximation.
+#
+#                               Gaston H. Gonnet (Oct 1991)
+#
+#  Maple code:
+#	app := y[i]-(a+b*exp(c*x[i]));
+#	S2 := expand( map( sum, expand(app^2), i=1..n ));
+#	sol := solve( {diff(S2,a),diff(S2,b)}, {a,b} );
+#	S2 := normal( subs(sol,S2) );
+#	spat := Sumy=sum(y[i],i=1..n), Sumy2=sum(y[i]^2,i=1..n),
+#	  Sumx2ey=sum(x[i]^2*exp(c*x[i])*y[i],i=1..n),
+#	  Sume=sum(exp(c*x[i]),i=1..n),  Sumxe=sum(x[i]*exp(c*x[i]),i=1..n),
+#	  Sume2=sum(exp(c*x[i])^2,i=1..n), Sumey=sum(exp(c*x[i])*y[i],i=1..n),
+#	  Sumxey=sum(x[i]*exp(c*x[i])*y[i],i=1..n),
+#	  Sumxe2=sum(x[i]*exp(c*x[i])^2,i=1..n),
+#	  Sumx2e2=sum(x[i]^2*exp(c*x[i])^2,i=1..n),
+#	  Sumx2e=sum(x[i]^2*exp(c*x[i]),i=1..n);
+#	spatr := op(map( x->(op(2,x)=op(1,x)), [spat]));
+#	S2c := subs( spatr, S2 );
+#	codegen[optimize]( [res=subs(Sumx=0,Sumy=0,S2c)], tryhard );
+#	S2p := subs( map( x->(op(2,x)=op(1,x)), [spat]), expand(diff(S2,c)) );
+#	S2p := factor( numer(normal(S2p)));
+#	S2p := op(3,S2p);
+#	S2pp := subs( spatr, expand(diff( subs(spat,S2p), c )));
+#	codegen[optimize]( subs( Sumx=0,Sumy=0, [fval=S2p,incc=-S2p/S2pp]),
+#		tryhard );
+#
+ExpFit := proc( y0:array(numeric), x0:array(numeric) )
+
+if length(y0) <> length(x0) then error('mismatched dimensions of y and x') fi;
+if length(y0) < 3 then error('not enough data points to approximate') fi;
+
+n := length(y0);
+Sumy := sum(y0);  y := zip(y0-Sumy/n);
+Sumx := sum(x0);  x := zip(x0-Sumx/n);
+Sumy2 := y*y;
+x2 := zip(x^2);
+xy := zip(x*y);
+maxx := max( max(x), -min(x));
+if maxx=0 then return( [Sumy/n,0,0,Sumy2] ) fi;
+
+f := proc( c, x, y, Sumy2 )
+    n := length(y);
+    e := zip(exp(c*x));
+    e2 := zip(e^2);
+    Sume := sum(e);
+    Sume2 := sum(e2);
+    Sumey := e*y;
+    t1 := Sume^2;
+    (-Sumy2*t1+(-Sumey^2+Sumy2*Sume2)*n)/ (n*Sume2-t1)
+end:
+
+t := MinimizeBrent( f, 0.012334231/maxx, 1e-4/maxx, 1e-7, x, y, Sumy2 );
+c := t[1];
+
+for k to 5 do
+    e := zip(exp(c*x));
+    e2 := zip(e^2);
+    Sumx2ey := sum( x2[i]*e[i]*y[i], i=1..n );
+    Sume := sum(e);
+    Sumxe := x*e;
+    Sume2 := sum(e2);
+    Sumxey := xy*e;
+    Sumey := e*y;
+    Sumxe2 := x*e2;
+    t3 := Sume^2;
+    t2 := Sume*Sumxe*Sumey;
+    t1 := Sumxey*t3;
+    fval := t2-t1+(-Sumxe2*Sumey+Sumxey*Sume2)*n;
+    if fval=0 then break fi;
+
+    Sumx2e := x2*e;
+    Sumx2e2 := x2*e2;
+    incc := - fval / (-Sumx2ey*t3+Sumxe^2*Sumey+(Sumx2e*Sumey-Sumxe*Sumxey)*
+	Sume+(-2*Sumey*Sumx2e2+Sumxe2*Sumxey+Sumx2ey*Sume2)*n);
+    c := c + incc;
+    if |fval| < 100*n*DBL_EPSILON*(|t2|+|t1|) then break fi
+    od:
+
+if k > 5 then
+    c := t[1];
+    e := zip(exp(c*x));
+    e2 := zip(e^2);
+    Sume := sum(e);
+    Sume2 := sum(e2);
+    Sumey := e*y;
+    fi;
+
+ a := -Sume*Sumey/(Sume2*n-Sume^2) + Sumy/n;
+ b := Sumey*n/(Sume2*n-Sume^2) * exp(-c*Sumx/n);
+ [a,b,c,sum( (y0[i]-(a+b*exp(c*x0[i])))^2, i=1..n)]
+end:
+
+
+#
+#	ExpFit2: least squares approximation y[i] ~ a*exp(b*x[i])
+#
+#  Output: the vector: [a,b,sumsq]
+#   where a,b are the parameters of the approximation
+#   and sumsq is the sum of the squares of the errors of
+#   the approximation.
+#
+#                               Gaston H. Gonnet (Nov 2001)
+#
+#  Maple code:
+#	app := y[i]-(a*exp(b*x[i]));
+#	S2 := expand( map( sum, expand(app^2), i=1..n ));
+#	sol := solve( {diff(S2,a)}, {a} );
+#	S2 := normal( subs(sol,S2) );
+#	spat := Sumy=sum(y[i],i=1..n), Sumy2=sum(y[i]^2,i=1..n),
+#	  Sumx2ey=sum(x[i]^2*exp(b*x[i])*y[i],i=1..n),
+#	  Sume=sum(exp(b*x[i]),i=1..n),  Sumxe=sum(x[i]*exp(b*x[i]),i=1..n),
+#	  Sume2=sum(exp(b*x[i])^2,i=1..n), Sumey=sum(exp(b*x[i])*y[i],i=1..n),
+#	  Sumxey=sum(x[i]*exp(b*x[i])*y[i],i=1..n),
+#	  Sumxe2=sum(x[i]*exp(b*x[i])^2,i=1..n),
+#	  Sumx2e2=sum(x[i]^2*exp(b*x[i])^2,i=1..n),
+#	  Sumx2e=sum(x[i]^2*exp(b*x[i]),i=1..n);
+#	spatr := op(map( x->(op(2,x)=op(1,x)), [spat]));
+#	S2c := subs( spatr, S2 );
+#	codegen[optimize]( [res=subs(Sumx=0,S2c)], tryhard );
+#	S2p := subs( spatr, expand(diff(S2,b)) );
+#	S2p := factor( numer(normal(S2p)));
+#	S2p := op(3,S2p);
+#	S2pp := subs( spatr, expand(diff( subs(spat,S2p), b )));
+#	codegen[optimize]( subs( Sumx=0, [fval=S2p,incc=-S2p/S2pp]),
+#		tryhard );
+ExpFit2 := proc (y:array(numeric), x0:array(numeric) )
+
+if length(y) <> length(x0) then error('mismatched dimensions of y and x') fi;
+if length(y) < 2 then error('not enough data points to approximate') fi;
+
+n := length(y);
+Sumy := sum(y);
+Sumx := sum(x0);  x := zip(x0-Sumx/n);
+Sumy2 := y*y;
+x2 := zip(x^2);
+xy := zip(x*y);
+maxx := max( max(x), -min(x));
+if max(x)=min(x) then return( [Sumy/n,0,Sumy2-Sumy^2/n] ) fi;
+
+f := proc( b, x, y, Sumy2 )
+    n := length(y);
+    e := zip(exp(b*x));
+    e2 := zip(e^2);
+    Sume2 := sum(e2);
+    Sumey := e*y;
+    (Sumy2*Sume2-Sumey^2)/Sume2
+end:
+
+t := MinimizeBrent( f, 0.012334231/maxx, 1e-4/maxx, 1e-7, x, y, Sumy2 );
+b := t[1];
+
+for k to 5 do
+    e := zip(exp(b*x));
+    e2 := zip(e^2);
+    Sumx2ey := sum( x2[i]*e[i]*y[i], i=1..n );
+    Sume := sum(e);
+    Sumxe := x*e;
+    Sume2 := sum(e2);
+    Sumxey := xy*e;
+    Sumey := e*y;
+    Sumxe2 := x*e2;
+    t3 := Sumxey*Sume2;
+    t2 := Sumey*Sumxe2;
+    fval := t2-t3;
+    if fval=0 then break fi;
+
+    Sumx2e := x2*e;
+    Sumx2e2 := x2*e2;
+    incc := fval/(Sumx2ey*Sume2+Sumxey*Sumxe2-2*Sumey*Sumx2e2);
+    b := b + incc;
+    if |fval| < 10*n*DBL_EPSILON*(|t2|+|t3|) then break fi
+    od:
+
+if k > 5 then
+    b := t[1];
+    e := zip(exp(b*x));
+    e2 := zip(e^2);
+    Sume2 := sum(e2);
+    Sumey := e*y;
+    fi;
+
+ a := Sumey/Sume2 * exp(-b*Sumx/n);
+ [a,b,sum( (y[i]-(a*exp(b*x0[i])))^2, i=1..n)]
+end:
+
+
+#
+#	Estimate the size of a population (like number of
+#	local optima) when we have sampled m points and
+#	k of them are unique (or m-k of them are repeated).
+#
+MaxLikelihoodSize := proc( m:posint, k:posint )
+if m<k then error('invalid arguments')
+elif m=k then return( DBL_MAX ) fi;
+nhi := round( k*(3*m+1)/6/(m-k) );
+nlo := max( k-1, nhi - scalb(1,ilogb(m)));
+nhi := nhi + scalb(1,ilogb(m));
+if (nhi+1)/(nhi-k+1) / (1+1/nhi)^m > 1 then error(nhi,'assertion failed') fi;
+if nlo > 0 and (nlo+1) / (1+1/nlo)^m < nlo-k+1 then
+     error(nlo,'assertion failed') fi;
+while nhi - nlo > 1 do
+    n := round( (nlo+nhi)/2 );
+    if (n+1)/(n-k+1) / (1+1/n)^m > 1 then nlo := n else nhi := n fi;
+    od;
+nhi
+end:
+
+
+Stat_Rand := proc()
+p := Stat( 'normally distributed data' );
+to round(6+10*Rand()) do p+Normal_Rand() od;
+p
+end:
+
+
+# avg - ocmpute the average of its arguments  (ghg May 8, 2002)
+avg := proc()
+t := [args];
+if type(t,list(numeric)) then t0 := length(t);  t1 := sum(t)
+else t0 := t1 := 0;
+     for z in [args] do
+         if type(z,numeric) then t0 := t0+1;  t1 := t1+z
+         elif type(z,list(numeric)) then t0 := t0+length(z);  t1 := t1+sum(z)
+         else error(z,'is an invalid argument for avg') fi
+         od;
+     fi;
+if t0=0 then error('avg must be called with at least one value') fi;
+t1/t0
+end:
+
+
+# var - compute an unbiased estimate of the variance of a set of numbers
+#	(ghg May 8, 2002)
+var := proc()
+t0 := t1 := t2 := 0;
+for z in [args] do
+     if type(z,numeric) then
+	  t0 := t0+1;
+	  if not assigned(t3) then t3 := z fi;
+	  z := z-t3;
+	  t1 := t1+z;
+	  t2 := t2+z^2
+     elif type(z,list(numeric)) then
+	  t0 := t0+length(z);
+	  for w in z do
+	      if not assigned(t3) then t3 := w fi;
+	      w := w-t3;
+	      t1 := t1+w;
+	      t2 := t2+w^2
+	  od
+     else error(z,'is an invalid argument for var') fi
+     od;
+if t0<2 then error('var must be called with at least two values') fi;
+(t2-t1^2/t0) / (t0-1)
+end:
+
+
+# std - compute an unbiased estimate of the standard deviation
+#	of a set of numbers  (ghg May 8, 2002)
+std := proc()
+t0 := t1 := t2 := 0;
+for z in [args] do
+     if type(z,numeric) then
+	  t0 := t0+1;
+	  if not assigned(t3) then t3 := z fi;
+	  z := z-t3;
+	  t1 := t1+z;
+	  t2 := t2+z^2
+     elif type(z,list(numeric)) then
+	  t0 := t0+length(z);
+	  for w in z do
+	      if not assigned(t3) then t3 := w fi;
+	      w := w-t3;
+	      t1 := t1+w;
+	      t2 := t2+w^2
+	  od
+     else error(z,'is an invalid argument for std') fi
+     od;
+if t0<2 then error('std must be called with at least two values') fi;
+sqrt( (t2-t1^2/t0) / (t0-1) )
+end:
+
+
+# Collect various Stat structures, and union all those which
+# have the same Description.  This provides an easy way of adding
+# together several simulation results, for example.
+CollectStat := proc( )
+sts := table(Stat());
+  # cannot use indets, as two identical Stat() will be collapsed
+  FindStat := proc( x )
+  if type(x,Stat) then x
+  elif type(x,{list,set}) then seq(procname(z),z=x)
+  elif type(x,structure) then seq(procname(z),z=[op(x)])
+  else NULL fi end:
+for st in [FindStat([args])] do
+    sts[st[Description]] := sts[st[Description]] union st od;
+r := [];
+for z in Indices(sts) do r := append(r,sts[z]) od:
+r
+end:
+
+
+# computes an estimate of the correlation between a set of 
+# observations. AA Feb 2009
+cor := proc(x_ ; (y_=NULL):{list,matrix}, 
+                (method='pearson'):{'pearson','spearman','kendall'})
+    if type(x_, matrix(numeric)) then
+        x := transpose(x_); m := length(x[1]); n1 :=length(x);
+    elif type(x_,list(numeric)) then
+        x := [x_]; n1:=1; m := length(x[1]);
+    else error('invalid type of ''x''');
+    fi:
+
+    isSame:=false:
+    if y_=NULL and n1=1 then 
+        error('supply both ''x'' and ''y'' as lists or a matrix ''x''');
+    elif y_=NULL then y := x; n2 := n1; isSame:=true:
+    elif type(y_,list(numeric)) then
+        if length(y_)<>m then error('incompatible dimensions') fi;
+        y := [y_]; n2:=1;
+    elif type(y_,matrix(numeric)) then
+        if length(y_)<>m then error('incompatible dimensions') fi;
+        y := transpose(y_); n2 := length(y);
+    else error('supply both ''x'' and ''y'' as lists or a matrix ''x''') 
+    fi:
+
+    if m <= 1 then return(0) fi;	# avoid giving an error
+
+    # initialize result matrix
+    rho := CreateArray(1..n1,1..n2);
+    if isSame then for i to n1 do rho[i,i] := 1 od fi:
+    if method='spearman' then 
+       for i to n1 do x[i] := Rank(x[i]) od;
+       if not isSame then for i to n2 do y[i] := Rank(y[i]) od fi:
+    fi:
+
+    if method<>'kendall' then
+        for i to n1 do for j to If(isSame,i-1,n2) do
+            sx := sum(x[i]);  avex := sx/m;
+	    sy := sum(y[j]);  avey := sy/m;
+	    # compute the sum of squares to improve accuracy and neg values
+	    sdx_sdy := sqrt( sum( (w-avex)^2, w=x[i] ) * sum( (w-avey)^2, w=y[j] ) );
+            if sdx_sdy=0 then rho[i,j] := 0 # do not give an error (gg)
+	    else rho[i,j] := sum( (x[i,k]-avex)*(y[j,k]-avey), k=1..m ) /
+		    sdx_sdy fi;
+            if isSame then rho[j,i] := rho[i,j] fi:
+        od od:
+    else
+        for i to n1 do for j to If(isSame,i-1,n2) do
+            conSum := xsd := ysd := 0:
+            for k to m do for l from k+1 to m do
+                sgx := sign(x[i,l]-x[i,k]);
+                sgy := sign(y[j,l]-y[j,k]);
+
+                conSum := conSum + sgx*sgy;
+                xsd := xsd + sgx*sgx;
+                ysd := ysd + sgy*sgy;
+            od od:
+            if xsd=0 or ysd=0 then error('standard deviation is zero') fi:
+            rho[i,j] := conSum /( sqrt(xsd)*sqrt(ysd) );
+            if isSame then rho[j,i] := rho[i,j] fi:
+        od od:
+    fi:
+
+    if n1=1 and n2=1 then rho[1,1] else rho fi:
+end:
+
+# added median computation. as, 24 June 2009
+median := proc(li_:{numeric,list(numeric)})
+    if nargs>1 then li := sort([args]);
+    else li := sort(li_) fi;
+    L := length(li);
+    if mod(L,2)=0 then return((li[floor(L/2)]+li[floor(L/2)+1])/2)
+    else return(li[ceil(L/2)]) fi;
+end:
+
+
+
+#
+#	ReallyLess( a:Stat, b:Stat ; (pvalue=0.025):positive )
+#
+#	Determine is the random variable sampled in a is really smaller
+#	(smaller average) than the variable sampled in b.  It is assumed that
+#	the variables collected are independent of each other.  This is done
+#	with confidence level pvalue.  By default pvalue is 0.025, i.e.
+#	1.96 std away.
+#
+#	Note that   ReallyLess(a,b) <> not ReallyLess(b,a)
+#
+#	Gaston H. Gonnet (May 27th, 2013)
+#
+ReallyLess := proc( a:Stat, b:Stat ; (pvalue=0.025):positive )
+assert( pvalue <= 0.5 );
+if a[Number] < 2 or b[Number] < 2 or a[Mean] >= b[Mean] then return(false) fi;
+(b[Mean] - a[Mean]) / sqrt( a[Variance]/a[Number] + b[Variance]/b[Number] ) >
+	erfcinv(2*pvalue)*sqrt(2)
+end:
+

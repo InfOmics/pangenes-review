@@ -1,0 +1,27 @@
+
+NBody_Opt := proc( dist:matrix, var:matrix, k2:posint,
+	rho1:nonnegative, rho2:nonnegative ; (tottime=30):positive )
+global NBodyPotential;
+st := time();
+hidim := 8;
+t := NBody(dist,var,k2,k2,rho1,rho2);
+stack := [[NBodyPotential,t]];
+
+while time()-st < tottime do
+    stack := sort(stack);
+    ls := length(stack);
+    if ls >= 5 and stack[5,1] <= stack[1,1] * (1+1e-6) then break fi;
+    lprint( ls, NBodyPotential, stack[1,1], time()-st );
+    if Rand() < 0.5/sqrt(ls) then
+	 t := NBody(dist,var,hidim,k2,rho1,rho2);
+    else r := sum(1/i,i=1..ls) * Rand();
+         for i to ls while r>0 do r := r - 1/i od;
+	 t := NBody( dist,var,hidim,k2,rho1,rho2, stack[i-1,2] );
+	 fi;
+    stack := append( stack, [NBodyPotential,t] );
+    od:
+
+stack := sort(stack);
+NBodyPotential := stack[1,1];
+stack[1,2]
+end:

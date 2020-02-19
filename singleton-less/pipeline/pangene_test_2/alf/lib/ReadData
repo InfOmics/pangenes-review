@@ -1,0 +1,60 @@
+#
+#	ReadData
+#
+#		Flexible function to read data from a file
+#		and return it as a matrix.
+#
+#		Gaston H. Gonnet (Nov 15, 2002)
+#
+
+ReadData := proc( filename:string, fmt:string )
+    OpenReading(filename);
+
+    r := [];
+    nerr := 0;
+    for i do
+        line := ReadRawLine();
+        if line='EOF' then break fi;
+        v := traperror( sscanf(line,fmt) );
+        if v=lasterror then
+    	    printf( 'line %d: %s  does not comply with format %s\n', 
+                     i, line, fmt );
+    	    nerr := nerr+1;
+    	    if nerr > 100 then error('too many formating errors') fi;
+	    fi;
+        r := append(r,v);
+    od;
+    r
+end:
+
+
+#   WriteData
+#
+#       Function to write data to a file.
+#
+#           Alexander Roth (Jan 2006)
+#
+
+WriteData := proc(data:anything; filename='temp.dat':string, separator='\t':string)
+    if nargs<1 then error('expectes at least one argument') fi;
+    OpenWriting(filename);
+    if type(data,list(list)) then
+        for i to length(data) do
+            for j to length(data[i])-1 do
+                printf('%a%s', data[i,j],separator);
+             od;
+             printf('%a\n',data[i,j]):
+        od;
+    elif type(data,list) then
+        for i to length(data) do
+            printf('%a\n',data[i]):
+        od;
+    elif type(data,string) then
+        printf('%s\n',data):
+    else
+        OpenWriting(previous);
+        error('data format not implemented yet');
+    fi;
+    OpenWriting(previous);
+    printf('Data written to file: %s\n', filename);
+end:

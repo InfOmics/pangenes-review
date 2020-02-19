@@ -1,0 +1,8 @@
+# return a copy of the string s with leading and trailing whitespace removed.
+trim := proc(s:string ; (chars={' ','\n','\t','\0','\r'}):set)
+    n := length(s):
+    for i to n while member(s[i], chars) do od:
+    for j from n to i by -1 while member(s[j], chars) do od:
+    return( copy(s[i..j]) );
+end:
+

@@ -1,0 +1,352 @@
+# ************* PARTITIONS DATA STRUCTURE *****************
+# Author: probably Chantal Roth
+# used by heuristics of MSA
+
+Partitions := proc()
+ option polymorphic;
+  description
+  '
+Function: creates a splits or partitions data structure
+
+Selectors:
+  	Tree:      Creates a tree from the given partitions
+	           If the partitions cause conflicts, then VertexCover is used
+		   to remove the conflicts and then a tree is constructed.
+	Conflicts: Returns a reduced Partitions set that is free of conflicts (VertexCover)
+	MinSquare: Uses the probabilistic model to create a tree. This is useful if a tree
+	           should be constructed but there are still conflicts in the graph. If you
+		   do not want to use VertexCover to remove the conflicts then this is
+		   an alternative. This way a minimum sqare tree is produced.
+';  
+
+  if nargs = 0 then 
+    return (copy(noeval(Partitions([{}])))); 
+  elif nargs = 1 and type((args[1]), (integer)) then
+    pa := Partitions();
+    pa['type'] := args[1];
+    return (copy(pa));
+  elif nargs = 1 and type((args[1]), (Tree)) then
+    return (copy(noeval(Partitions(0, args, 300, 50))));
+  else
+    return (copy(noeval(Partitions(args))));
+  fi;
+end:
+
+Partitions_type := noeval(structure(anything, Partitions)):
+
+
+Partitions_select := proc( u, select, val );
+  sel := uppercase(select); 
+  if SearchString('TREE', sel) > -1 or sel = 'T' then
+   
+  elif SearchString('CONFLICTS', sel) > -1 or sel = 'C' then
+   
+  elif SearchString('MINSQUARE', sel) > -1 or sel = 'M'  then
+    
+  else 
+    lprint('Invalid Partitions selector ',sel);
+    print(Partitions);
+  fi;
+end:
+  
+Partitions_print := proc();
+  pa :=  noeval(Partitions(args));   
+  lprint('Partitions');
+  lprint('----------');
+  lprint('Partitions:');
+  for i to length(pa) do print(pa[i]); od;
+  lprint();
+end:
+
+
+GetLink := proc(link: array, pos: integer);
+  i := pos;
+  while link[i] <> i do i := link[i]; od;
+  return(i);
+end:
+
+
+
+# ******************** RESOLVE CONFLICTS ********************
+
+ResolveConflicts := proc()
+  option polymorphic;
+end:
+
+Partitions_ResolveConflicts := proc()
+  description 'Data is a list of partitions (list of sets). The procedure
+  finds the conflicts, creates a graph and uses VertexCover to resolve
+  the conflicts.
+  The result a reduced list of sets that does not contain the conflicting sets.';
+  
+  data :=  noeval(Partitions(args));  
+  conflicts := op(GetConflicts(data));
+
+  nodes := copy(Nodes());
+  edges := copy(Edges());
+  n := length(conflicts);
+  finished := copy({});
+  for i to n do
+    if conflicts[i] <> {} then # there is a conflict
+       for j in conflicts[i] do
+	  if j > i then
+	    edges := append(edges, Edge(1, i, j));
+	    print(edges);
+	  fi;
+       od;
+     fi;
+     nodes := append(nodes, Node(i));
+  od:
+  g := Graph(edges, nodes):  
+  remove := VertexCover(g);
+  which := copy({});
+  m := length(remove);
+  for i to length(remove) do
+    which := which union {op(remove[i])};
+  od;
+  result := CreateArray(1..n-m);
+  pos := 0;
+  for i to n do
+    if not member(i, which) then # is not removed -> add it
+      pos := pos + 1;
+      result[pos] := data[1, i];
+    fi;
+  od;
+  return(Partitions(result));
+end:
+
+
+# *************** GET CONFLICTS ***********************
+
+GetConflicts := proc()
+  option polymorphic;
+end:
+
+MultiAlign_GetConflicts := proc()
+   partitions := GetPartitions(msa);
+   conflicts := GetConflicts(partitions);
+   return(conflicts);
+end:
+ 
+Partitions_GetConflicts := proc()
+description 'returns a list of sets. If the set is not empty, it specifies
+the conflict with another set. The number in the set is the other
+conflicting set in the list';
+    partitions :=  noeval(args);   
+
+    totalset := copy({});
+    m := length(partitions);
+    for i to m do
+      totalset := totalset union partitions[i];
+    od:
+    # find all the conflicts
+    conflicts := CreateArray(1..m, copy({}));
+    conf := false;
+    for i to m-1 do
+      for j from i+1 to m do
+        a1 := partitions[i];
+        a2 := totalset minus a1;
+        b1 := partitions[j];
+        b2 := totalset minus a2;
+        if (a1 minus b1 <> {} and b1 minus a1 <> {}) and
+	   (a2 minus b1 <> {} and b1 minus a2 <> {}) then
+         conflicts[i] := conflicts[i] union {j};
+	 conflicts[j] := conflicts[j] union {i};
+	 conf := true;
+       fi;
+     od;
+   od;
+   if conf = false then return(0) 
+   else return(Partitions(conflicts)); fi;
+end:
+
+# ****************** GET TREE ****************
+
+
+Partitions_GetTree := proc()
+description'Constructs a binary tree form a set of partitions
+ PRECONDITIONS:
+ the partitions must be conflict free and there
+ must be enough partitions (n-2, n = nr of leaves) to construct a complete tree';
+ 
+ partitions :=  noeval(args);   
+ m := length(partitions);
+ n := m + 1; # (number of leaves)
+ 
+ Part :=  CreateArray(1..2*n); 
+ Links := CreateArray(1..2*n);
+ 
+ for i to n do Part[i] := Leaf(i, 3, i, 0); od;
+ for i to 2*n do  Links[i] := i; od; 
+
+ node := n;
+ while node < 2*n-1 do  # there are n-2 connections + 1 at the end
+   # search partitions for sets with two elements
+   # and connect those
+   ok := false;  # in case the preconditions are not fulfilled...
+   remove := copy({});
+   for i to m do
+     if length(partitions[i]) = 2 then
+       ok := true; # so far we are fine
+       a := GetLink(Links, partitions[i,1]);
+       b := GetLink(Links, partitions[i,2]);
+       node := node + 1;
+       # add some random distance
+       Part[node] := Tree(Part[a], Part[a, 2] + Part[b, 2]  + 1 + Rand()*3, Part[b]);   
+       
+       # update the links
+       Links[a] := node; 
+       Links[b] := node;
+       
+       # add one of the leaves to the removal set
+       remove := remove union {partitions[i,1]};
+     fi;
+   od;
+   if ok = false then # there was no partiton with 2 elements! error!
+     error('Something is wrong with the partitions, check the preconditions!');
+   fi;
+   for i to m do # remove removal set from all sets
+     partitions[i] := partitions[i] minus remove;
+   od;
+ od;
+ # now do the final step
+ tree := Part[2*n-1];
+ return(tree);
+end:
+
+# ****************** GETDIST *******************
+
+Partitions_GetDist := proc();
+  partitions :=  noeval(args);   
+  m := length(partitions);
+  totalset := copy({});
+  for i to m do
+    totalset := totalset union partitions[i];
+  od:
+  n := length(totalset);
+  Dist := CreateArray(1..n, 1..n, 0);
+  for p to m do # for all partitions 
+    a1 := partitions[p];
+    a2 := totalset minus a1;
+    for i in a1 do
+      for j in a2 do
+	Dist[i, j] := Dist[j, i] := Dist[i, j] + 1;
+      od;
+    od;
+   od;
+   return(Dist);
+end:
+
+
+# *****************  GET PARTITIONS ******************
+
+GetPartitions := proc()
+  option polymorphic;
+  description 'returns the splits or partitions of a data set or a tree.
+  The resulting data structure is a list of sets';
+end:
+
+ 
+Tree_GetPartitions := proc();
+  t := noeval(Tree(args));
+  part := copy([]);
+  res := GetPartitionsTree_r(t, part);
+  return(Partitions(res[2]));
+end:
+
+MultiAlign_GetPartitions := proc();
+   msa := noeval(MultiAlign(args));
+ 
+   gh := GapHeuristic();
+   gh['maxgaps'] := 1;
+   gh['maxaa'] := 1;
+   gh['extension'] := 5;
+   gh['gapdelta'] := 3;
+   gh['mingaplen'] := -1;
+   gh['maxgaplen'] := -1;
+   blocklist := GetGapBlocklist(msa, gh, false):
+   if blocklist=[] then return(0); fi;
+   if printlevel > 1 then
+     lprint('nr of blocks found: ',length(blocklist));
+     if printlevel > 2 then
+       lprint();
+       for b to length(blocklist) do
+	 block := blocklist[b];
+	 lprint('block # ',b, ':');
+	 ViewBlock(Block(block), msa);
+	 if printlevel > 3 then
+	   print('press ; and enter');
+	   ReadLine();
+	 fi;
+       od:
+     fi;
+   fi;
+   # find all the partitions
+   partitions := copy([]);
+   totalset := copy({});
+   n := length(blocklist[1, 'block']);
+   for i to n do
+     totalset := totalset union {i};
+   od:
+   for i to length(blocklist) do
+     block := blocklist[i,1];
+     seta := copy({});
+     for j to length(block) do
+       if block[j] <> [] then seta := seta union {j}; fi;
+     od; 
+     if length(seta) > 1 and length(seta)< n-1 then
+       found := false;
+       for j to length(partitions) while found = false do
+	 setb := partitions[j];
+	 if (seta minus setb) = (setb minus seta) then found := true; fi;
+       od:
+       if found = false then partitions := append(partitions, seta); fi;
+     fi:
+   od:
+   partitions := append(partitions, totalset);
+   return(Partitions(partitions));
+end:
+
+ 
+ 
+GetPartitionsTree_r := proc (t: Tree, parts);
+  part := parts;
+  if type(part, list) = false then part := copy([]); fi;
+  if op (0, t) = Leaf then
+    if type(t[1], numeric) then
+      oc := {t[1]}; 
+    else
+      oc := {t[3]}; 
+    fi;
+    return([Leaf(t[1..3], oc, oc), part]);
+  else
+    r1 :=  GetPartitionsTree_r(t[1], part); 
+    r3 :=  GetPartitionsTree_r(t[3], part);
+    t1 := r1[1];
+    t3 := r3[1];
+    newl := (t1[4] union t1[5]); 
+    newr := (t3[4] union t3[5]); 
+    part := append(part, union(newl, newr));
+    part := append(part, op(r1[2]));
+    part := append(part, op(r3[2]));
+   return([Tree(t1, t[2], t3, newl, newr), part]);
+  fi
+end:
+
+# *************** GET ORDER ******************
+
+GetOrder := proc()
+  option polymorphic;
+end:
+
+Partitions_GetOrder := proc(); 
+    data :=  noeval(args);   
+    n := length(data);
+    Dist := CreateArray(1..n,1..n,0);
+    for i to n-1 do for j from i+1 to n do
+      Dist[i,j] := Dist[j,i] := 10000 - data[i,j]; 
+    od od; 
+    order := ComputeCubicTSP(Dist);
+    order;
+end:
+

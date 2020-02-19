@@ -1,0 +1,206 @@
+#
+#        Synteny distance between two sets of proteins
+#	 This function finds the minimum number of
+#	 simple inversions to transform a permutation
+#	 into a single run (all ascending or all descending)
+#
+#                                        Gaston H Gonnet (Feb 20, 2005)
+#	various new algorithms and tuning		 (Apr 17, 2005)
+
+
+module external Synteny;
+
+Inversions := proc( p:list )
+sum( If( |p[i]-p[i+1]| = 1, 0, 1 ), i=1..length(p)-1 ) end:
+
+#Invert := proc( p:list, i1:posint, i2:posint )
+#if i1 > i2-1 or i2 > length(p) then error('invalid arguments') fi;
+#p2 := copy(p);
+#i1i2 := i1+i2;
+#for i3 from i1 to i2 do p2[i3] := p[i1i2-i3] od;
+#p2
+#end:
+
+
+
+
+#
+#	Simplify/shrink a permutation to keep the essential
+#	breaks and skip all contiguous parts.  Basically any
+#	run up or down which is longer than two can be reduced to
+#	two.
+ShrinkPerm := proc( p:list )
+lp := length(p);
+ap := CreateArray(1..lp);
+r := [];
+for i to lp do
+    if i<lp and |p[i]-p[i+1]| = 1 then
+	 r := append(r,p[i],p[i+1]);
+	 for i from i+1 to lp-1 while |p[i]-p[i+1]| = 1 do od;
+    else r := append(r,p[i]) fi
+od:
+sr := sort(r);
+for i to length(sr) do ap[sr[i]] := i od;
+for i to length(sr) do r[i] := ap[r[i]] od;
+if Inversions(p) <> Inversions(r) then error('should not happen, 111') fi;
+if printlevel > 3 then
+    printf( 'ShrinkPerm: reduced length from %d to %d\n',
+	length(p), length(r) ) fi;
+r
+end:
+
+
+
+#
+#	special case when all the runs are of length 2,
+#	which can be translated to a SignedSynteny problem
+MapToSignedSynteny := proc( p:list )
+lp := length(p);
+if mod(lp,2) <> 0 then error(p,'list is not of even length') fi;
+lp2 := lp/2;
+p2 := CreateArray(1..lp2);
+p3 := CreateArray(1..lp2);
+for i to lp2 do
+    p2[i] := (p[2*i]-p[2*i-1]) * max(p[2*i],p[2*i-1]) / 2;
+    p3[lp2+1-i] := -p2[i]
+od;
+min( SignedSynteny(p2), SignedSynteny(p3) );
+end:
+
+
+
+#
+# version which collects intersections, concatenations of runs
+# concatenation of run and singleton and concatenation of singletons
+#
+Synteny := proc( p:list(posint) ; (k=10):posint )
+local ip2;
+lp := length(p);
+if lp <= 2 then return(0) fi;
+klp := k*lp;
+if not type(SyntenyMode,posint) then
+     VariableK := true;
+else VariableK := evalb( mod(SyntenyMode,2)=1 );
+     fi:
+
+#
+#	The inversion is done, in all cases, between i+1 and j-1
+#
+#          4     5    123                      6    124   125
+#  ...  |_____|_____|_____|_______ ... _____|_____|_____|_____| ...
+#                i    i+1                     j-1    j
+#	The above is the best case, in the intersection of the two below
+
+#FindOrders := proc( p2:list )
+#external ip2;
+#
+## ip2 is the inverse of p2
+#ip2 := CreateArray(1..lp);
+#for i to lp do ip2[p2[i]] := i od:
+#lor := ror := [];
+#
+#for x to lp-1 do if |p2[x]-p2[x+1]| <> 1 then
+#
+##
+##          4     5    123                      6    !=7   ...
+##  ...  |_____|_____|_____|_______ ... _____|_____|_____|_____| ...
+##                i    i+1                     j-1    j
+#    for nei in [p2[x]-1,p2[x]+1] do if nei >= 1 and nei <= lp then
+#        j := ip2[nei]+1;
+#        if j>x and (j>lp or |p2[j-1]-p2[j]| <> 1) then
+#	    lor := append(lor,[x,j]) fi;
+#    fi od;
+#
+##
+##         ...  !=122  123                      6    124   125
+##  ...  |_____|_____|_____|_______ ... _____|_____|_____|_____| ...
+##                i    i+1                     j-1    j
+#    for nei in [p2[x+1]-1,p2[x+1]+1] do if nei >= 1 and nei <= lp then
+#        i := ip2[nei]-1;
+#        if x+1>i and (i<1 or |p2[i+1]-p2[i]| <> 1) then
+#	    ror := append(ror,[i,x+1]) fi
+#    fi od;
+#
+#fi od;
+#[lor, ror]
+#end:
+
+
+allp := { p };
+c1 := c5 := 0;
+
+do
+    if length(allp)=1 then
+	allp := {ShrinkPerm(allp[1])};
+        lp := length(allp[1]);
+	if 2*Inversions(allp[1])+2 = lp then
+	     # it can be mapped to signed synteny
+	     return( c1+c5+MapToSignedSynteny(allp[1]) )
+	fi;
+	if VariableK then k := round(klp/lp) fi;
+	limk := min(260000,4*k);
+    fi;
+    fixes := []:
+    higr := 100:
+
+    for p2 in Shuffle([op(allp)]) do
+	# FindOrders now returns 8 groups of possible inversions
+
+        #  1  - Inversions fixing two orders run-run and run-run  (4 runs)
+        #  2  - Inversions fixing two orders (3 runs + 1 singl)
+        #  3  - Inversions fixing two orders (2 runs + 2 singl)
+        #  4  - Inversions fixing two orders (1 run + 3 singl)
+        #  5  - Inversions fixing two orders (0 runs + 4 singl)
+        #  6  - Inversions fixing one order run-run (2 runs + 0 singl)
+        #  7  - Inversions fixing one order (1 run + 1 singl)
+        #  8  - Inversions fixing one order (0 runs + 2 singl)
+
+        groups := Synteny_FindOrders(p2);
+	# we regroup the first 5 together which works better (used
+	# separately it becomes too deterministic and does not find
+	# good minima)
+	groups := [ [op(groups[1]),op(groups[2]),op(groups[3]),
+		op(groups[4]),op(groups[5])], op(groups[6..8])];
+
+	for i to length(groups) while groups[i] = [] do od;
+	if i > min(length(groups),higr) then next
+	elif i < higr then higr := i;  fixes := [] fi;
+	if length(fixes) < limk then
+	     for z in groups[i] do fixes := append(fixes,[op(z),p2]) od
+	fi;
+
+    od:
+
+    if fixes <> [] then
+	 allp := { seq( Synteny_Invert(z[3],z[1]+1,z[2]-1), z=fixes )}:
+	 #lprint( higr, length(fixes), length(allp));
+	 if length(allp) > k then allp := Shuffle([op(allp)])[1..k] fi:
+	 c1 := c1+1;
+	 if printlevel > 3 then printf(
+	     '%d inversions left, %d permutations, %d estim\n',
+	     Inversions(allp[1]), length(allp), c1+c5+Inversions(allp[1]) ) fi;
+
+    elif Inversions(allp[1]) = 0 then return( c1+c5 )
+
+    elif Inversions(allp[1]) = 1 then return( c1+c5+2 )
+
+    else brpts := [0];
+	 p2 := allp[1];
+	 for i to lp-1 do if |p2[i]-p2[i+1]| <> 1 then
+	     brpts := append(brpts,i) fi od;
+	 allp := [];
+	 for i to length(brpts) do for j from i+1 to length(brpts) do
+	     allp := append(allp,Synteny_Invert(p2,brpts[i]+1,brpts[j]))
+	 od od;
+	 if printlevel > 3 then
+	     printf( 'all runs aligned, wasted inversion, %d left\n',
+		Inversions(allp[1]) ) fi;
+	 c5 := c5+1
+
+    fi:
+od:
+
+error(allp,k,lp,'should not happen, 105')
+end:
+
+end: # end module

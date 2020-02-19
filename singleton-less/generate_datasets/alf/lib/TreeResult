@@ -1,0 +1,228 @@
+#  _____               ____                 _ _   
+# |_   _|_ __ ___  ___|  _ \  ___ ___ _   _| | |_ 
+#   | | | '__/ _ \/ _ \ |_) |/ _ | __| | | | | __|
+#   | | | | |  __/  __/  _ <|  __|__ \ |_| | | |_ 
+#   |_| |_|  \___|\___|_| \_\\___|___/\__,_|_|\__|
+#
+#	TreeResult - store a tree and its additional information
+#
+#	Example:
+#
+#	st := time();  t := LeastSquaresTree( D, Var, ... );
+#	tr := TreeResult( t, Distance, Name='Tree of life',
+#		CPUtime=time()-st, Method='LeastSquaresTree',
+#		LSError = MST_Qual )
+#
+#	Gaston H. Gonnet (Dec 11th, 2010)
+#
+module external TreeResult, TreeResult_print, TreeResult_select;
+
+targs := table();
+targs['Name'] := string;	# arbitrary name to identify the tree
+targs['Likelihood'] := numeric;	# log(Likelihood) for ML trees
+targs['Alpha'] := numeric;	# alpha parameter of Gamma correction
+targs['InvSites'] := numeric;	# invariant sites
+targs['BaseFreqs'] := list(numeric);
+targs['SubstModel'] := string;
+targs['Method'] := string;	# name of the function used to build the tree
+targs['CPUtime'] := numeric;	# seconds use to build the tree
+targs['LSError'] := nonnegative; # Weighted branch length errors (Distance)
+targs['CharChanges'] := integer; # Number of character changes needed (Parsimony)
+targs['LnLperSite'] := list(numeric); # log likelihood values per site
+
+TreeResult := proc(
+	Tree : Tree,
+	Type : {'ML','Distance','Parsimony','Other'},
+	Other : {table,equal} )
+if nargs >= 3 and type(Other,equal) then
+     a := procname(Tree,Type);
+     for i from 3 to nargs do
+	w := args[i];
+	if not type(w,equal) then
+	     error('extra arguments must have the format name = value') fi;
+	a[w[1]] := w[2]
+     od;
+     a
+elif nargs = 3 then noeval(procname(args))
+elif nargs = 1 then noeval(procname(Tree,'Other',table()))
+elif nargs = 2 then noeval(procname(Tree,Type,table()))
+else error('invalid number of arguments') fi
+end:
+
+TreeResult_print := proc(a) option internal;
+    t := sprintf('%s tree reconstruction result',a[Type]);
+    if a[Method] <> unassigned then
+	t := t . sprintf( ' by %s:', a[Method] ) fi;
+    lprint(t);  lprint(CreateString(length(t),'-'));
+    if a['SubstModel'] <> unassigned then
+	printf('Substitution model: %s\n', a['SubstModel']) fi;
+    if a['Likelihood'] <> unassigned then
+	printf('Likelihood: %.8g\n', a['Likelihood']) fi;
+    if a['Alpha'] <> unassigned then
+        printf('Estimated alpha parameter: %.8g\n', a[Alpha]) fi:
+    if a['InvSites'] <> unassigned then
+        printf('Estimated fraction of invariant sites: %.8g\n', a[InvSites]) fi:
+    if a['BaseFreqs'] <> unassigned then
+        printf('Estimated Base Frequences:');
+        for j to length(a['BaseFreqs']) do
+                if mod(j-1, 4)=0 then printf('\n  ') fi;
+                printf('pi(%s): %.5f ', IntToA(j), a['BaseFreqs',j]);
+        od:
+        printf('\n');
+    fi:
+    if a[CPUtime] <> unassigned then printf('CPU time: %fs\n', a[CPUtime]) fi;
+    printf('%s tree: %A\n', a[Type], a[Tree]);
+end:
+
+TreeResult_select := proc( a, sel, val ) option internal;
+typ := targs[sel];
+if typ = unassigned then error(sel,'is an invalid selector name')
+elif nargs = 2 then
+     a[3,sel]
+elif not type(val,typ) then
+     error( val, 'has an invalid type for a', sel, 'in an TreeResult')
+else a[3,sel] := val fi
+end:
+
+CompleteClass(TreeResult):
+end: # end module
+
+
+# Resampling of estimated log likelihood values; basically, bootstrapping of
+# lnL/site values. Source: Kishino et al., 'Maximum likelihood inference of
+# protein phylogeny and the origin of chloroplasts', MBE 1990
+#
+# Stefan Zoller, 31.10.2011
+
+RellTree := proc(t:TreeResult; 'nrOfBootstraps'=((nrOfBootstraps=1000):posint))
+    if t['LnLperSite'] = 'unassigned' then
+        error('this TreeResult has no lnL/site values stored'):
+        return():
+    fi:
+
+    N := length(t['LnLperSite']):
+    bsvals := CreateArray(1..nrOfBootstraps):
+    for i to nrOfBootstraps do
+        idxs := [seq(Rand(1..N), j=1..N)]:
+        bsvals[i] := sum(t['LnLperSite', x], x=idxs):
+    od:
+    return(bsvals):
+end:
+
+
+#     _     _  _     _     _  _  ____                    _  _   
+#    / \   | || |   / \   | || ||  _ \  ___  ___  _   _ | || |_ 
+#   / _ \  | || |  / _ \  | || || |_) |/ _ \/ __|| | | || || __|
+#  / ___ \ | || | / ___ \ | || ||  _ <|  __/\__ \| |_| || || |_ 
+# /_/   \_\|_||_|/_/   \_\|_||_||_| \_\\___||___/ \__,_||_| \__|
+#
+#	Class to store All-x-all alignment results of a group
+#	of sequences.  Only the upper diagonal of the matrix needs
+#	to be filled.
+#
+#	Gaston H. Gonnet (Dec 7th, 2010)
+#
+module
+external AllAllResult, AllAllResult_select;
+
+targs := table();
+targs['CPUtime'] := nonnegative;
+targs['Comment'] := string;
+targs['Distances'] := matrix(nonnegative);
+targs['Variances'] := matrix(nonnegative);
+
+
+AllAllResult := proc(
+	AllAll : matrix({0,AlSumm,Alignment}),
+	Name : string,
+	Other : {table,equal} )
+if length(AllAll) <> length(AllAll[1]) then
+     error('AllAll must be square matrix' )
+elif nargs >= 3 and type(Other,equal) then
+     a := procname(AllAll,Name);
+     for i from 3 to nargs do
+	w := args[i];
+	if not type(w,equal) then
+	     error('extra arguments must have the format name = value') fi;
+	a[w[1]] := w[2]
+     od;
+     a
+elif nargs = 3 then noeval(procname(args))
+elif nargs = 1 then noeval(procname(AllAll,'',table()))
+elif nargs = 2 then noeval(procname(AllAll,Name,table()))
+else error('invalid number of arguments') fi
+end:
+
+AllAllResult_select := proc( a, sel, val ) option internal;
+typ := targs[sel];
+if typ = unassigned then error(sel,'is an invalid selector name')
+elif nargs = 2 then
+     if a[3,sel] <> unassigned then a[3,sel]
+     elif sel = 'Distances' then
+	  aa := a['AllAll'];
+	  n := length(aa);
+	  Dist := CreateArray(1..n,1..n);
+	  for i1 to n do for i2 from i1+1 to n do
+	      a12 := aa[i1,i2];
+	      if type(a12,Alignment) then
+		   Dist[i1,i2] := Dist[i2,i1] := a12[PamDistance]
+	      elif type(a12,AlSumm) then
+		   Dist[i1,i2] := Dist[i2,i1] := a12[PamDist10000]/10000
+	      else error(a12,i1,i2,'is an invalid entry in AllAllResults')
+	      fi
+	  od od;
+	  Dist
+     elif sel = 'Variances' then
+	  aa := a['AllAll'];
+	  n := length(aa);
+	  Var := CreateArray(1..n,1..n);
+	  for i1 to n do for i2 from i1+1 to n do
+	      a12 := aa[i1,i2];
+	      if type(a12,Alignment) then
+		   Var[i1,i2] := Var[i2,i1] := a12[PamVariance]
+	      elif type(a12,AlSumm) then
+		   Var[i1,i2] := Var[i2,i1] := a12[PamVar100000]/100000
+	      else error(a12,i1,i2,'is an invalid entry in AllAllResults')
+	      fi
+	  od od;
+	  Var
+     else a[3,sel]
+     fi
+elif not type(val,typ) then
+     error( val, 'has an invalid type for a', sel, 'in an AllAllResult')
+else a[3,sel] := val fi
+end:
+
+CompleteClass( AllAllResult )
+end: # end module
+
+
+#     _    _ ____                            
+#    / \  | / ___| _   _ _ __ ___  _ __ ___  
+#   / _ \ | \___ \| | | | '_ ` _ \| '_ ` _ \ 
+#  / ___ \| |___) | |_| | | | | | | | | | | |
+# /_/   \_\_|____/ \__,_|_| |_| |_|_| |_| |_|
+#
+# Alignment summary, sacrifices some precision in favour of compactness.
+#  Compresses very well.
+AlSumm := proc(
+	Score100:integer,
+	PamDist10000:posint,
+	PamVar100000:positive )
+option NoIndexing, polymorphic;
+if nargs = 3 then noeval(procname(args))
+else error(args,'invalid arguments') fi
+end:
+
+AlSumm_select := proc( as, sel, val )
+if nargs=3 then error('not coded yet')
+elif sel='Score' then as['Score100']/100
+elif sel='PamDistance' then as['PamDist10000']/10000
+elif sel='PamVariance' then as['PamVar100000']/100000
+else error('invalid selector') fi
+end:
+Alignment_AlSumm := proc( al:Alignment )
+AlSumm( round(al[Score]*100), round(al[PamDistance]*1e4),
+	round(al[PamVariance]*1e5) ) end:
+CompleteClass(AlSumm):
+

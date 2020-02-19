@@ -1,0 +1,78 @@
+# Purpose: Create graph of all entries related by Simil >= 120
+# Author:  Lukas Knecht
+# Created: 13 Jan 1993
+#
+GetPairs := proc (fromname: Text, toname: Text, MinSimil: numeric)
+  oldquiet := Set (quiet=true);
+  writeto (toname);
+  read fromname;
+  do
+    m := ReadLine ();
+    if m = EOF then break fi;
+    if m[Simil] < MinSimil then next fi;
+    e1 := EntryNumber (m[Offset1]);
+    e2 := EntryNumber (m[Offset2]);
+    printf ('%d,%d:\n%d,%d:\n', e1, e2, e2, e1)
+  od;
+  writeto (terminal);
+  Set (quiet=oldquiet);
+  NULL
+end:
+		 
+WriteGraph := proc (fromname: Text, toname: Text)
+  oldquiet := Set (quiet=true);
+  writeto (toname);
+  read fromname;
+  lastentry := 0;
+  do
+    e := ReadLine ();
+    if e = EOF then break fi;
+    if e[1] = lastentry then
+      linked := append (linked, e[2])
+    else
+      if lastentry > 0 then
+	printf ('%d:%a:\n', lastentry, linked)
+      fi;
+      lastentry := e[1];
+      linked := [e[2]]
+    fi
+  od;
+  if lastentry > 0 then
+    printf ('%d:%a:\n', lastentry, linked)
+  fi;
+  writeto (terminal);
+  Set (quiet=oldquiet);
+  NULL
+end:
+
+CreateTestGraph := proc (fromname: Text, toname: Text, entries: posint..posint)
+  oldquiet := Set (quiet=true);
+  writeto (toname);
+  read fromname;
+  do
+    entry := ReadLine ();
+    if entry = EOF then break fi;
+    linked := ReadLine ();
+    if entry >= entries[1] and entry <= entries[2] then
+      newLinked := [];
+      for e in linked do
+	if e >= entries[1] and e <= entries[2] then
+	  newLinked := append (newLinked, e)
+	fi
+      od;
+      lprint (entry, ':', newLinked, ':')
+    fi
+  od;
+  writeto (terminal);
+  Set (quiet=oldquiet);
+  NULL
+end:
+
+read 'UpgradeAllAll.names';
+LoadFile (newfile);
+GetPairs (newfile.'.AllAll', newfile.'.Pairs', 120);
+system ('sort -T . -t, +0n +1n '.newfile.'.Pairs > '.newfile.'.Pairs.sorted'):
+WriteGraph (newfile.'.Pairs.sorted', newfile.'.Graph');
+system ('rm '.newfile.'.Pairs '.newfile.'.Pairs.sorted'):
+# CreateTestGraph (newfile.'.Graph', 'Graph.Test', 1..1000);
+quit

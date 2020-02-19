@@ -1,0 +1,45 @@
+#
+#	Tag( tag, string ) - surround a string with an XML/SGML tag
+#
+#	Gaston H. Gonnet (Oct 10th, 2013)
+#       Modified by Oliver Farla (Oct 11th, 2013)
+
+XMLEscape := proc(str: string)
+	ReplaceString('<','&lt',
+	 ReplaceString('>','&gt',
+	  ReplaceString('"','&apos',
+	   ReplaceString('''','&quot',str))))
+
+end:
+
+Tag := proc( tag:string, body1 # body2, body3, ...
+	)
+ConcatStrings( [ '<', tag, '>', seq( string(args[i]), i=2..nargs),
+	'</', tag, '>'], '' )
+end:
+
+TagNV := proc( tag:string, name:string, value )
+Tag( tag, Tag( 'name', name), Tag( 'value', value ))
+end:
+
+TagTable := proc( name:string, tab:table )
+Tag( 'table', Tag( 'name', name ), Tag( 'entries', XML(tab) ))
+end:
+
+table_XML := proc( tab:table )
+ConcatStrings( [ seq( Tag( 'entry', Tag( 'key', x), Tag( 'value', tab[x] )),
+	x=Indices(tab) ) ], '\n' )
+end:
+
+list_XML := proc(lst:list)
+ConcatStrings( [ seq( Tag( 'entry', XMLEscape(item)),item=lst ) ], '\n' )
+end:
+
+TagList := proc( name:string, lst:list )
+	Tag( 'list', Tag( 'name', name ), Tag( 'entries', XML(lst) ))
+end:
+
+
+XML := proc() option polymorphic;
+noeval(procname(args)) end:
+CompleteClass(XML);

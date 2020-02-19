@@ -1,0 +1,947 @@
+
+#
+#  Text processing primitives
+#
+
+Paragraph := proc( indent, content )
+if nargs=1 then
+     if type(indent,{string,structure}) then noeval(Paragraph(0,indent))
+     else error('invalid single argument') fi
+elif type([args],[{string,structure},integer]) then
+     noeval(Paragraph(content,indent))
+elif not type(indent,integer) then
+     error('first argument, indentation, must be an integer')
+else for i from 2 to nargs do
+	if not type(args[i],{string,structure}) then
+	    error(args[i],'is an invalid argument') fi
+	od;
+     noeval(Paragraph(args))
+     fi
+end:
+
+Paragraph_type := noeval(structure({integer,string,structure},Paragraph)):
+
+#
+#   Convert a Paragraph into a printable string.
+#
+#   This will use the setting of screenwidth to wrap long lines.
+#   Also, tabs and newlines surrounded by spaces are changed into
+#   a single space (or two if the previous character is a '.')
+#   Otherwise, spaces are left as they are.
+#
+Paragraph_string := proc( p:Paragraph ) option internal;
+
+r := '';
+if p[1]>0 then
+     ind := 0;  s := CreateString(p[1]);
+else ind := -p[1];  s := '' fi;
+for i from 2 to length(p) do s := s . string(p[i]) od;
+
+wrap := Set(screenwidth=80);  Set(screenwidth=wrap);
+if abs(p[1]) >= wrap then
+    error('cannot print Paragraph with so much indentation') fi;
+
+# replace tabs and newlines with their space around with a single space
+j := 0;
+s2 := CreateString(length(s)+100);
+for i to length(s) do
+    if SearchString(s[i],'\t\n') >= 0 then
+	 for i from i+1 to length(s)
+	     while SearchString(s[i],'\t\n ') >= 0 do od;
+	 i := i-1;
+	 for j from j by -1 to 1 while s2[j]=' ' do od;
+	 j := j+1;
+	 s2[j] := ' ';
+	 if j>1 and s2[j-1]='.' then j := j+1;  s2[j]  := ' ' fi;
+	 if length(s2)-length(s) < j-i + 50 then s2 := s2 . CreateString(50) fi
+    else j := j+1;  s2[j] := s[i] fi
+    od;
+s := s2[1..j];
+
+while length(s) > wrap do
+    for i from wrap by -1 do
+
+	# space, tab and newline, break before
+	if s[i+1]=' ' then
+	    r := r . (s[1..i]) . '\n';
+	    s := i+1+s;
+	    while length(s) > 0 and s[1]=' ' do s := 1+s od;
+	    break
+
+	# '(' before, '-+/*\,.:;' after (-4 shifted)
+	elif i+4 <= wrap and
+	   (s[i+5]='(' or s[i+4]='-' or s[i+4]='+' or s[i+4]=',' or
+	    s[i+4]='.' and ( i+5>length(s) or s[i+5]<'0' or s[i+5]>'9' ) or
+	    s[i+4]=';' or s[i+4]='*' or s[i+4]='/' or s[i+4]='\\' ) then
+		r := r . (s[1..i+4]) . '\n';
+		s := i+4+s;
+		break
+
+	# [^a-zA-Z0-9] after (-8 shifted)
+	elif i+8 <= wrap and
+	    SearchString(s[i+8],'abcdefghijklmnopqrstuvwxyz0123456789')<0 then
+		r := r . (s[1..i+8]) . '\n';
+		s := i+8+s;
+		break;
+
+	# anything after half the width
+	elif i <= wrap/2 then
+		r := r . (s[1..wrap]) . '\n';
+		s := wrap+s;
+		break;
+	    fi
+	od;
+    if ind>0 then s := CreateString(ind) . s fi
+    od;
+r := r . s;
+while length(r) >0 and r[length(r)] = ' ' do r := r-1 od;
+r . '\n'
+end:
+
+Paragraph_print := proc( ) option internal;
+  printf( '%s', string(args) )
+end:
+
+# TextBlock: Used for blocks in LaTeX or HTML (abstracts, quotes, ... )
+TextBlock := proc(blocktype, content)
+opts := []:
+if nargs=1 then
+     error('invalid single argument')
+elif not type(blocktype,string) then
+     error('First argument, blocktype, must be a string')
+else
+    for i from 2 to nargs do
+	    if not type(args[i],{structure,string, equal}) then
+	        error(args[i],'is an invalid argument')
+        fi
+	od;
+    noeval(TextBlock(args))
+fi
+end:
+
+TextBlock_type := noeval(structure({string,structure,equal}, TextBlock)):
+
+TextBlock_string := proc( b:TextBlock ) option internal;
+    r := '';
+    for i from 2 to length(b) do
+        if not type(b[i], equal) then
+            r := r . string(b[i]);
+        fi:
+    od:
+    return(r);
+end:
+
+
+# DocEl: Encapsulates content, either as '\name{content} in
+# LaTeX or as <name>content</name> in {X|HT}ML
+DocEl := proc(name, content)
+if nargs=1 then
+     error('invalid single argument')
+else for i to nargs do
+	if not type(args[i],{string,structure,equal}) then
+	    error(args[i],'is an invalid argument') fi
+	od;
+noeval(DocEl(args))
+fi
+end:
+
+DocEl_type := noeval(structure({string, structure, equal}, DocEl));
+
+DocEl_string := proc( d:DocEl ) option internal;
+    r := '';
+    for i from 2 to length(d) do
+        if type(d[i]) <> equal then
+            r := r.string(d[i]);
+        fi:
+    od:
+    return(r);
+end:
+
+
+Table := proc() option polymorphic;
+#
+#					Gaston H. Gonnet (May 1998)
+# changed to option polymorphic. Oct 31, 2003. PvR
+noeval(procname(args)) end:
+
+
+
+Trim := proc(str: string)
+	option internal;
+  description 'Remove trailing blanks and tabs from left and right of string';
+  start := 1;
+  while start < length(str) and str[start] = ' ' or str[start]='\t' do start := start + 1; od;
+  ende := length(str);
+  while ende > start  and str[ende] = ' ' or str[ende]='\t' do ende := ende - 1; od;
+  res := str[start..ende];
+  return(res);
+end:
+
+GetLines := proc(str: string)
+	option internal;
+  description 'Converts a string into an array, where each row up to the
+  carriage return is an element of the array';
+  res := copy([]);
+
+  start := 1;
+  pos := 0;
+  nl := '\n';
+  while pos > -1 do
+    pos := SearchString(nl, str[start..-1]);
+    if pos > -1 then
+       pos := pos + start;
+       if pos > 0 then res := append(res, str[start..pos-1]); fi;
+       start := pos+length(nl);
+     fi;
+   od:
+   if start < length(str) then res := append(res, str[start..-1]); fi;
+   return(res);
+end:
+	
+
+Row := proc() option polymorphic; noeval(Row(args)) end:
+
+array_Row := proc();
+  if type(args, array(array)) then
+    result := copy([]);
+    for i to length(args) do
+      argi := op(args)[i];
+      result := append(result, noeval(Row(op(argi))));
+    od;
+  else
+     result := noeval(Row(op(args)));
+  fi;
+  return(result);
+end:
+
+list_Row := proc();
+  return (array_Row(args));
+end:
+
+list_Table := proc( m:matrix )
+	mtabl := Table( border,center,ColAlign(seq('r',length(m[1])))):
+	for mi in m do
+		mtabl := append(mtabl, array_Row(mi)):
+	od:
+	return(mtabl):
+end:
+
+
+Table_type := noeval(structure(anything,Table)):
+
+Table_string := proc(T)
+option internal;
+opts := {};
+gut := 2;
+wid := Set(screenwidth=80);  Set(screenwidth=wid);
+rows := NULL;
+values := NULL;
+colal := NULL;
+tit := '';
+for z in T do
+     if member(z,{'center','border','rowwise', 'hastitlerow'}) then opts := opts union {z}
+     elif type(z,structure({string,structure(posint,noeval(p))},ColAlign)) then colal := z
+     elif type(z,structure(string,RowAlign)) then next
+     elif type(z,'gutter'={0,posint}) then gut := op(2,z)
+     elif type(z,'gutter'=list({0,posint})) then gut := op(2,z)
+     elif type(z,'width'=posint) then wid := op(2,z)
+     elif type(z,'title'=string) then tit := op(2,z)
+     elif type(z,structure(anything,Row)) then rows := rows, z
+     elif type(z,structure(anything,Values)) then values := values, op(z)
+     elif z='Rule' then rows := rows, z
+     else error(z,'is an invalid argument of Table') fi
+od;
+
+if rows <> NULL then
+     if values <> NULL then error('cannot specify Row and Values') fi;
+
+     rows := [rows];
+     for z in rows do
+	if z <> 'Rule' then
+	     if assigned(ncols) then
+		  if ncols <> length(z) then
+		       error(ncols,'Rows have different number of columns') fi;
+	     else ncols := length(z) fi fi
+	od;
+     if colal=NULL then colal := CreateArray(1..ncols,'c') fi;
+     if length(colal) <> ncols then error('ColAlign has an incorrect length')
+     elif type(gut,list) and length(gut) <> ncols-1 then
+	  error('gutter list has incorrect length') fi;
+     if type(gut,integer) then gut := CreateArray(1..ncols-1,gut) fi;
+     nrows := length(rows);
+
+     # break cells with ColAlign=p(width) into several rows
+     pcols := [seq( If(type(colal[i],structure(posint,noeval(p))),i,NULL),i=1..ncols)];
+     if pcols<>[] then
+	wordchars := [ seq(IntToAscii(z),z=AsciiToInt('A')..AsciiToInt('Z')),
+		       seq(IntToAscii(z),z=AsciiToInt('a')..AsciiToInt('z')),
+		       seq(IntToAscii(z),z=AsciiToInt('0')..AsciiToInt('9'))];
+	colws := [seq(If(member(i,pcols),colal[i,1],0),i=1..ncols)];
+	newrows := [];
+	for row in rows do
+	    if row='Rule' then newrows := append(newrows,row); next fi;
+	    newrow := CreateArray(1..ncols,'');
+	    remains := CreateArray(1..ncols,'');
+	    for z in pcols do remains[z] := string(row[z]) od:
+	    # copy everything that fits in first new row
+	    for i to ncols do
+		if member(i,pcols) and length(remains[i])>colws[i] then
+		    lastbp := 0;
+		    for j to colws[i] do
+			if not member(remains[i,j],wordchars) then lastbp := j fi;
+		    od:
+		    if lastbp=0 then 
+			newrow[i] := remains[i,1..colws[i]-1].'-';
+			remains[i] := remains[i,colws[i]..-1];
+		    else
+			newrow[i] := remains[i,1..lastbp];
+			remains[i] := remains[i,lastbp+1..-1];
+		    fi; 
+	    	else
+		    newrow[i] := row[i];
+		    remains[i] := '';
+	    	fi;
+	    od;
+	    newrows := append(newrows,newrow);
+	    # create new rows for remaining content
+	    while remains<>CreateArray(1..ncols,'') do
+		newrow := CreateArray(1..ncols,'');
+		for i in pcols do
+		    if length(remains[i])>colws[i] then
+			lastbp := 0;
+			for j to colws[i] do
+                            if not member(remains[i,j],wordchars) then lastbp := j fi;
+                    	od:
+           		if lastbp=0 then
+                            newrow[i] := remains[i,1..colws[i]-1].'-';
+                            remains[i] := remains[i,colws[i]..-1];
+                    	else
+                            newrow[i] := remains[i,1..lastbp];
+                            remains[i] := remains[i,lastbp+1..-1];
+                        fi;
+		    else
+			newrow[i] := remains[i];
+			remains[i] := '';
+		    fi;
+		od;
+		newrows := append(newrows,newrow);
+	    od;
+	od;
+	rows := newrows;
+	nrows := length(rows);
+	colal := copy(colal);
+	for z in pcols do colal[z] := 'l' od:
+     fi; # end of breaking long lines
+     
+     t := CreateArray(1..nrows,1..ncols,'');
+     wids := CreateArray(1..ncols);
+     for i to nrows do if rows[i] <> 'Rule' then
+	 for j to ncols do
+	     if rows[i,j]=SpanPrevious then next fi;
+	     t[i,j] := string(rows[i,j]);
+	     for isp from j+1 to ncols while rows[i,isp]=SpanPrevious do od;
+	     if isp > j+1 then
+		  # compute the excess space needed to be distributed
+		  # evenly between all the columns spanned
+		  exce := length(t[i,j]) - sum( wids[k], k=j..isp-1 ) -
+			sum( gut[k], k=j..isp-2 );
+		  if exce > 0 then
+		      for k from j to isp-1 do
+			  v := round( exce/(isp-k) );
+			  wids[k] := wids[k] + v;
+			  exce := exce - v
+		      od
+		  fi
+	     else wids[j] := max(wids[j],length(t[i,j])) fi
+	 od
+     fi od;
+     totwid := sum(wids)+sum(gut);
+     if member(border,opts) then totwid := totwid+6 fi;
+
+     r := '';
+     if member(center,opts) and totwid < wid then
+	  leftmarg := CreateString( floor( (wid-totwid)/2 ))
+     else leftmarg := '' fi;
+
+     if tit <> '' then
+	  if length(tit) > totwid then r := string(Paragraph(2,tit)) . '\n\n'
+	  elif member(center,opts) then
+	       r := CreateString( round( (totwid-length(tit))/2 )) .
+		  tit . '\n\n'
+	  else r := '  ' . tit . '\n\n' fi
+     fi;
+
+     if member(border,opts) then
+	 r := r . leftmarg . CreateString(totwid,'-') . '\n' fi;
+     for i to nrows do
+	 r := r . leftmarg;
+	 if rows[i] = 'Rule' then
+	      if member(border,opts) then
+		   r := r . '|' . CreateString(totwid-2,'-') . '|\n'
+	      else r := r . CreateString(totwid,'-') . '\n' fi;
+	      next
+	 elif member(border,opts) then r := r . '|  ' fi;
+	 for j to ncols do
+	      if rows[i,j]=SpanPrevious then next fi;
+	      ent := t[i,j];
+	      lent := length(ent);
+	      thiswid := wids[j];
+	      for k from j+1 to ncols while rows[i,k]=SpanPrevious do
+		  thiswid := thiswid + wids[k] + gut[k-1] od;
+	      if lent = thiswid then r := r . ent
+	      elif colal[j] = 'l' then r := r . ent . CreateString(thiswid-lent)
+	      elif colal[j] = 'r' then r := r . CreateString(thiswid-lent) . ent
+	      elif colal[j] = 'c' then
+		   lsp := round( (thiswid-lent-0.0001)/2 );
+		   rsp := thiswid-lent-lsp;
+		   r := r . CreateString(lsp) . ent . CreateString(rsp)
+	      else error(colal[j],'is an invalid argument for ColAlign') fi;
+	      if j<ncols and k <= ncols then r := r . CreateString(gut[j]) fi;
+	      od;
+	 if member(border,opts) then r := r . '  |' fi;
+	 if i < nrows or member(border,opts) then r := r . '\n' fi;
+     od;
+     if member(border,opts) then
+	 r := r . leftmarg . CreateString(totwid,'-') . '\n' fi;
+
+     return(r)
+
+elif values <> NULL then
+     if type(gut,list) then
+	  error('cannot specify multiple gutters for Values') fi;
+     values := [values];  nv := length(values);
+     if colal=NULL then colal := ['c'] fi;
+     r := '';
+     lo := 0;  hi := min( nv, floor((wid+gut) / (gut+1)) ) + 1;
+     while hi - lo > 1 do
+	 j := round( (hi+lo)/2 );	# try with j columns (not all values
+					# of j are possible, empty columns)
+	 nr := ceil( nv/j );
+	 j2 := ceil( nv/nr );
+	 if j2 <= lo then lo := j;  next else j := j2 fi;
+	 as := op(opts),gutter=gut,width=wid;
+	 for i to nr do
+	     t := NULL;
+	     if member(rowwise,opts) then
+		  for k from (i-1)*j+1 to i*j do
+		      if k > nv then t := t, '' else t := t, values[k] fi od;
+	     else for k from i by nr to j*nr do
+		      if k > nv then t := t, '' else t := t, values[k] fi od;
+		  fi;
+	     as := as, Row(t)
+	     od;
+	 t := ColAlign();
+	 for i to j do t := append(t,colal[ mod(i-1,length(colal))+1 ]) od;
+	 t2 := procname(Table(as,t));
+	 i := SearchString('\n',t2);
+	 if i <= 0 then i := length(t2) else i := i-1 fi;
+	 if i <= wid and i > wid-gut-1 then return(t2)
+	 elif i < wid then lo := j;  r := t2 else hi := j fi
+	 od;
+     if r='' then t2 else r fi
+else error('must specify Rows or Values') fi
+end:
+
+
+Indent := proc() noeval(Indent(args)) end:
+Indent_type := structure(anything,Indent):
+Indent_string := proc( ind:Indent ) option internal;
+t := '';
+if length(ind) < 2 or not type(ind[1],integer) then
+    error(ind,'invalid arguments')
+elif ind[1] < 0 then error('not implemented yet') fi;
+inds := CreateString(ind[1]);
+scrw := Set(screenwidth=80);  Set(screenwidth=scrw-ind[1]);
+for z in [ind[2..-1]] do
+    if not type(z,string) then z := string(z) fi;
+    while length(z) > 0 do
+	i := SearchString('\n',z);
+	if i<0 then t := t . inds . z;  break fi;
+	t := t . inds . z[1..i+1];
+	z := i+1+z
+	od;
+    od;
+Set(screenwidth=scrw);
+t
+end:
+Indent_HTMLC := proc( ind:Indent ) option internal;
+t := '';
+if length(ind) < 2 or not type(ind[1],integer) then
+    error(ind,'invalid arguments')
+elif ind[1] < 0 then error('not implemented yet') fi;
+if ind[1]=0 then
+     for i from 2 to length(ind) do t := t . HTMLC(ind[i]) od;
+     return( t ) fi;
+return( '<DIV>' . HTMLC( Indent( max(0,ind[1]-5), ind[2..-1] )) . '</DIV>' )
+end:
+
+
+
+Document := proc( ) option polymorphic; noeval(procname(args)) end:
+Document_print := proc( d ) printf( '%s', string(d) ) end:
+Document_type := structure(anything,Document):
+Document_string := proc( d ) option internal;
+r := '';
+for z in d do
+    if not type(z,string) then z := string(z) fi;
+    if length(z)=0 or z[-1..-1] <> '\n' then r := r . z . '\n'
+    else r := r . z fi
+    od;
+r
+end:
+
+
+
+Code := proc( ) option polymorphic; noeval(procname(args)) end:
+Code_print := proc( d ) option internal; printf( '%s', string(d) ) end:
+Code_type := structure({string,structure},Code):
+Code_string := op(Document_string):
+
+
+
+TT := proc( ) option polymorphic; noeval(procname(args)) end:
+TT_print := proc( d ) option internal; printf( '%s', string(d) ) end:
+TT_type := structure({string,structure},TT):
+TT_string := op(Document_string):
+
+
+
+IT := proc( ) option polymorphic; noeval(procname(args)) end:
+IT_print := proc( d ) option internal; printf( '%s', string(d) ) end:
+IT_type := structure({string,structure},IT):
+IT_string := op(Document_string):
+
+
+Bold := proc( ) option polymorphic; noeval(procname(args)) end:
+Bold_print := proc( d ) option internal; printf( '%s', string(d) ) end:
+Bold_type := structure({string,structure},Bold):
+Bold_string := op(Document_string):
+
+
+
+Color := proc( colcode ) option polymorphic; noeval(procname(args)) end:
+Color_string := proc( c ) option internal;
+    r := '';  for i from 2 to length(c) do r := r . string(c[i]) od;  r  end:
+
+
+
+
+List := noeval(List):
+List_print := proc( d ) option internal; printf( '%s', string(d) ) end:
+List_type := structure({string,structure,procedure},List):
+List_string := proc( lst:List ) option internal;
+	ll := length(lst);
+	if ll < 2 then
+	    error('List should have at least two arguments') fi;
+	f := lst[1];
+	if type(f,procedure) then
+	elif type(f,string) and SearchString('%',f) >= 0 then
+	     pat := f;  f := x -> sprintf( pat, x )
+	elif type(f,string) then pat := f;  f := x -> pat fi;
+	labels := [ seq(string(f(i)), i=1..ll-1 ) ];
+	if not type(labels,list(string)) then
+	    error('labelling function does not produce strings',labels) fi;
+	longest := max( seq( length(labels[i]), i=1..ll-1 ));
+	r := '';
+	for i from 2 to ll do
+	    t := Paragraph( -longest-1, labels[i-1] . ' ' . string(lst[i]) );
+	    r := r . string(t) . '\n'
+	    od;
+	r
+	end:
+List_HTMLC := proc( lst:List ) option internal;
+	ll := length(lst);
+	if ll < 2 then
+	    error('List should have at least two arguments') fi;
+	f := lst[1];
+	if type(f,procedure) then
+	elif type(f,string) and SearchString('%',f) >= 0 then
+	     pat := f;  f := x -> sprintf( pat, x )
+	elif type(f,string) then pat := f;  f := x -> pat fi;
+	labels := [ seq(string(f(i)), i=1..ll-1 ) ];
+	if not type(labels,list(string)) then
+	    error('labelling function does not produce strings',labels) fi;
+	longest := max( seq( length(labels[i]), i=1..ll-1 ));
+	r := '<p><table cellspacing=3>';
+	for i from 2 to ll do
+	    r := r . '<tr><td align=left valign=top>' . labels[i-1] .
+		'</td><td align=left>' .  HTMLC(lst[i]) . '</td></tr>\n'
+	    od;
+	r . '</table></p>\n'
+	end:
+
+
+
+RunDarwinSession := proc( doc:structure )
+
+  Summarize := proc(t)
+  offs := [0];
+  t3 := t;
+  do i := SearchString('\n',t3);
+     if i<0 then break fi;
+     t3 := i+1+t3;
+     offs := append(offs,offs[length(offs)]+i+1);
+     od;
+
+  if length(offs)-1 <= DarwinOutputUpperLimit then return(t) fi;
+  ntop := round( (DarwinOutputUpperLimit-1) / 2 );
+  nbot := DarwinOutputUpperLimit - 1 - ntop;
+  t[ 1..offs[ntop+1] ] .
+  sprintf( ' . . . . (%d output lines skipped) . . . .\n',
+	length(offs)-1-ntop-nbot ) .
+  t[ offs[length(offs)-nbot]+1 .. -1]
+  end:
+
+  n := 1;
+  inp := [[]];
+  pat := '######## 3618765%d164398 ########\n';
+  BuildInput := proc( doc ) external inp, n;
+	if not type(doc,structure) then return()
+	elif type(doc,structure(anything,{DarwinCode,DarwinExpression,
+		DarwinHidden,DarwinCodeHTML,DarwinHideInput})) then
+	     n := n+1;
+	     t := NULL;
+	     for z in doc do
+		 if not type(z,string) then error(doc,'invalid DarwinCode') fi;
+		 if z[-1..-1] <> '\n' then z := z . '\n' fi;
+		 t := t, op(SplitLines(z));
+		 printf( '%s', z )
+		 od;
+	     inp := append(inp,[t]);
+	     printf( pat, n )
+	else for z in doc do procname(z) od fi
+  end:
+
+fn := tmpRunDarwinSession;
+OpenWriting( fn );
+printf( 'Set(gc=10^7):\n' );
+printf( pat, n );
+t := traperror(BuildInput( doc ));
+if t=lasterror then OpenWriting( terminal );  error(t) fi;
+# insure that the session will terminate even with bad syntax
+lprint( 'done;\ndone;\n'';done;\ndone;' );
+OpenWriting( terminal );
+
+res := TimedCallSystem( If( assigned(InvokeDarwin), InvokeDarwin, 'darwin' ) .
+	' <' . fn, If( type(DarwinTimeout,positive), DarwinTimeout, 600 ) );
+res2 := res[2];
+if res2 = '(Timeout)' then error('Timeout, session lasted too long') fi;
+out := CreateArray(1..n,'');
+for i to n do
+    pati := sprintf( pat, i );
+    j := CaseSearchString( pati, res2 );
+    if j >= 0 then
+	 t2 := res2[1..j];
+	 res2 := j+length(pati) + res2;
+	 # eliminate the lines which appear in inp[i]
+	 for z in inp[i] do
+	     k := CaseSearchString( '> ' . z, t2 );
+	     if k < 0 and z[1]='#' and CaseSearchString(z,t2) >= 0 then
+		  k := CaseSearchString(z,t2);
+		  t2 := t2[1..k] . t2[k+length(z)+1..-1];
+		  next
+	     elif k < 0 then
+		  if length(z) > 0 and z[1]='?' then
+			k := CaseSearchString( '\n', t2 );
+			if k >= 0 then t2 := t2[k+1..-1];  next fi;
+			fi;
+		  error( z, res2, 'input line cannot be found in output') fi;
+	     t2 := t2[1..k] . t2[k+length(z)+3..-1]
+	     od;
+	 if type(DarwinOutputUpperLimit,posint) and
+	    ( length(inp[i]) = 0 or inp[i,1,1] <> '?' ) then
+	      out[i] := Summarize(t2)
+	 else out[i] := t2 fi;
+	 fi
+    od;
+
+  n := 1;
+  BuildOutput := proc( doc ) external n; local i;
+	if not type(doc,structure) then doc
+	elif type(doc,structure(anything,DarwinCode)) then
+	     n := n+1;
+	     Color(green4,Code(op(doc))), Color(Red,Code(out[n]))
+	elif type(doc,structure(anything,DarwinHideInput)) then
+	     n := n+1;
+	     Color(Red,Code(out[n]))
+	elif type(doc,structure(anything,DarwinCodeHTML)) then
+	     n := n+1;
+	     Color(Green,Code(ConvertToEntityName(op(doc)))),
+	     Color(Red,Code(ConvertToEntityName(out[n])))
+	elif type(doc,structure(anything,DarwinExpression)) then
+	     n := n+1;
+	     t3 := out[n];
+	     if length(t3) > 0 and t3[-1..-1] = '\n' then t3[1..-2] else t3 fi
+	elif type(doc,structure(anything,DarwinHidden)) then
+	     n := n+1;
+	     NULL
+	else # be particularly careful about explicit procs
+	     op(0,doc)( seq( procname(doc[i]), i=1..length(doc)) )
+	     fi
+  end:
+
+CallSystem( 'rm ' . fn );
+BuildOutput(doc);
+end:
+
+
+# The following characters have to be translated to be represented in HTML
+# Description                               Code            Entity name
+# ===================================       ============    ==============
+# quotation mark                            &#34;  --> "    &quot;   --> "
+# ampersand                                 &#38;  --> &    &amp;    --> &
+# less-than sign                            &#60;  --> <    &lt;     --> <
+# greater-than sign                         &#62;  --> >    &gt;     --> >
+ConvertToEntityName := proc( s0 )
+if nargs <> 1 then
+     r := NULL;
+     for z in [args] do r := r, procname(z) od;
+     return( r ) fi;
+s := s0;
+for t in [ ['&quot;', '"'], ['&lt;', '<'], ['&gt;', '>'] ] do
+     do i := SearchString( t[2], s );
+	if i < 0 then break fi;
+	s := s[1..i] . t[1] . s[i+2..-1]
+	od
+     od;
+s
+end:
+
+
+#
+#
+#   Function to call gimp on figures (to have a better conversion from
+#	postscript to gif and to do some cropping or rotating).
+#
+#   If the output file file.gif exists, then assume everything is ok.
+#	To trigger this execution, just remove the corresponding *.gif files.
+#
+#   The function returns a string suitable for HTML inclusion which
+#	contains a legend if the optional 3rd argument is provided.  Its
+#	recommended use in a bio-recipe is as follows:
+#
+#	DarwinExpression( 'GimpFigure(' . dir .
+#		', filename, ''legend for the ALT field'' );' ),
+#
+#	If filename.gif already exists (i.e. it is not created by
+#	the execution of the bio-recipe), this simpler form can be used:
+#
+#	GimpFigure( dir, filename, 'legend for the ALT field' ),
+#
+GimpFigure := proc( dir:string, file:string, legend:string )
+i := CallSystem( sprintf( 'test -e %s/%s.gif', dir, file ));
+if i <> 0 then
+     if CallSystem( sprintf( 'mv %s %s/%s', Set(plotoutput), dir, file )) <> 0
+	then error('mv failed, probably no output from plotting') fi;
+     CallSystem( sprintf( 'gimp %s/%s', dir, file ));
+     fi;
+if nargs >= 3 then
+     sprintf( '<center><img src="%s.gif"\nalt="%s"></center>\n', file, legend )
+else sprintf( '<center><img src="%s.gif"></center>\n', file ) fi
+end:
+
+#
+# Class PostscriptFigure - figure given by a postscript file (Darwin or other)
+#
+# Template:  PostscriptFigure()
+#
+# Fields:
+#   Name      Type               Description
+#   -----------------------------------------------------------------------
+#   psfile    string             (opt) file name containing the postscript
+#   Caption   Caption = string   (opt) caption to describe the figure
+#   modif     string = string    (opt) pattern substitutions for input file
+#
+# Returns:
+#         PostscriptFigure
+# Synopsis:  A PostscriptFigure object is constructed from a postscript file
+#   which could be generated by a Darwin Draw command or from some other source,
+#   e.g. xfig.  This structure is normally held in a Document and is displayed
+#   as appropriate (as HTML, latex or a string).  If no psfile is given, it is
+#   assumed that it comes from a Draw command and hence plotoutfile is used.
+#   When this structure is converted to HTML, a gif file has to be made and this
+#   is done with the use of Gimp.  Hence Gimp has to be available in the system.
+#   If it is converted to latex, the postscript is converted to encapsulated
+#   postscript with ps2eps, which should also be available.  Conversion to a
+#   string just prints a box with a unix command suitable to display the
+#   contents.
+# The modifiers are a simple mechanism to modify previously created postscript
+#   files.  Textual substitution will be performed (length issues are ignored,
+#   and most of the time they work well).  These substitutions should be based
+#   on a relatively unique pattern, short patterns that may coincide with other
+#   postscript commands are bound to be disastrous.
+#
+# Examples:
+# > PostscriptFigure( 'PAMgraph.ps', Caption='Score vs PAM');
+# PostscriptFigure(PAMgraph.ps,Caption = Score vs PAM)
+#
+
+PostscriptFigure := proc( ;
+		psfile : string,
+		'Caption' = ( (caption = ''):string),
+		'Convert' = ( (convmeth = 'auto'):{'auto','gimp'}),
+		'PlaceUnder' = (PlaceUnder:string),
+		'LinkAs' = (LinkAs:string),
+		modifs : {(string=string),list(string=string)})
+if not assigned(psfile) then return( procname(Set(plotoutput),args)) fi;
+if length(psfile) < 5 or (psfile[-3..-1] <> '.ps' and psfile[-4..-1] <> '.eps') then
+	 error(psfile,'postscript file name does not end in .ps or .eps') 
+fi;
+ext := '';
+extid := 0;
+if psfile[-3..-1] = '.ps' then
+    ext := '.ps';
+    extid := -4;
+elif psfile[-4..-1] = '.eps' then
+    ext := '.eps';
+    extid := -5;
+fi:
+if assigned(modifs) then
+    # make the pattern substitutions and rename the file
+    if not type(modifs,list) then modifs := [modifs] fi;
+    newfn := psfile[1..extid] . Rand(10^4..10^5) . ext;
+    cmd := 'sed ';
+    for z in modifs do
+	cmd := cmd . sprintf( '-e "s/%s/%a/" ', op(z) )
+    od:
+    cmd := cmd . psfile . ' >' . newfn;
+    if CallSystem( cmd ) <> 0 then error(cmd,'failed to run') fi;
+    psfile := newfn
+fi;
+if not assigned(PlaceUnder) then PlaceUnder := psfile[1..extid] . '.jpg' fi;
+if not assigned(LinkAs) then LinkAs := PlaceUnder fi;
+noeval( procname( psfile, 'Caption'=caption, 'Convert'=convmeth,
+    'PlaceUnder'=PlaceUnder, 'LinkAs'=LinkAs ))
+end:
+
+PostscriptFigure_string := proc( pf:PostscriptFigure ) option internal;
+psfile :=pf[1];
+comm := '| ghostview ' . psfile . ' |\n';
+n := min(length(comm)-1, 60);
+r1 := CreateString(n,'-') . '\n';
+r2 := '|' . CreateString(n-2) . '|\n';
+r3 := '|' . CreateString(floor((n-18)/2)) . PostscriptFigure .
+	CreateString(ceil((n-18)/2)) . '|\n';
+r := r1 . r2 . r3 . r2 . comm . r2 . r1;
+if pf[2,2]<>'' then r . '\n' . pf[2,2] . '\n' else r fi
+end:
+
+PostscriptFigure_HTMLC := proc( pf:PostscriptFigure ) option internal;
+psfile := pf[1];
+convmeth := pf[3,2];
+newfn := pf[4,2];
+linkas := pf[5,2];
+if convmeth='gimp' then
+     fs := FileStat( newfn );
+     if length(fs)=0 or fs['st_size']=0 then
+         if CallSystem( 'cp -p ' . psfile . ' ' . newfn ) <> 0 then
+            error('cannot copy files') fi;
+         CallSystem( 'gimp ' . libname . '/GimpFigureInstructions.gif ' . newfn );
+     fi;
+elif convmeth='auto' then
+     if CallSystem('convert '.psfile.' '.newfn)<>0 then
+	 error('conversion of PS file failed.');
+     fi
+else error(convmeth,'unknown coversion method')
+fi;
+if pf[2,2]<>'' then
+     sprintf( '<img src="%s" alt="%s"><br>\n<p>%s</p>\n',
+	linkas, pf[2,2], pf[2,2] )
+else sprintf( '<img src="%s">\n', linkas ) fi
+end:
+
+PostscriptFigure_LaTeXC := proc( pf:PostscriptFigure ) option internal;
+psfile := pf[1];
+ext := '.ps';
+extid := -4:
+if psfile[-4..-1] = '.eps' then
+    ext := '.eps';
+    extid := -5:
+fi:
+if ext = '.ps' then
+    if CallSystem( 'ps2eps -q -f ' . psfile ) <> 0 then
+        error('ps2eps commands failed to run correctly') fi;
+fi:
+r := '\\begin{figure}[!] \\includegraphics[scale=1]{' . psfile[1..extid] .
+	'}\n';
+if pf[2,2]<>'' then r := r . '\\caption{' . LaTeXC(pf[2,2]) . '}\n' fi;
+r . '\\end{figure}\n'
+end:
+PostscriptFigure_type := structure(anything,PostscriptFigure):
+CompleteClass( PostscriptFigure );
+
+
+# SectionHeader data structure to start new sections, this will be
+#  used in LaTeXCTools to produce \section, \subsection, ...
+#  and in HTMLC for the <H1>...</H1>, ...
+SectionHeader := proc( level:posint, title;
+    'suppressNumbers'=((suppressNumbers=false):boolean)
+    ) option polymorphic;
+  if nargs = 2 or nargs = 3 then noeval(procname(args)):
+  else error(args,'invalid arguments for SectionHeader') fi
+end:
+SectionHeader_type := structure(anything,SectionHeader):
+SectionHeader_string := proc( h:SectionHeader ) option internal;
+  sprintf('\n\n%s\n', h[title])
+end:
+SectionHeader_LaTeXC := proc( sh:SectionHeader ) option internal;
+comm := '\\';
+to min(sh['level']-1,10) do comm := comm . 'sub' od;
+comm := comm . 'section';
+if length(sh) = 3 and sh[3,1]='suppressNumbers' and sh[3,2]=true then comm := comm . '*' fi:
+comm := comm . '{' . LaTeXC( sh['title'] ) . '}'
+end:
+CompleteClass( SectionHeader );
+
+
+# Added by CD
+# This function returns a formula as ASCII-art using maple
+#
+MapleFormula := proc(expr: string);
+  if nargs=1 then noeval(MapleFormula(args))
+  else error('invalid number of arguments') fi
+end:
+
+
+MapleFormula_string := proc(formula: MapleFormula)
+option internal;
+  if nargs <> 1 then
+    error('Please enter a mathematical expression in maple format as argument\n');
+  else
+    # we fetch the ascii art formula in maple
+    answer := TimedCallSystem('echo "''" '''.formula[expr].''' "'';" | '.maplepath.' -q');
+
+    if answer[2] = '' then
+      return('Error: Maple could not be executed (not in PATH?)');
+    fi;
+    # we now remove the blank spaces in front
+    pos := SearchString('\n',answer[2]);
+    arr:=[];
+    while pos > 0 do
+      arr:=append(arr, answer[2][1..pos]);
+      answer[2] := answer[2][pos+2..length(answer[2])];
+      pos := SearchString('\n',answer[2]);
+    od:
+    sorted_arr:=sort(arr);
+
+    count:=1;
+    while (count <= length(sorted_arr[length(sorted_arr)])
+      and sorted_arr[length(sorted_arr)][count] = ' ') do
+      count:=count+1:
+    od;
+
+    OutString := '';
+    for i from 1 to length(arr) do
+      OutString := OutString . arr[i][count..length(arr[i])] . '\n';
+    od;
+
+
+    return(OutString);
+  fi:
+end:
+
+MapleFormula_HTMLC := proc( formula:MapleFormula ) option internal;
+    '<BLOCKQUOTE><PRE>'.string(formula).'</PRE></BLOCKQUOTE>'
+end:
+
+CompleteClass(MapleFormula);

@@ -1,0 +1,353 @@
+#
+# Several indices for codon usage.
+#
+#                          Alexander Roth (2005-2007)
+
+
+# Frequency of optimal codons (Ikemura 1981).  AR (April 2007)
+ComputeFop := proc(d:string)
+  cu:=CodonUsage();
+  aviod:={op(AToCodon('$')),
+          op(AToCodon('M')),
+          op(AToCodon('W'))};
+  xop:=0; xnon:=0;
+  for i to length(d) by 3 do
+    c := d[i..i+2];
+    if not member(c,aviod) then
+      if c=cu[CodonToInt(c),1,1] then
+        xop:=xop+1;
+      else
+        xnon:=xnon+1;
+      fi;
+    fi;
+  od;
+  xop/(xop+xnon);
+end:
+
+
+# Effective number of codons* (Wright 1990, *Fuglsang 2004).  AR (April 2007)
+ComputeNEC := proc(d:string)
+  cod:=CreateArray(1..64);
+  aa:=CreateArray(1..20);
+  aviod:={op(AToCodon('$'))};
+  count:=0;
+  for i to length(d) by 3 do
+    c := d[i..i+2];
+    if not member(c,aviod) then
+      ai:=CodonToInt(c);
+      ci:=CodonToCInt(c);
+      cod[ci]:=cod[ci]+1;
+      aa[ai]:=aa[ai]+1;
+      count:=count+1;
+    fi;
+  od;
+  
+  Nc:=0;
+  for i to 20 do
+    Acods := IntToCInt(i);
+    k := length(Acods);
+    if k<2 then Nc := Nc + 1; next; fi;
+    n := sum([seq(cod[Acods[x]], x=1..k)]);
+    S := sum([seq((cod[Acods[x]]/n)^2, x=1..k)]);
+    F := (n*S-1) / (n-1);
+    Nc := Nc + 1/F;
+  od;
+  Nc;
+end:
+
+#one:=''; all:='';
+#for x to 3 do
+#for i to 20 do for j to length(IntToCodon(i)) do
+#    all:=all.IntToCodon(i)[j];
+#    one:=one.IntToCodon(i)[1];
+#od od od;
+
+# Nucleotide content.  AR (2006)
+NucleotideContent := proc( ; tD:{string, Entry}, pos=[1,2,3]:list(posint)) -> list;
+  o := CreateArray(1..4);
+  n:=0;
+  if not assigned(tD) then
+    for z to DB[TotEntries] do
+      d:=SearchTag(DNA, Entry(z));
+      for i1 to length(d)-max(pos) by 3 do for i2 in pos do
+          i:=i1+i2;
+          n:=n+1;
+          o[BToInt(d[i])] := o[BToInt(d[i])]+1
+      od od;
+    od;
+  else
+    if type(tD, Entry) then d:=SearchTag('DNA', tD)
+    else d:=tD fi;
+    for i1 to length(d)-max(pos) by 3 do for i2 in pos do
+        i:=i1+i2;
+        n:=n+1;
+        o[BToInt(d[i])] := o[BToInt(d[i])]+1
+    od od;
+  fi;
+  return(o/n);
+end:
+
+
+# G+C content 3rd position of synonymous codons.  AR (April 2007)
+ComputeGC3syn:= proc(td:string)
+  if member(td[-3..-1], AToCodon('$')) then d:=td[1..-4] else d:=td fi; # remove stop codon
+  o := CreateArray(1..4);
+  n:=0;
+  for i to length(d) by 3 do
+    c:=d[i..i+2];
+    if length(IntToCInt(CodonToInt(c)))>1 then
+      n:=n+1;
+      oi:=BToInt(c[3]);
+      o[oi] := o[oi]+1
+    fi;
+  od;
+  o:=o/n;
+  return(o[2]+o[3]);
+end:
+
+
+# Base composition at silent sites.
+SilentSiteComposition := proc(d:string)
+  # to be implemented
+end:
+
+
+# Scaled Chi-Square.
+ScaledChiSquare := proc(d:string)
+  # to be implemented
+end:
+
+
+# Codon Bias Index (CBI) (Bennetzen and Hall 1982).
+ComputeCBI :=  proc(d:string)
+  # to be implemented
+end:
+
+
+# Relative synonymous codon usage.  AR (2007)
+RSCU := proc(;d:string)
+  if nargs>0 then
+    cc:=CodonCount(d);
+  else
+    cc := CodonCount();
+  fi;
+  rscu := CreateArray(1..64);
+  for i to 64 do
+    s:=0;
+    syn:=IntToCInt(CIntToInt(i));
+    l:=length(syn);
+    for j in syn do
+      s:=s+cc[j];
+    od;
+    if s=0 then next fi;
+    rscu[i]:=cc[i]/(s/l);
+  od;
+  rscu;
+end:
+
+
+# Compute CAI, the Codon Adaptation Index (Sharp and Li 1987).
+# Markus Friberg and Alexander Roth (Dec 2005)
+ComputeCAI := proc(DNA:{string, Entry})
+  # check global variables and scan arguments
+  if not assigned(RA) then 
+    error('Error in ComputeCAI: RA not assigned, use e.g. SetupRA(yeast);') fi;
+  if type(DNA, Entry) then dna:=copy(SearchTag('DNA', DNA)) 
+  else dna:=DNA fi;
+  UseCodonProb := false;
+  for i from 2 to nargs do
+    if length(args[i]) = 2 and args[i, 1] = 'UseCodonProb' then
+      UseCodonProb := args[i, 2]
+    else
+      error('Unknown argument ', args[i]);
+    fi;
+  od;
+  # compute cai
+  w := 0;
+  n := length(dna)/3;
+  for j to length(dna) by 3 do
+    cint := CodonToCInt(dna[j..j+2]);
+    codprob := If(UseCodonProb, CodonProb[cint], 1);
+    if CIntToA(cint) <> '$' then    # don't consider stop codons
+    w := w + ln(codprob * RA[cint]) fi;
+  od;
+  exp(1/n * w)
+end:
+
+ComputeCAIVector := proc(e:Entry)
+  if not assigned(RA) then 
+    error('Error in ComputeCAI: RA not assigned, use e.g. SetupRA(yeast);') fi;
+  dna := SearchTag('DNA', e);
+  wa := CreateArray(1..20);
+  na := CreateArray(1..20);
+  for j to length(dna) by 3 do
+    cint := CodonToCInt(dna[j..j+2]);        
+    a := CIntToInt(cint);
+    if a <= 20 then
+      wa[a] := wa[a] + ln(RA[cint]);
+      na[a] := na[a]+1;
+    fi;
+  od;
+  res := CreateArray(1..21);
+  for i to 20 do
+    res[i] := If(na[i]=0, 'NA', exp(1/na[i] * wa[i])) od;
+  res[21] := exp(1/sum(na) * sum(wa));
+  res
+end:
+
+SetupRA := proc(s:string)
+  global RA, CodonProb;
+  CodonProb := [0.9910, 0.9750, 0.9793, 0.9691, 0.9318, 0.9268, 0.8389, 0.9636,
+                0.9622, 0.8830, 0.8633, 0.9223, 0.9179, 0.9598,      1, 0.9825, 
+                0.9720, 0.8660, 0.8883, 0.9223, 0.9530, 0.8176, 0.7371, 0.9253, 
+                0.5895, 0.5874, 0.4657, 0.8154, 0.9370, 0.7825, 0.8817, 0.9173, 
+                0.9832, 0.9475, 0.9284, 0.9727, 0.9341, 0.9249, 0.8082, 0.9614, 
+                0.8887, 0.8914, 0.8059, 0.9475, 0.9074, 0.9249, 0.9072, 0.9719,
+                     0, 0.9460,      0, 0.9436, 0.9328, 0.9347, 0.8408, 0.9737,
+                     0, 0.7542, 0.8870, 0.8534, 0.9722, 0.9748, 0.9819, 0.9703]:
+  if s = 'yeast' then  #based on the original CAI paper by Shart and Li
+    RA := [0.135,     1,     1, 0.053, 0.012,     1, 0.006, 0.921, 
+               1, 0.031, 0.003, 0.021, 0.003,     1,     1, 0.823, 
+               1,     1, 0.007, 0.245,     1, 0.009, 0.002, 0.047, 
+           0.002, 0.002, 0.002, 0.137, 0.039, 0.003, 0.003, 0.006, 
+               1,     1, 0.016, 0.554, 0.015, 0.316, 0.001,     1, 
+           0.002, 0.020, 0.004,     1, 0.002, 0.831, 0.018,     1, 
+               1,     1,     1, 0.071, 0.036, 0.693, 0.005,     1,
+               1, 0.077,     1,     1, 0.117,     1,     1, 0.113]:
+  elif s = 'yeast2perc' then
+    RA := [0.1277, 1, 1, 0.08078603, 0.02564103, 0.9501, 0.01, 1, 1, 0.0313253,
+           0.00159109, 0.03253012, 0.00383632, 1, 1, 0.8325, 1, 1, 0.00572082, 
+           0.2407, 1,  0.00333704, 0.01, 0.08676307, 0.01, 0.01, 0.01, 0.1687,
+           0.04752971, 0.01, 0.00125078, 0.00562852, 1, 1, 0.01611863, 0.6806,
+           0.00955593, 0.3007, 0.00337268, 1, 0.00286369, 0.01890034, 0.00229095, 1,
+           0.00169635, 0.7625, 0.01526718, 1, 1, 1, 1, 0.08910891, 0.02409639, 0.6892,
+           0.00120482, 1, 1, 0.05555556, 1, 1, 0.1451, 1, 1, 0.1765]:
+  elif s = 'yeast1perc' then
+    RA := [0.07619048, 1, 1, 0.04887218, 0.01160093, 1, 0.01, 0.9722, 1,
+           0.02690583, 0.01, 0.02690583, 0.00233645, 1, 1, 0.7664, 1, 1, 0.01,
+           0.2192, 1, 0.00190114, 0.01, 0.07984791, 0.01, 0.01,
+           0.01, 0.1402, 0.03326180, 0.01, 0.00107296, 0.00536481, 1, 1,
+           0.01156069, 0.6220, 0.00392542, 0.2826, 0.00098135, 1, 0.01, 0.01452282,
+           0.00207469, 1, 0.01, 0.8253, 0.02028081, 1, 1, 1, 1, 0.06722689,
+           0.01345291, 0.7691, 0.01, 1, 1, 0.08333333, 1, 1, 0.1159, 1, 1, 0.1405]:
+  elif s = 'yeast05perc' then
+    RA := [0.06239168, 1, 1, 0.025, 0.004329, 1, 0.01, 0.8095, 1,
+           0.01877934, 0.01, 0.00938967, 0.00452489, 1, 1, 0.7285, 1, 1, 0.01,
+           0.1574, 1, 0.01, 0.01, 0.04961832, 0.01, 0.01,
+           0.01, 0.08362369, 0.02471910, 0.01, 0.01, 0.00449438, 1, 1,
+           0.01518987, 0.5362, 0.01, 0.2367, 0.00189394, 1, 0.01, 0.00852878,
+           0.00426439, 1, 0.01, 0.8644, 0.01261830, 1, 1, 1, 1, 0.05263158,
+           0.00938967, 0.7793, 0.01, 1, 1, 0.1132, 1, 1, 0.07865169, 1, 1, 
+           0.08415842]:
+  elif s = 'yeasttop24protexpr' then
+    RA := [0.3403, 1, 1, 0.3230, 0.1646, 0.6951, 0.04268293, 1, 1, 0.09117647,
+           0.04307692, 0.1059, 0.07407407, 0.6931, 1, 1, 1, 1, 0.1014, 0.7321, 1,
+           0.03353659, 0.00914634, 0.1982, 0.01, 0.00923077, 0.01, 0.2308,
+           0.1548, 0.01092896, 0.04007286, 0.07103825, 1, 0.9475, 0.1169, 1, 0.1366,
+           0.3707, 0.02764228, 1, 0.03382353, 0.06470588, 0.02647059, 1, 0.07712766,
+           0.7048, 0.09574468, 1, 1, 1, 1, 0.4009, 0.1324, 0.6029, 0.02941176, 1, 1,
+           0.07865169, 1, 1, 0.357, 1, 1, 0.3927]:
+  elif s = 'yeasttop24mrnaexpr' then
+    RA := [0.1286, 1, 1, 0.08292683, 0.04761905, 1, 0.04761905, 0.9864, 1,
+           0.03783784, 0.00904977, 0.02702703, 0.00621118, 1, 1, 0.677, 1, 1, 
+           0.00625, 0.17, 1, 0.00485437, 0.01941748, 0.09223301, 0.01, 0.00452489,
+           0.01, 0.2081, 0.04885057, 0.00862069, 0.01, 0.01436782, 1, 1,
+           0.00914634, 0.6516, 0.01081081, 0.327, 0.01, 1, 0.0080429, 0.02144772,
+           0.00268097, 1, 0.01754386, 0.8816, 0.01754386, 1, 1, 1, 1, 0.08163265,
+           0.07027027, 0.6757, 0.00540541, 1, 1, 0.125, 1, 1, 0.1782, 1, 1, 0.1019]:
+  elif s = 'carbone' then
+    RA := ComputeCarboneRA();
+  else
+    error('Error in SetupRA: not yet implemented for that organism')
+  fi;
+end:
+
+
+ComputeCarboneRA := proc( ; t=0.01:nonnegative, initfrac=1:nonnegative, iterfrac=0.5:nonnegative, mode:string)
+  global RA;
+  if not assigned(DB) then error('DB must be assigned') fi;
+  x := 1;  # fraction of the sequences used to compute RA in this iteration
+  AllGenes := [seq(i, i=1..DB[TotEntries])]:
+  genes := Shuffle(AllGenes)[1..round(initfrac * DB[TotEntries])]:
+  bestCorr := 0;
+  cai := CreateArray(1..DB[TotEntries]):
+  while length(genes) / DB[TotEntries] > t do
+    RA := RelativeAdaptiveness(genes);
+    for i to DB[TotEntries] do
+      dna:=SearchTag('DNA',Entry(i));
+      if SearchString('X', dna)<>-1 then next fi;
+      cai[i] := ComputeCAI(dna) od;
+    x := x * iterfrac;
+    res := transpose([AllGenes, cai]):
+    if mode='reverse' then
+      res := transpose(sort(res, res -> res[2])):
+    else
+      res := transpose(sort(res, res -> -res[2])):
+    fi;
+    genes := res[1][1..round(x * DB[TotEntries])]:
+  od;
+  RA
+end:
+
+
+RelativeAdaptiveness := proc(entries:list(posint))
+  CodonCounts := CreateArray(1..64);
+  for i in entries do
+    dna := SearchTag('DNA', Entry(i));
+    for j to length(dna) by 3 do
+      cod := CodonToCInt(dna[j..j+2]);
+      if cod=0 then next fi;   # to avoid XXX   
+      CodonCounts[cod] := CodonCounts[cod]+1;
+    od;
+  od;
+  RA := CreateArray(1..64);
+  aa := 1;
+  for aa to 20 do
+    codons := IntToCInt(aa);
+    counts := [seq(CodonCounts[i], i=codons)];
+    freqs := counts / sum(counts);
+    for i to length(codons) do
+      cod := codons[i];
+      RA[cod] := freqs[i] / max(freqs);
+    od;
+  od;
+  for i to length(RA) do       # set minimum RA value to 0.01
+    if RA[i] = 0 then 
+      RA[i] := 0.01 fi od;
+  for i in AToCInt('$') do     # set RA value of stop codons to 1
+    RA[i] := 1; od;
+  RA
+end:
+
+# for each codon, compute the probability that it occurs at least once in a gene
+CodonProbabilities := proc()
+  res := CreateArray(1..64);
+  for e in Entries() do
+    occurs := CreateArray(1..64);
+    dna := SearchTag('DNA', e);
+    for c to length(dna) by 3 do
+      cint := CodonToCInt(dna[c..c+2]);
+      occurs[cint] := 1;
+    od;
+    res := res + occurs;
+  od;
+  res / DB[TotEntries]
+end:
+
+
+FindHighlyExpressedGenes := proc( ; n=100:integer, tag='PROTEXPR':string)
+  # tags: 'PROTEXPR' 'MRNAEXPR'
+  expr := CreateArray(1..DB[TotEntries]);
+  for i to DB[TotEntries] do
+    ex := sscanf(SearchTag(tag, Entry(i)), '%f');
+    if ex <> [] then
+      expr[i] := op(ex) fi;
+  od;
+  sorted := sort(expr);
+  limit := sorted[length(sorted)-n+1];
+  genes := [];
+  for i to DB[TotEntries] do
+    if expr[i] >= limit then
+      genes := append(genes, i) fi od;
+  genes
+end:

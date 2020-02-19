@@ -1,0 +1,57 @@
+module external OptimizeProc, top;
+top := proc( x )
+   if type(x,structure) then
+      disassemble(x)[1];
+   else
+      x;
+   fi
+end;
+
+debug := true;
+
+ReadLibrary('Optimizations/CSE');
+ReadLibrary('Optimizations/Normalize');
+ReadLibrary('Optimizations/Inline');
+
+OptimizeProc := proc( p:procedure ) -> procedure;
+   pd := disassemble(op(p));
+
+   if(debug) then
+      print('====original====');
+      print(pd);
+   fi:
+
+#  normalize procedure
+   pd := doNormalize(pd);
+   if(debug) then
+      print('====normalized====');
+      print(pd);
+   fi:
+
+#  perform common subexpression elimination
+   pd := doCSE(pd);
+   if(debug) then
+      print('====CSE====');
+      print(pd);
+   fi:
+
+#  perform inlining
+   pd := doInline(pd);
+   if(debug) then
+      print('====inlined====');
+      print(pd);
+   fi:
+
+#  perform common subexpression elimination
+   pd := doCSE(pd);
+   if(debug) then
+      print('====CSE====');
+      print(pd);
+   fi:
+
+   OptimizedProcedure := assemble(pd);
+
+   OptimizedProcedure;
+end:
+
+end: #module

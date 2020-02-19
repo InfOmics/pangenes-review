@@ -1,0 +1,434 @@
+###############################################################
+# Codon Transition Matrix: Data structures and functions      #
+# to create them.                                             #
+#                                      Adrian Schneider, 2004 #
+###############################################################
+
+#######################################
+# CodonMatrix data structure          #
+# 	The equivalent to DayMatrix   #
+#######################################
+CodonMatrix := proc( 
+		Sim:matrix(numeric), 	# 64x64 similarity matrix
+		Desc:string,		# Kind of data, e.g. hum, mam, vrt
+		CodonPam:numeric,
+		AAPam:numeric,
+		FixedDel:numeric,	# fixed cost for logarithmic cost deletions
+		IncDel:numeric)		# logarithmic factor for log cost deletions
+if nargs=0 then noeval(CodonMatrix(CreateArray(1..64,1..64,0.0),'empty',0,0,0,0));
+elif nargs<3 then error(args,'not enough arguments in CodonMatrix')
+elif nargs<4 then noeval(CodonMatrix(args,CodonPamToPam(AAPam))):
+elif nargs<5 then
+	noeval(CodonMatrix(args,-37.64+7.434*log10(AAPam),-1.3961)):
+else	noeval(CodonMatrix(args)):
+fi;
+end:
+
+CodonMatrix_type:={
+	noeval(CodonMatrix(matrix(numeric),string,numeric,numeric)),
+	noeval(CodonMatrix(matrix(numeric),string,numeric,numeric,numeric,numeric))}:
+
+CodonMatrix_select := proc( cm, sel, val1) option internal;
+if nargs=3 then error('cannot change a CodonMatrix, create a new one.') fi;
+if sel=PamNumber or sel=PamDistance then cm[CodonPam];
+elif sel=MaxSim then max(cm[Sim]);
+elif sel=MinSim then min(cm[Sim]);
+elif sel=MaxOffDiag then max([seq(seq(cm[Sim,i,j],j=1..i-1),i=1..64)]);
+elif sel=Type or sel=Description then Desc;
+else error(sel,'is an invalid selector for a CodonMatrix') fi
+end: 
+
+
+CodonMatrix_print:=proc(cm)
+local width;
+option internal;
+width:=14;
+printf('Codon transition matrix for (Codon-)PAM distance %g\n',cm[PamDistance]);
+printf('This corresponds to approx. %f PAM on AA level.\n',cm[AAPam]);
+printf('Deletion costs are %f+%f*(k-1)\n',cm[FixedDel],cm[IncDel]);
+printf('Matrix was created with %s DNA.\n',cm[Desc]);
+for row to ceil(64/width) do
+for col to row do
+printf('row %d, col %d\n',row,col);
+for i from (row-1)*width+1 to min(row*width,64) do
+	printf('%s  ',CIntToCodon(i));
+	for j from (col-1)*width+1 to min(col*width,64) do
+		if j<=i then printf('%4d ',round(cm[Sim,i,j])) fi;
+	od;
+	printf('\n');
+od; 
+printf('     ');
+for j from (col-1)*width+1 to min(col*width,64) do
+		printf(' %s ',CIntToCodon(j));
+od;
+printf('\n\n');
+od; # row
+od; # col
+end:
+
+CodonMatrix_lprint:=proc(cm:CodonMatrix) option internal;
+	printf('CodonMatrix(%s, CodonPAM=%.1f, AAPAM=%.1f, MaxSim=%.1f, del=%.1f%.1f*(k-1))',cm[Desc],cm[CodonPam],cm[AAPam],cm[MaxSim],cm[FixedDel],cm[IncDel]);
+end:
+
+CompleteClass(CodonMatrix);
+
+####################################################################
+# Map chars that represent codons to integer numbers               #
+# (used for the generic dynamic programming).			   #
+####################################################################
+CodonMappingString :='ABCDEFGHIJKLMNOP'.
+		     'QRSTUVWXYZabcdef'.
+		     'ghijklmnopqrstuv'.
+		     'wxyz0123456789@#'.'?':
+CodonMapping := proc(chr:string) option internal;
+#define 64 characters for the codons plus 1 for 'unknown'
+return(CaseSearchString(chr,CodonMappingString)+1);
+end:
+
+
+##########################################################################################
+# CreateCodonMatrices									 #
+# Wrapper function to create 65x65 codon scoring matrices                                #
+# CF - codon frequencies vector								 #
+# CM - 250 CodonPAM similarity matrix							 #
+# CMS - 1266 sim. matrices of different PAM values					 #	
+# CodonLogPAM1 - log of CodonPAM 1 mutation matrix					 #
+# The argument is either nothing (default, creating matrix from all.pam1), a species     #
+# name (all, hum, mam, mus or vrt or bacteria) or a 64x64 count matrix.                  #
+##########################################################################################
+CreateCodonMatrices := proc( ; count:matrix, (predefset='ortho'):string, freq:array(numeric))
+  global CF, CM, CMS, CodonLogPAM1,
+	 AF, DM, DMS, logPAM1;
+
+    
+  lcname := lowercase(predefset):
+  if lcname = 'cpam' then return(procname()) fi:
+  if lcname = 'ecm' or lcname = 'ecmu' then
+    r := LoadMatrixFile(libname.'/mats/'.lcname.'.dat');
+    return(procname(op(r))):
+  fi:
+
+# Backup AF, logPAM1, DM and DMS
+    if assigned(DM) then DMbak := DM fi;
+    if assigned(DMS) then DMSbak :=DMS fi;
+    if assigned(AF) then AFbak := AF fi;
+    if assigned(logPAM1) then logPAM1bak := logPAM1 fi;
+
+if assigned(freq) then # a rate matrix and frequencies are given.
+    if not assigned(count) then 
+	error('when giving frequencies, also a rate matrix must be given') 
+    fi;
+    
+    Q := count;
+    if length(Q)<>64 then error('rate matrix must have dimension 64') fi;
+    if length(freq)<>64 then error('frequencies must have dimension 64') fi;
+    Q := [seq([op(z),0],z=Q),[seq(0,65)]];
+    freq := [op(freq),0];
+    printf('Using the rate matrix to construct scoring matrices...\n');
+    CreateDayMatrices(Q,freq,type='Codon',CodonMapping);
+
+else #  a count matrix is given
+
+    if not assigned(count) then
+        ReadLibrary('CodonData/'.predefset.'.counts');
+        count := CodonCounts;
+    fi;
+
+# Make sure the matrix is 64x64 or 65x64
+    dim := length(count);
+    if dim<>64 and dim<>65 then error('invalid dimension for a codon matrix') fi;
+
+# If the count matrix is 64x64, add a 65th state for unknown codons
+    if dim=64 then
+        tmp := [seq([op(count[i]),0],i=1..64),CreateArray(1..65,0)];
+    fi;
+    count := tmp;
+
+# fill 'holes' of 0s with a 1
+    ss := sum(count);
+    for i to 64 do for j to 64 do
+	if ss[i]=0 or ss[j]=0 then next fi;
+	if count[i,j]=0 then count[i,j] := 1 fi;
+    od od:
+
+# Add 1s in the diagonal if stop codons are not counted
+    for i to 65 do
+    	if sum(count[i])=0 then count[i,i]:=1 fi;
+    od;
+
+# Create Daymatrices, if they dont yet exist
+    if not assigned(DM) then CreateDayMatrices() fi;
+
+# Create the scoring matrices
+
+    CreateDayMatrices(count,type='Codon',CodonMapping);
+
+    # fix the problems with negativ off-diagonals in CodonLogPAM1
+    all_ok := true;
+    Q := copy(logPAM1);
+    stops := AToCInt('$');
+    for i to 64 do for j to 64 do if i=j then next fi;
+	if Q[i,j]<0 then
+	    Q[i,j] := 0;
+	    all_ok := false;
+	elif (member(i,stops) and not member(j,stops))
+	  or (member(j,stops) and not member(i,stops)) then 
+	    Q[i,j] := 0;
+	fi;
+    od od:
+    if not all_ok then
+	for i to 64 do Q[i,i] := 0 od:
+	t := sum(Q);
+	for i to 64 do Q[i,i] := -t[i] od:
+	CreateDayMatrices(Q,AF,type='Codon',CodonMapping);
+	# correct new AF to be consistent with the new Q
+	M50 := exp(50*Q):
+	AF := [seq( M50[i,1] / If(M50[1,i]=0, 1e-20, M50[1,i]),
+	    i=1..length(M50))];
+	AF := AF/sum(AF);
+    fi;
+
+fi: # rate or count matrix
+
+# Assign the global variables to global codon variables
+    CM := DM;
+    CMS := DMS;
+    CF := AF;
+    CodonLogPAM1 := logPAM1;
+
+# Reinstall the original Dayhoff matrices
+    if assigned(DMbak) then DM := DMbak fi;
+    if assigned(DMSbak) then DMS := DMSbak fi;
+    if assigned(AFbak) then AF := AFbak fi;
+    if assigned(logPAM1bak) then logPAM1 := logPAM1bak fi;
+
+# Change the 65th row and col in all matrices to 0
+    for i to 65 do CM[Sim,i,65] := CM[Sim,65,i] := 0 od:
+    for d to length(CMS) do
+	cm := CMS[d];
+    	for i to 65 do cm[Sim,i,65] := cm[Sim,65,i] := 0 od;
+    od:
+
+# Set inter-stop-codon mutations to 1 if they have -50 assigned
+  for i in [49, 51, 57] do for j in [49, 51, 57] do
+	if CM[Sim,i,j]=-50 then  CM[Sim,i,j] := 1 fi;
+	for d to length(DMS) do
+	    if CMS[d,Sim,i,j]=-50 then  CMS[d,Sim,i,j] := 1 fi;
+	od:
+  od: od:
+
+# Change the deletion cost function
+# This is done with a linear interpolation from CodonPAM 100.
+# This makes it faster and is still quite accurate.
+# The exact computation can be uncommented if ever needed.
+   pam := CodonPamToPam(CodonLogPAM1,CF,CM[PamNumber]);
+   CM[FixedDel] := -37.64+7.434*log10(pam);
+   pam100 := CodonPamToPam(CodonLogPAM1,CF,100);
+   for d to length(CMS) do
+ 	#pam := CodonPamToPam(CodonLogPAM1,CF,CMS[d][PamNumber]);
+	pam := pam100/100*CMS[d][PamNumber];
+	CMS[d,FixedDel] := -37.64+7.434*log10(pam);
+   od;
+
+NULL;
+end:
+
+###############################################################################
+# CreateSynMatrices							      #
+#	Sets the global array SynMS used for scoring SynPAM (Amount of        #
+#       change on synonymous codons)                                          #
+#       synonymous codons)						      #
+#       The argument is one of all, hum, mam, mus or vrt.                     #
+#	New and recommedned are ortho (also default)
+###############################################################################
+CreateSynMatrices:=proc(setname:string)
+global SynMS;
+Set(printgc=false):
+if nargs=1 then species:=setname else species:='ortho' fi;
+ReadLibrary('CodonData/'.species.'.counts'):
+# Calculate codon freq. and initial mutation matrix
+CF:=sum(CodonCounts);
+M := CreateArray(1..64,1..64,0);
+for i to 64 do
+      for j to 64 do M[i,j] := CodonCounts[i,j] / CF[j] od;
+od;
+CF := CF / sum(CF);
+# Codon Frequencies are recomputed at the syn. positions only
+CF:=CreateArray(1..64);
+clist:=CreateArray(1..64): # List of syn codons
+for i to 64 do
+clist[i]:=AToCInt(CIntToA(i));
+for j in clist[i] do
+	CF[i]:=CF[i]+CodonCounts[i,j];
+od;
+od;
+CF:=CF/sum(CF);
+# find 1 SynPAM matrix
+SynLogPAM1 := traperror(log(M)):
+Ms:=CreateArray(1..64,1..64,0):
+do  
+    for j to 64 do
+       m:=0;
+       for i in clist[j] do m:=m+M[i,j] od;
+       Ms[j,j]:=M[j,j]/m
+    od:
+    d := sum( CF[i]*(1-Ms[i,i]), i=1..64 ); 
+    if |d-0.01| < DBL_EPSILON then break fi;
+    SynLogPAM1 := SynLogPAM1 * 0.01/d;
+    M := exp(SynLogPAM1):
+od:
+
+Ms:=CreateArray(1..64,1..64,0):
+CFS := CreateArray(1..64,0):
+
+# make the SynPAM matrices exponentially growing,
+# go from 0 to 1 in steps of 0.005
+# then exponentially such that SynMS[200]=1 and SynMS[1000]=1000
+pams := CreateArray(1..1000);
+for i to 201 do pams[i+1] := i/200 od:
+x := 1000^(1/799);
+for i to 799 do pams[i+201]:= x^i od:
+for i to 1000 do if pams[i]>150 then pams[i]:=round(pams[i]) fi od:
+SynMS := CreateArray(1..length(pams)):
+
+# find min. synpam for which the freq can be computed
+for pam in pams do
+    M:=exp(pam*SynLogPAM1);
+    ok := true; j := 1;
+    while ok and j<=64 do
+    	for i in clist[j] do 
+	    if M[i,j]=0 then ok := false; break fi
+        od;
+	j := j+1;
+    od;
+    if ok then break fi;
+od;
+# compute now the freq.
+minPAM := pam;
+for j to 64 do
+    for i in clist[j] do CFS[i] := M[i,j]/M[j,i] od:
+    m := sum(CFS[i],i=clist[j]);
+    for i in clist[j] do CFS[i] := CFS[i]/m od:
+od:
+
+for p to length(pams) do
+    pam := pams[p];
+    M := exp(pam*SynLogPAM1);
+    # Calculate mutation matrix Ms for syn. mutations
+    for j to 64 do
+    	m:=0;
+    	for i in clist[j] do m:=m+M[i,j] od;
+    	for i in clist[j] do Ms[i,j]:=M[i,j]/m od;
+    od;
+    # find the frequencies here
+    if pam > minPAM then
+        for j to 64 do
+    	for i in clist[j] do CFS[i] := Ms[i,j]/Ms[j,i] od:
+    	m := sum(CFS[i],i=clist[j]);
+    	for i in clist[j] do CFS[i] := CFS[i]/m od:
+       od:
+    fi;
+    # Compute scoring matrix
+    D:=CreateArray(1..64,1..64,0):
+    for i to 64 do for j in clist[i] do
+    	if CFS[i]<=0 then D[i,j] := -99;
+      	elif Ms[i,j]<=0 then D[i,j] := -99;
+	else D[i,j]:=10*log10(Ms[i,j]/CFS[i]);
+        fi;
+    od; od;
+    
+    SynMS[p]:=CodonMatrix(D,species,pam,0,0,0);
+od;
+NULL
+end:
+
+#############################################################
+# Convert a codon matrix to a 20x20 amino acid matrix 	    #
+#############################################################
+CodonPamToPamMatrix := proc(CM_:matrix,CF_:array) option internal;
+CM := copy(CM_):
+CF := copy(CF_):
+if length(CF)>64 then CF := CF[1..64] fi;
+# first ignore the stop codons
+stops := AToCInt('$');
+for a in stops do 
+    CF[a] := 0;
+    for b in stops do
+        CM[a,b] := 0:
+    od
+od:
+CF := CF/sum(CF);
+t := sum(CM);
+for a to 64 do 
+    if member(a,stops) then next fi;
+    for b to 64 do
+	if member(b,stops) then next fi;
+        CM[a,b] := CM[a,b]/t[b]:
+    od
+od:
+# AF[j]*AM[i,j] = sum sum CF[l]*CF[k,l]
+AF := CreateArray(1..20):
+AM := CreateArray(1..20,1..20):
+for a to 64 do 
+    if member(a,stops) then next fi;
+    aa := CIntToInt(a);
+    AF[aa] := AF[aa]+CF[a];
+    for b to 64 do
+	if member(b,stops) then next fi;
+	bb := CIntToInt(b);
+	AM[aa,bb] := AM[aa,bb]+CF[b]*CM[a,b];
+    od
+od:
+for a to 20 do for b to 20 do
+    AM[a,b] := AM[a,b]/AF[b]
+od od:
+return([AM,AF]);
+end:
+
+
+################################################### 
+# Determine the PAM value given a mutation matrix #
+# and equilibrium frequencies.			  #
+###################################################
+DeterminePAM := proc(M:matrix,F:array) option internal;
+logM := log(M);
+M2 := copy(M);
+n := length(M);
+lM11 := logM[1,1];
+lM23 := logM[2,3];
+do  
+    d := sum( F[i]*(1-M2[i,i]), i=1..n );
+    if d=0 then return(0) fi;
+    if |d-0.01| < DBL_EPSILON then break fi;
+    logM := logM * 0.01/d;
+    M2 := exp(logM)
+od;
+f1 := lM11/logM[1,1];
+f2 := lM23/logM[2,3];
+if |f1-f2|>1e-10 then error('difficult to determine PAM',|f1-f2|) fi;
+return((f1+f2)/2);
+end:
+
+##########################################
+# CodonPamToPam				 #
+#	Convert CodonPam to Pam 	 #
+##########################################
+CodonPamToPam:=proc(lnM,F,cpam)
+CM := exp(cpam*lnM);
+AM := CodonPamToPamMatrix(CM,F);
+aapam := DeterminePAM(AM[1],AM[2]);
+end;
+
+##########################################################
+# PamToCodonPam						 #
+#	Convert Pam to CodonPam 			 #
+##########################################################
+PamToCodonPam := proc(lnM,F,aapam)
+cpam := 3.6*aapam;
+newaa := CodonPamToPam(lnM,F,cpam);
+while |newaa-aapam|>1e-10 do
+    cpam := cpam/newaa*aapam;
+    newaa := CodonPamToPam(lnM,F,cpam);
+od:
+return(cpam);
+end:

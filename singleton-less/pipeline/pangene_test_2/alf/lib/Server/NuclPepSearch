@@ -1,0 +1,269 @@
+# Purpose: NuclPepSearch server (ParExecuteIPC version)
+# Author:  CompBioResGrp (L.J. Knecht)
+# Created: 25 May 1994
+#
+#ReadProgram('~cbrg/GetMachine'):
+ParseMsg := proc (msg: string)
+  description
+'Parses incoming message for NuclPepSearch and returns
+   - a list sequence,division,options if there is a correct nucleotide sequence
+     to be searched
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    lprint ('Invalid incoming message');
+    return (0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    lprint ('Start of message body not found');
+    return (0)
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('?there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  division := '';
+  database := 'SwissProt 39.18';
+  opts := {};
+  body := msg[first+3..first + 2 + last];
+  token := sscanf (body, '%s'); token := If(length(token)=0, '', token[1]);
+  if length (token) < 6 or SearchString (token, 'TestNewFunction') <> 0 and
+    SearchString (token, 'NuclPepSearch') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token))
+  fi;
+  do
+    body := CaseSearchString (token, body) + length (token) + 1 + body;
+    token := sscanf (body, '%s'); token := If(length(token)=0, '', token[1]);
+    if SearchString ('division', token) >= 0 then
+      if division <> '' then return ('?multiple division specifications') fi;
+      p := CaseSearchString ('=', body);
+      if p < 0 then return ('?an invalid division specification') fi;
+      body := p + 1 + body;
+      token := sscanf (body, '%s'); token := If(length(token)=0, '', token[1]);
+      divisions := 'any fun inv mam pln pri pro rod vrt';
+      p := SearchString (token, divisions);
+      if length (token) = 3 and mod (p, 4) = 0 then
+	division := divisions[p+1..p+3]
+      else
+	return ('?'.token.' is an invalid division')
+      fi;
+    elif SearchString('database', token) >= 0 then
+      p := SearchString('Database=',body);
+      if p>-1 then
+        p1 := SearchString('&', body[p+1..-1])+p+2;
+        p2 := SearchString('&', body[p1+1..-1])+p1;
+        if p2-p1>0 then 
+         database := body[p1..p2];
+         body:= body[1..p].body[p2+2..-1];
+        fi;
+      fi;  
+    elif SearchString ('visualize', token) >= 0 then
+      opts := opts union {VISUALIZE}
+    else
+      break
+    fi;
+  od;
+  seq1 := CreateString (length (body));
+  lower := upper := 0;
+  for p to length (body) do
+    if body[p] > ' ' then
+      i := CaseSearchString (body[p], 'abcdefghijklmnopqrstuvwxyz');
+      if i >= 0 then
+        lower := lower + 1;
+        base := ABCDEFGHIJKLMNOPQRSTUVWXYZ[i+1]
+      else
+        upper := upper + 1;
+        base := body[p]
+      fi;
+      if NToInt (base) > 0 then
+        seq1[lower + upper] := base
+      else
+        return (sprintf ('?the sequence contains an invalid character "%c" at position %d.', base, lower + upper + 1))
+      fi
+    fi
+  od;
+  if lower > 0 and upper > 0 then
+    return ('?the sequence contains both uppercase and lowercase characters.')
+  fi;
+  if lower + upper < 12 then
+    return ('?the sequence is shorter than 12 bases.')
+  fi;
+  [seq1[1..lower + upper], division, database, opts]
+end:
+
+AppendPostScript := proc (fromfile: string, tofile: string, title: string)
+  global tmpfile;
+  t := ReadRawFile (fromfile);
+  p := CaseSearchString ('\n', t);
+  OpenAppending (tofile);
+  printf ('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending (tmpfile)
+end:
+
+GetMatches := proc (seq1: string, division: string, opts: set)
+  global DB, NucDB, PepDB, prefix;
+  printf ('NuclPepSearch of %d entries of %s release %s for the sequence',
+          PepDB[TotEntries], SearchTag ('DBNAME', PepDB[string]),
+	  SearchTag ('DBRELEASE', PepDB[string]));
+  lprint ();
+  len := length (seq1);
+  for i by 50 to len do
+    printf ('%4d', i);
+    for j from i by 10 to min (i + 49, len) do
+      printf (' %s', seq1[j..min (j + 9, len)])
+    od;
+    printf ('\n')
+  od;
+  if division <> '' then
+    printf ('Intron detection division %s: ', division);
+    if division = 'fun' then lprint ('funghi.')
+    elif division = 'inv' then lprint ('(other) invertebrates.')
+    elif division = 'mam' then lprint ('(other) mammals.')
+    elif division = 'pln' then lprint ('plants.')
+    elif division = 'pri' then lprint ('primates.')
+    elif division = 'pro' then lprint ('prokaryotes (no intron detection).')
+    elif division = 'rod' then lprint ('rodents.')
+    elif division = 'vrt' then lprint ('(other) vertebrates.')
+    else lprint ('unknown.') fi
+  fi;
+  MAXDNALEN := 12000;
+  if len > MAXDNALEN then
+    printf ('The sequence is longer than %d bases, cannot process this job.\n',
+	    MAXDNALEN);
+    printf ('Split the sequence into (overlapping) smaller parts.\n');
+    return ()
+  fi;
+  minSimil := max (min ((len - 1000) * 20 / 3000, 20), 0) + 100;
+  ms := AlignNucPepAll (seq1, DM, If (division = '', 'pro', division),
+		       minSimil-10);
+  ms2 := [];
+  for m in ms do
+    m2 := LocalNucPepAlignBestPam (m);
+    if m2[Sim] >= minSimil then
+      ms2 := append (ms2, m2)
+    fi
+  od;
+  cpu := traperror (DpuTime ());
+  if cpu = lasterror then
+    cpu := time ()
+  else
+    cpu := max (cpu, time ())
+  fi;
+  printf ('\n[After %.2f hours CPU on %s]\n', cpu / 3600, hostname());
+  printf ('Found %d matches with a similarity score greater than %.1f:\n',
+           length (ms2), minSimil);
+  ms2 := sort (ms2, x->-x[Sim]);
+  printf ('ID           Sim   PAM  ID           Sim   PAM  ID           Sim   PAM\n');
+  printf ('------------------------  ------------------------  ------------------------\n');
+  DB := PepDB;
+  for i to length (ms2) do
+#gmc    printf ('%-11s%7.1f %5.1f',
+#gmc	SearchTag ('ID', string (Entry (Offset (ms2[i,PepOffset])))),
+#gmc	ms2[i,Sim], ms2[i,PamNumber]);
+    printf ('%-11s%7.1f %5.1f',
+	SearchTag ('ID', Entry (GetEntryNumber (ms2[i,PepOffset]))),
+	ms2[i,Sim], ms2[i,PamNumber]);
+    if mod (i, 3) = 0 then printf ('\n') else printf ('  ') fi
+  od;
+  if mod (length (ms2), 3) <> 0 then printf ('\n') fi;
+  printf ('\nAlignments:\n');
+  limit := If (msg[6..11] = 'knecht', 1000, 40);
+  if length (ms2) > limit then
+    lprint ('(limiting output to', limit, 'matches)')
+  fi;
+  Set(screenwidth=74);
+  for i to min (length (ms2), limit) do
+    m := ms2[i];
+    lprint ();
+    nucPos := m[NucOffset] - GetOffset (seq1, NucDB);
+    pepPos := m[PepOffset] - GetOffset(Sequence (Entry(GetEntryNumber(m[PepOffset]))));
+#gmc    pepPos := m[PepOffset] - Sequence (Offset (m[PepOffset]))[1];
+    printf ('aligned positions=%d-%d,%d-%d\n',
+            nucPos + 1, nucPos + m[NucLength],
+	    pepPos + 1, pepPos + m[PepLength]);
+    print (m)
+  od;
+  if length (ms2) > 0 and member (VISUALIZE, opts) then
+    plotfile := prefix.'temp.ps';
+    Set (plotoutput=plotfile);
+    if length (ms2) > 40 then
+      VisualizeGene (ms2[1..40])
+    else
+      VisualizeGene (ms2)
+    fi;
+    printf ('\n\n-- PostScript output -------- cut here --------\n');
+    AppendPostScript (plotfile, tmpfile, 'Gene structure visualization')
+  fi
+end:
+
+init := proc ()
+  global NucDB, PepDB, PM_offsets;
+  PM_offsets := false;
+#  db_path := GetMachine():
+  db_path := '~darwin/DB/':
+  #PepDB := ReadDb (db_path.'SwissProt.Z');
+   PepDB := ReadDb('~cbrg/NuclPepSearch/test.db');
+  NucDB := ReadDb (db_path.'NBase');
+  CreateDayMatrices ()
+end:
+
+job := proc ()
+  global msg, prefix, Database;
+  prefix := '/tmp/'.getpid ().'.';
+  seq1 := ParseMsg (msg):
+  res := 'ERROR';
+  if not type (seq1, numeric) then
+    OpenWriting (tmpfile);
+    if false then
+      lprint ('Sorry! Due to machine load, the NuclPepSearch server is');
+      lprint ('currently not available. Please try again later.')
+    else
+      if seq1[1] = '?' then
+	lprint ('Sorry, your request could not be processed,');
+	printf ('because %s', seq1[2..-1]);
+	lprint ();
+      else
+        Database := seq1[3];
+	printf('Database used: %s', Database);
+        db_path := '~darwin/DB/':
+        if ( Database = 'SwissProt 39.18' ) then
+          #PepDB := ReadDb(db_path.'SP39.18/SwissProt39.18.Z');
+           PepDB := ReadDb('~cbrg/NuclPepSearch/test.db');
+        elif( Database = 'Fusobacterium nucleatum' ) then
+          PepDB := ReadDb('/pub/home/darwin/DB/genomes/FUSNU/fus.nuc.genome.db');
+        elif ( Database = '15 Genomes' ) then
+          PepDB := ReadDb ('/pub/home/darwin/DB/genomes/DB15/db15');
+	elif ( Database = 'Schizosaccharomyces pombe' ) then
+	  PepDB := ReadDb('/pub/home/darwin/DB/genomes/SCHPO/schpo.db');
+        else Database := 'SwissProt 39.18';
+          PepDB := ReadDb(db_path.'SP39.18/SwissProt39.18.Z')
+        fi;
+        PepDB := ReadDb('~cbrg/NuclPepSearch/test.db');
+	a := traperror( GetMatches (seq1[1], seq1[2], seq1[4]));
+        if a = lasterror then
+	  lprint ();
+	  lprint ();
+	  lprint ('Sorry, your request could not be processed');
+	  lprint ('because an error was encountered.');
+	  lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+	  lprint ('Thank you, the cbrg team.');
+	  lprint ();
+	  lprint ();
+	  printf ('%s', a);
+	  lprint ();
+        fi;
+      fi
+    fi;
+    OpenWriting (terminal);
+    res := ReadRawFile (tmpfile)
+  fi;
+  CallSystem ('rm '.prefix.'*');
+  res
+end:

@@ -1,0 +1,37 @@
+#
+# erfcinv(x): inverse of erfc function
+#
+#					Gaston H. Gonnet (Nov 1991)
+erfcinv := proc(y:numeric)
+description 'Calling Sequence:
+        erfcinv(x)
+Parameters:
+        x : numeric 
+Returns: numeric
+
+Synopsis:
+This function returns the inverse of  erfc(x), that is, 
+the value of y such that:
+ 2/ sqrt(Pi) integral from y to infinity exp(-t^2) dt = x.
+
+References:  Erdelyi53
+
+Examples:
+> erfcinv(3);
+> erfcinv(0);
+
+See also:  erf,  erfc
+';
+   if y<0 or y>2 then error('invalid argument')
+   elif y>1 then return( -erfcinv(2-y) )
+   else if y < 2.1e-45 then
+            error('erfc is faulty for this range (complain to DEC)') fi;
+        x := sqrt(-log(y));
+        inc := 1;
+        while inc^2 > DBL_EPSILON*abs(x) do
+            inc := (erfc(x)-y)/2*sqrt(Pi)*exp(x^2);
+            x := x + inc;
+            od;
+        return( x )
+        fi
+end:

@@ -1,0 +1,15 @@
+#
+#	SearchDayIndex - find the closest DayMatrix index
+#	given a pam value
+#
+#	Gaston H. Gonnet (April 1st, 2011)
+#
+SearchDayIndex := proc( pam:nonnegative, dms:list(DayMatrix) )
+if nargs=1 and type(DMS,list(DayMatrix)) then return(procname(pam,DMS)) fi;
+lo := 1;  hi := length(dms);
+while hi-lo > 1 do
+    j := round( (hi+lo)/2 );
+    if dms[j,PamDistance] <= pam then lo := j else hi := j fi
+od;
+If( |dms[lo,PamDistance]-pam| <= |dms[hi,PamDistance]-pam|, lo, hi )
+end:

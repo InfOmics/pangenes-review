@@ -1,0 +1,778 @@
+#
+#       Darwin Class for Multiple Sequence Alignment
+#
+#       Alexander Roth and Markus Friberg (January, 2003)
+#       Based on the code by Chantal Roth-Korostensky and Gaston Gonnet
+#
+#
+
+####################
+## The MAlignment object ##
+####################
+
+module external MAlignment, MAlignment_print, MAlignment_type, 
+                MAlignment_select, MAlignment_Rand;
+
+msatypes := table();
+msatypes['method'] := {string,set(string)};
+msatypes['PrintOrder_'] := list(integer);
+msatypes['Score'] := numeric;
+msatypes['UpperBound'] := numeric;
+msatypes['tree'] := {0,Tree};
+msatypes['AllAll'] := matrix({0,Alignment});
+msatypes['PostProbs'] := list(numeric);
+msatypes['Time'] := numeric;
+msatypes['tree0'] := {Tree,list(Tree)};
+msatypes['comment'] := string;
+
+MAlignment := proc(InputSeqs:list(string), AlignedSeqs:list(string), 
+                    labels:list(string), t)
+    global LightCheck;
+                    option noindex, NormalizeOnAssign, polymorphic;
+    assert(nargs >= 3);
+    
+    ## some basic consistency checking
+    aas := {'A','R','N','D','C','E','Q','G','H','I','L','K','M',
+                                        'F','P','S','T','W','Y','V','X'};
+    nSeqs := length(InputSeqs);
+    for i from 1 to nSeqs do
+        for j from 1 to length(InputSeqs[i]) do 
+            ## make sure there are only amino acids in InputSeqs
+            assert(member(InputSeqs[i,j],aas));
+        od;
+    od;
+    
+    assert(nSeqs = length(AlignedSeqs));
+    assert(nSeqs = length(labels));
+    
+    consistent := true; 
+    # all the aligned sequences must have the same length and be 
+    # derived from the input sequences
+    len := length(AlignedSeqs[1]);
+
+    if not assigned(LightCheck) or LightCheck = false then
+        for i from 1 to length(InputSeqs) do
+            consistent := consistent 
+                        and InputSeqs[i] = ReplaceString('_','',AlignedSeqs[i]) 
+                        and len = length(AlignedSeqs[i]);
+        od;
+    else
+        if printlevel >= 1 then
+            printf('Warning: global variable LightCheck is true.\n');
+        fi;
+    fi;
+
+    if nargs = 3 then # only the basic things are specified
+	ta := table();  ta['tree'] := 0;  # to set the right default by legacy
+        noeval(MAlignment(InputSeqs, AlignedSeqs, labels, ta));
+    elif type(args[4],table) then # a table is given (reading from file)
+        assert(nargs = 4);
+        for l in Indices(t) do ## checking that input table has correct format
+            if msatypes[l] = unassigned then
+                error(sprintf('%A should not be assigned', l));
+            fi;
+            if not type(t[l],msatypes[l]) then
+                error(sprintf('%A should be of type %A and is of type %A', 
+                                                l, msatypes[l], type(t[l])));
+            fi;
+        od;
+        noeval(MAlignment(InputSeqs, AlignedSeqs, labels, t));
+    elif type(args[4],equal) then # extra args are specified using name = val
+        ta := table();  ta['tree'] := 0;
+        for i from 4 to nargs do
+            if not type(args[i],equal) then
+                error(sprintf('constructor called incorrectly, '.
+                                'should be an assignment: %A',args[i]));
+            elif msatypes[args[i,1]] = unassigned then
+                error(sprintf('no such argument: %A',args[i]));
+            elif not type(args[i,2],msatypes[args[i,1]]) then
+                error(sprintf('incorrect type of argument: %A', args[i]));
+            else
+                ta[args[i,1]] := args[i,2];
+            fi;
+        od;
+        noeval(MAlignment(InputSeqs, AlignedSeqs, labels, ta));
+    elif nargs >= 7 and nargs <= 9 then
+        oldmsaselectors := ['method','PrintOrder_','Score','UpperBound','tree'];
+        
+        ta := table();  ta['tree'] := 0;
+        assert(type(args[4],msatypes['method']));
+        if args[4] <> 'UserDefined' then
+            ta['method'] := args[4];
+        fi;
+        assert(type(args[5],msatypes['PrintOrder_']));
+        if args[5] <> [] then
+            ta['PrintOrder_'] := args[5];
+        fi;
+        assert(type(args[6],msatypes['Score']));
+        if args[6] <> 0 then
+            ta['Score'] := args[6];
+        fi;
+        assert(type(args[7],msatypes['UpperBound']));
+        if args[7] <> DBL_MAX then
+            ta['UpperBound'] := args[7];
+        fi;
+        if nargs >= 8 then
+            if args[8] <> 0 then
+                assert(type(args[8], msatypes['tree']));
+                ta['tree'] := args[8];
+            fi;
+        fi;
+        if nargs >= 9 then
+            assert(type(args[9], msatypes['AllAll']));
+            if length(args[9]) = nSeqs then
+                ta['AllAll'] := args[9];
+            fi;
+        fi;
+        noeval(MAlignment(InputSeqs, AlignedSeqs, labels, ta));
+    else
+        error('constructor called incorrectly');
+    fi;
+end:
+
+MAlignment_type := noeval(MAlignment(list(string),list(string),
+                                                list(string), table)):
+
+MAlignment_select := proc(ma, select, val)
+    sel := uppercase(select);
+    
+    #to calculate score again after changing AlignedSeqs, set 'score' to 0 and
+    # read it again
+    if sel = 'RECALCSCORE' then
+        if ma['Score']=0 then
+            ma['Score'] := CalculateCircularScore(ma['AlignedSeqs'],
+            ma['PrintOrder'], ma['AllAll']) 
+	fi;
+        return(ma['Score']);
+    elif sel = 'PRINTORDER' then
+        # if printorder has not been set then
+        #   - compute circular tour in case of MafftMAlignment
+        #   - use input order in any other case
+        if ma['PrintOrder_'] = unassigned then
+	    n := length(ma['AlignedSeqs']):
+            if SearchString('Mafft',ma['method'])>=0 then
+                # Estimate CircularTour from induced MAlignment
+                D := CreateArray(1..n, 1..n):
+                if not type(DMS, list(DayMatrix)) then CreateDayMatrices() fi:
+                for i to n do for j from i+1 to n do
+                    D[i,j] := D[j,i] := EstimatePam(ma['AlignedSeqs',i],
+                    ma['AlignedSeqs',j], DMS)[2]:
+                od od:
+                ma['PrintOrder_'] := CircularTour(D):
+            else 
+                ma['PrintOrder_'] := [seq(i,i=1..n)]; # default
+            fi:
+        fi:
+        return( ma['PrintOrder_'] ):
+    fi;
+    
+    typ := msatypes[select];
+    if typ = unassigned then
+	error(select,'is an invalid selector for an MAlignment') fi;
+    if nargs > 2 then
+        if type(val,typ) then ma['t',select] := val
+	else error(val,'is not of the required type',typ)
+        fi;
+        val
+    else
+        ma['t',select]
+    fi;
+end:
+
+MAlignment_print := proc(ma) option internal;
+    width := Set(screenwidth=80);
+    Set(screenwidth=width);
+    
+    print('Multiple sequence alignment:');
+    print('----------------------------');
+    if ma['Score'] <> unassigned then
+        printf('Score of the alignment: %.8g\n', ma['Score']);
+    fi;
+    if ma['UpperBound'] <> unassigned then
+        printf('Maximum possible score: %.8g\n\n', ma['UpperBound']);
+    fi;
+  
+    msa := ma['AlignedSeqs'];
+    order := ma['PrintOrder'];
+    labels := copy(ma['labels']);
+    LABMARGIN := 3;
+    labelwidth := min(max( zip(length(labels) )) + LABMARGIN,15); 
+    
+    # make copy of all labels equally long
+    for i to length(labels) do
+        if length(labels[i]) > labelwidth - LABMARGIN  then
+            labels[i] := labels[i,1..labelwidth-LABMARGIN] . CreateString( LABMARGIN );
+	else
+            labels[i] := labels[i].CreateString(labelwidth - length(labels[i]));
+        fi;
+    od;
+    
+    width := width - labelwidth;
+    rows := ceil( length(msa[1])/width );
+    m := length(msa[1]);
+
+    if ma['PostProbs'] <> unassigned then
+        pp := copy(ma['PostProbs']);
+        for i to length(pp) do pp[i] := round(9*pp[i]); od;
+        ppstring := sprintf('%A',pp);
+        ppstring := ppstring[2..length(ppstring)-1];
+        ppstring := ReplaceString(', ','',ppstring);
+    fi;
+  
+    # print "rows" blocks of alignment
+    for i to rows do
+        for j to length(msa) do
+            w := order[j];
+            printf('%s%s\n', labels[w], msa[w, width*(i-1)+1 .. min(width*i,m)]);
+        od;
+        if assigned(ppstring) then
+            printf('%s%s\n', CreateString(labelwidth,' '), ppstring[width*(i-1)+1 .. min(width*i,m)]);
+        fi;
+        lprint();
+    od
+end:
+
+MAlignment_Rand := proc() option internal;
+    seqs := [Rand(Protein(Rand( 100..300 )))];
+    n := Rand(3..10);
+    while length(seqs) < n do
+        s2 := Mutate(seqs[Rand(1..length(seqs))],Rand(20..40),ZipfGaps);
+        seqs := append(seqs,s2)
+    od;
+    if not type(DM,DayMatrix) then CreateDayMatrices() fi;
+    MAlign(seqs,[seq(RandSeq.i,i=1..n)],'circ')
+end:
+
+CompleteClass(MAlignment);
+
+end;
+
+# Function included for compatability with GapHeuristics
+GetNewScore := proc(ma:MAlignment, left:integer, right:integer) option internal;
+    score := 0;
+    CircOrder := ma['PrintOrder'];
+    Msa := ma['AlignedSeqs'];
+    AllAll := ma['AllAll'];
+    if left<1 or right < left or right > length(Msa[1]) then
+	error('invalid lengths') 
+    fi;
+    for i to length(CircOrder)-1 do
+        seq1 := CircOrder[i];
+        seq2 := CircOrder[i+1];
+	score := score + EstimatePam( Msa[seq1,left..right],
+	Msa[seq2,left..right], [AllAll[seq1,seq2,'DayMatrix']])[1];
+    od;
+    return(score/2);
+end:
+
+
+#todo: make sure that external functions from module only uses local
+#	variables and parameters (not any global variables, which cause
+#	trouble with several instances of MAlignment) 
+module external MAlign, CalculateCircularScore, CalculateCFEScore, 
+        MSA_CircularTour;
+
+local allall, seqs, tree, order, pas, msa,
+	score, upperbound;
+
+
+
+MAlign := proc( InputSeqs:list(string) ;
+	(method='prob'):{'circ','prob','best','PartialOrder', 'PartialOrder_D'},
+	AlignMethod:{'Local','Global','CFE'},
+	iallall:matrix({0,Alignment}),
+	itree:Tree,
+	labels:list(string),
+	gapheu:{'gaph','GapHeuristic','GapHeuristics'}
+	)
+external allall, seqs, tree, msa, order, MSA_CircularTour;
+	
+if not assigned(DMS) then CreateDayMatrices() fi;
+seqs := InputSeqs;
+n := length(seqs);
+if not assigned(labels) then labels := CreateDefaultLabels() fi;
+if length(labels) <> length({op(labels)}) then
+     error(labels,'Sequence labels must be unique') fi;
+if not assigned(AlignMethod) then
+	AlignMethod := If(method='prob','CFE','Global') fi;
+
+# special cases
+if n < 1 then error('no sequences to align')
+elif n = 1 then 
+     if method='PartialOrder' then
+	  return( PartialOrderMSA( [SeqThread(seqs[1],labels[1],[1])],
+		PartialOrder( ['S',length(seqs[1]),'T'] ), 0, [[0]] ))
+     else return( MAlignment( seqs, seqs, labels, method, [1], 0, 0 ))
+     fi
+elif n = 2 and method <> 'PartialOrder' then
+     al := Align(seqs[1],seqs[2],DMS,AlignMethod);
+     dps := DynProgStrings(al);
+     return( MAlignment( seqs, [dps[2],dps[3]], labels, method, [1,2],
+	dps[1], dps[1], 0, [[0,al],[al,0]] ))
+elif min( seq(length(w),w=seqs) ) = 0 then
+     map := [];
+     for i to n do if seqs[i] <> '' then map := append(map,i) fi od;
+     oseqs := seqs;  olabels := labels;
+     r := MAlign( [seq(seqs[i],i=map)], method, AlignMethod,
+	[seq(labels[i],i=map)], If(assigned(gapheu),gapheu,NULL) );
+
+     aseqs := CreateArray(1..n,CreateString(length(r['AlignedSeqs',1]),'_'));
+     for i to length(map) do aseqs[map[i]] := r['AlignedSeqs',i] od;
+
+     newaa := CreateArray(1..n,1..n);
+     for i to length(map) do for j from i+1 to length(map) do
+	newaa[map[i],map[j]] := newaa[map[j],map[i]] := r['AllAll',i,j] od od;
+     for i to n do for j from i+1 to n do if newaa[i,j] = 0 then
+	newaa[i,j] := newaa[j,i] := Align(oseqs[i],oseqs[j],DMS,AlignMethod)
+     fi od od;
+
+     return( MAlignment( oseqs, aseqs, olabels, AlignMethod, [seq(i,i=1..n)],
+	r['Score'], r['UpperBound'], 0, newaa ) )
+fi;
+
+if method = 'best' then
+     mal := MAlign( seqs, 'circ', labels, GapHeuristic );
+     mal2 := MAlign( seqs, 'prob', labels, GapHeuristic, mal[AllAll] );
+     if mal[Score] < mal2[Score] then mal := mal2 fi;
+     mal2 := MAlign( seqs, 'prob', labels, GapHeuristic, CFE );
+     if mal[Score] < mal2[Score] then mal := mal2 fi;
+     mal2 := MAlign( seqs, 'prob', labels, GapHeuristic, Local );
+     if mal[Score] < mal2[Score] then mal := mal2 fi;
+     return(mal)
+fi;
+
+if assigned(itree) then tree := itree else tree := 0 fi;
+if assigned(iallall) then allall := iallall else 
+	allall := NULL:
+	CreateAllAll(AlignMethod) 
+fi;
+
+if length(labels) <> n then error(labels,'labels has the wrong length')
+elif length(allall) <> n or length(allall[1]) <> n then
+     error('AllAll matrix does not have the correct dimensions')
+fi;
+
+MSA_CircularTour := noeval(MSA_CircularTour);
+
+
+# Construction methods for the MSA
+if method='prob' then
+	CalculateProb()
+elif method='PartialOrder' then
+	return( PartialOrderMSA_MAlign( seqs, labels, allall ))
+elif method='PartialOrder_D' then
+    return( PartialOrderMSA_MAlign( seqs, labels, allall, 'D'))
+else
+	res := MSA_CT(seqs, labels, allall);
+	newmsa := res[1];
+	newlabels := res[2];
+
+	# MSA_CT reorders the labels. Restore original order of labels and seqs.
+	order := [];  #temporary order to restore labels and seqs.
+	# not the same as MSA_CircularTour, which should be used for scoring
+	for i to n do
+		order := append(order, SearchArray(labels[i], newlabels)) od;
+	msa := CreateArray(1..n);
+	for i to n do msa[i] := newmsa[order[i]] od;
+fi;
+
+upperbound := CalculateCircularUpperBound();
+score := CalculateCircularScore(msa, MSA_CircularTour, allall);
+MethodSet := {method, AlignMethod};
+if assigned(gapheu) then MethodSet := append(MethodSet, 'gaph') fi;
+multialignment := MAlignment(seqs, msa, labels, MethodSet,
+	MSA_CircularTour[1..-2], score, upperbound, tree, allall);
+
+# Improvement methods for the MSA
+if assigned(gapheu) then
+	gh := GapHeuristic(); # Create Gap Heuristic Structure
+	maold := copy(multialignment,2);
+	multialignment := DoGapHeuristic(multialignment, gh);
+	if multialignment['Score'] < maold['Score'] then
+		multialignment := maold fi;
+fi;
+
+multialignment
+end:
+
+
+
+# Returns all vs all matches from the seq as symmetrical matrix
+CreateAllAll := proc(AlignMethod)
+global allall;
+n := length(seqs);
+
+# if 'allall' is not NULL, it is likely to
+# be a recursive call, in which case it does not make sense to estimate
+# the pam distance over a very small subsequence in an area of deletions.
+# It is better to use the default DM.
+dm := If( allall<>NULL, DM, DMS );
+allall := CreateArray(1..n, 1..n);
+
+if AlignMethod ='Global' then
+	for i to n do for j from i+1 to n do
+	    allall[i,j] := allall[j,i] := Align(seqs[i], seqs[j], 'Global', dm);
+	od od;
+else
+	for i to n do for j from i+1 to n do
+		allall[i,j] := allall[j,i] := Align(seqs[i], seqs[j], AlignMethod, dm );
+	od od;
+fi;
+end:
+
+
+CreateDefaultLabels := proc()
+	labels := CreateArray(1..length(seqs));
+	for i to length(seqs) do
+		labels[i] := sprintf('Sequence %d', i);
+	od;
+labels
+end:
+
+
+CreateDefaultTree := proc()
+  global tree, MinLen;
+  res := GetDistVar();
+  MinLen := 0.01;
+  tree := MinSquareTree(res[1], res[2]);
+end:
+	
+
+# Creates a symetrical matrices of PAM dist and PAM var
+# from allall (Alignment structures)
+GetDistVar:=proc()
+  n := length(allall);
+  dist := CreateArray(1..n,1..n);
+  var := CreateArray(1..n,1..n);
+  for i to n-1 do
+    for j from i+1 to n do
+      dist[i,j] := dist[j,i] := allall[i,j]['PamNumber']; 
+      var[i,j] := var[j,i] := allall[i,j]['PamVariance']; 
+    od;
+  od;
+return( [dist, var] );
+end:
+
+
+CalculateProb := proc()
+	global tree, order, msa, pas;
+	if tree=0 then CreateDefaultTree() fi;
+	probtree := tree;
+	probtree := ConvertTreeLocal(probtree);	
+	order := [GetTreeLabels(probtree)];
+	if not assigned(ExpandAlignment) then ReadLibrary(ProbModel) fi;
+	pas_msa := ProbTreeNoDashes(probtree);	
+	pas := pas_msa[1];
+	msa := pas_msa[2];
+	if length(order) = 1 then order := op(order) fi; 
+ 	msa := UnorderArray(msa, order); 
+	CompleteAlign(); 
+end:
+
+
+CalculateCircularUpperBound := proc()
+global MSA_CircularTour;
+
+n := length(allall);
+if not type(MSA_CircularTour,list(posint)) or
+   length(MSA_CircularTour) <> n+1 then
+	#calculate a circular tour based on alignment scores
+	scores := CreateArray(1..n, 1..n);
+	for i to n do for j from i+1 to n do
+		scores[i, j] := scores[j, i] := allall[i,j,Score] od od;
+	m := max(scores);
+	for i to n do for j to n do scores[i,j] := m - scores[i,j] od; od;
+	MSA_CircularTour := ComputeTSP(scores);
+	# this function may produce different orders each time,
+	# which may cause different scores for different instances
+	# of the MAlignment object
+	MSA_CircularTour := append(MSA_CircularTour, MSA_CircularTour[1]);
+fi;
+
+if printlevel > 3 then
+	printf('\nCircular order according to ComputeTSP: ***\n');
+	printf('MSA_CircularTour = %a\n', MSA_CircularTour);
+fi;
+
+#calculate scores based on the circular tour
+upperbound := sum( allall[MSA_CircularTour[i], MSA_CircularTour[i+1],'Score'],
+	i=1..length(MSA_CircularTour)-1 ) / 2
+end:
+
+
+
+# imported from lib/ProbTreeNoDashes (Jun/2005)
+# --------------- some changes in ComputeTSP and ProbModel
+# Name:  ProbFix
+
+AllOnes := CreateArray(1..20,1):
+ProbTreeNoDashes := proc( t:Tree );
+
+if not type(AF,array(numeric,20)) then
+    error('AF should be assigned the amino acid frequencies') fi;
+res := ProbTreeNoDashesR( t, t[2] );
+l := length(res[1]);
+for i to l do
+    for j to 20 do res[1,i,j] := res[1,i,j]*AF[j] od;
+    od;
+
+if VariabilityIndex = true then
+    for i to length(res[1]) do
+	printf('[%d,%.2f],\n', i, -10*log10( res[1,i]*AF ) );
+	od
+    fi;
+res
+end:
+
+ProbTreeNoDashesR := proc( t:Tree, val:numeric );
+if op(0,t)=Leaf then
+     # external node
+     M := exp( max( 0, val - If( type(t,'name'), 0, t[2]) ) * NewLogPAM1 );
+     tt := If( type(t,'name'), t, t[1] );
+     res := CreateArray(1..length(tt));
+     for i to length(tt) do
+	res[i] := If( tt[i]=X, AllOnes, M[AToInt(tt[i])] ) od;
+     return( [res,[tt]] )
+else
+     v1 := ProbTreeNoDashesR( t[1], min(val,t[2]) );
+     v3 := ProbTreeNoDashesR( t[3], min(val,t[2]) );
+     M := exp( max(0,val-t[2]) * NewLogPAM1 );
+     pam := max(0.001, min(val,t[2])-t[1,2] + min(val,t[2])-t[3,2]);
+     dyp := ProbDynProg( v1[1], v3[1], AF, max (length(v1[1]), length(v3[1])),
+			 -37.64 + 7.434*log10(pam), -1.3961);
+
+     lo := length(dyp[4]);
+     if printlevel > 4 then
+         lprint('ProbTreeNoDashesR, result of ProbDynProg:');
+         printf('%150.150s\n%150.150s\n%150.150s\n', dyp[4],dyp[5],dyp[6]);
+         printf('left size %d, pam length=%g\n', length(v1[2]),
+	    min(val,t[2])-t[1,2]);
+         printf('right size %d, pam length=%g\n', length(v3[2]),
+	    min(val,t[2])-t[3,2]);
+	 fi;
+
+     # compute end conditions and compute length of the answer
+     # first do the left end
+     for i1 to lo while dyp[4,i1]='_' do od;
+     for i2 to lo while dyp[5,i2]=' ' do od;
+     # i1:=i2:=i3:=1;
+     
+     if dyp[5,i2] <> '-' then i2 := lo+1 fi;
+     for i3 to lo while dyp[6,i3]='_' do od;
+    
+     if i1=i3 then lcond := If(dyp[5,1]='-',4,1)
+     elif i3>1 then lcond := If( i2>i3, 2, 5 )
+     else lcond := If( i2>i1, 3, 6 ) fi;
+     if lcond>3 then
+	for i4 from i2 while dyp[5,i4+1] = '-' do od;
+	lcond := 10*lcond + If( MultipleCount(v1[2],i4-i1+1) >
+				MultipleCount(v3[2],i4-i3+1), 8, 9 )
+     else i4 := i2+1
+	fi;
+
+     # Now do the right end
+     for j1 from lo by -1 to 1 while dyp[4,j1]='_' do od;
+     for j2 from lo by -1 to 1 while dyp[5,j2]=' ' do od;
+     #j1:=j2:=j3:=lo;
+ 
+     if dyp[5,j2] <> '-' then j2 := 0 fi;
+     for j3 from lo by -1 to 1 while dyp[6,j3]='_' do od;
+
+     if j1=j3 then rcond := If(dyp[5,lo]='-',4,1)
+     elif j3<lo then rcond := If( j2<j3, 2, 5 )
+     else rcond := If( j2<j1, 3, 6 ) fi;
+     if rcond>3 then
+	for j4 from j2 by -1 while dyp[5,j4-1] = '-' do od;
+	rcond := 10*rcond + If( MultipleCount(v1[2],j4-j1) >
+				MultipleCount(v3[2],j4-j3), 8, 9 )
+     else j4 := j2-1
+	fi;
+    
+     # Cases where the length of the total matching is shortened 
+     lo := length(dyp[4]);
+     res := CreateArray(1..lo);
+     i1 := i3 := 1;
+
+     for i to lo do
+	if dyp[6,i]='_' then res[i] := v1[1,i1]*M;  i1 := i1+1; 
+	elif dyp[6,i]='-' then res[i] := v1[1,i1]*M;  i1 := i1+1;  i3 := i3+1
+	elif dyp[4,i]='_' then res[i] := v3[1,i3]*M;  i3 := i3+1; 
+	elif dyp[4,i]='-' then res[i] := v3[1,i3]*M;  i3 := i3+1;  i1 := i1+1
+	else 
+	     res[i] := zip(v1[1,i1]*v3[1,i3])*M;
+	     i1 := i1+1;  i3 := i3+1;
+	     fi;
+	res[i] := res[i]/sum(res[i]);
+	od;
+     if i1-1 <> length(v1[1]) or i3-1 <> length(v3[1]) then
+	error('assertion V failed') fi;
+
+     return( [res, [ ExpandAlignment(dyp[4],v1[2]),
+		     ExpandAlignment(dyp[6],v3[2]) ]] )
+     fi;
+end:
+
+# Try to make this function as fast as possible, so that
+# MSA improvement functions can evaluate their candidates fast.
+CalculateCircularScore := proc( Msa:list(string), CircOrder:list(posint),
+	AllAll:matrix({0,Alignment}) ) option internal;
+
+n := length(AllAll);
+al := AllAll[1,2];
+m := If( length(al)=7, al['modes'], {Local});
+if m intersect {'Global','Local'} <> {} then
+     ( EstimatePam( Msa[CircOrder[1]], Msa[CircOrder[n]],
+        [AllAll[CircOrder[1],CircOrder[n],'DayMatrix']] )[1] +
+     sum( EstimatePam( Msa[CircOrder[i]], Msa[CircOrder[i+1]],
+	[AllAll[CircOrder[i],CircOrder[i+1],'DayMatrix']] )[1], i=1..n-1 )) / 2
+elif m = {'CFE'} then
+     ( CalculateCFEScore( Msa[CircOrder[1]], Msa[CircOrder[n]],
+        AllAll[CircOrder[1],CircOrder[n],'DayMatrix'] ) +
+     sum( CalculateCFEScore( Msa[CircOrder[i]], Msa[CircOrder[i+1]],
+	AllAll[CircOrder[i],CircOrder[i+1],'DayMatrix'] ), i=1..n-1 )) / 2
+else error( al['modes'], 'is not a valid method for computing MSA scores')
+fi;
+end:
+
+
+#Calculate the score between two sequences with the Cost Free Ends method
+CalculateCFEScore := proc(seq1: string, seq2: string, DM: DayMatrix) option internal;
+	left1 := left2 := 1;
+	while seq1[left1] = '_' do    #search the first non-gap position of seq1
+		left1 := left1 + 1; od;
+	while seq2[left2] = '_' do    #search the first non-gap position of seq1
+		left2 := left2 + 1; od;
+	left := max(left1, left2);
+	right1 := length(seq1);
+	right2 := length(seq2);
+	if right1 = right2 then	#if seq1 and seq2 are equally long, check if one of them ends with gap
+		while seq1[right1] = '_' do
+			right1 := right1 - 1; od;
+		while seq2[right2] = '_' do
+			right2 := right2 - 1; od;
+		right := min(right1, right2);    #choose the one with the end gap that starts first
+	elif right1 > right2 then	#if seq1 is longer than seq2, use the length of seq2 for both sequences
+		right := right2;
+	else			#if seq2 is longer than seq1, use the length of seq1 for both sequences
+		right := right1;
+	fi;
+	if printlevel > 3 then
+		print(seq1);
+		print(seq2);
+		print(seq1[left..right]);
+		print(seq2[left..right]);
+	fi;
+	EstimatePam(seq1[left..right], seq2[left..right], [DM])[1];
+end;
+
+
+# ***** BEGIN Old Procedures *****
+
+
+UnorderArray:=proc(A:array, order: array);
+  n := length(order);
+  if type(A, array(array)) then
+    res := CreateArray(1..n, 1..n);
+    for i to n do res[order[i]] := A[i];od;
+    tmp := transpose(res);
+    for i to n do res[order[i]] := tmp[i];od;
+  else
+    res := CreateArray(1..n);
+    for i to n do res[order[i]] := A[i];od;
+  fi;
+  res;
+end:
+
+
+# Purpose:	extracts a sequence e.g. from an alignment matrix
+#               '-', '_', blanks etc are removed
+CleanSeq := proc(MA: array(string));
+ n := length(MA); Seq := CreateArray(1..n);
+ for i to n do
+   p := 0; l := length(MA[i]);
+   temp := CreateString(l);
+   for j to l do
+     a := MA[i,j];
+     if a < 'Z' and a >= 'A' then p := p + 1; temp[p] := MA[i,j]
+     else MA[i,j] := '_' fi;
+   od;
+   Seq[i]:=copy(temp[1..p]);
+ od;
+ Seq;
+end:
+
+PosinMA := proc(gapseq: string,  x: integer); 
+ i := 0; posx := 0; 
+ while posx < x and i < length(gapseq) do
+   i := i + 1; 
+   if gapseq[i]>='A' and gapseq[i]<'Z' then 
+     posx := posx + 1;  
+   elif gapseq[i] = '<' then
+     while gapseq[i]<>'>' do i := i + 1; od;
+     i := i - 1;
+   fi;
+ od; 
+ i
+end:
+
+CompleteAlign := proc()
+  global msa;
+  Seq := seqs;
+  Align := msa;
+  if Align = 0 then return(msa) fi;
+  n := length(Seq);  
+  tmp := CleanSeq(Align);
+  for i to n do  
+    p := SearchString(tmp[i], Seq[i]);
+    if p > 0 then
+      part := Seq[i, 1..p];
+      x2 := PosinMA(Align[i], 1)-1;
+      x1 := x2 - p + 1;
+      if x1 < 1 then
+	Align[i] := part.Align[i, x2+1..-1]; 
+        for j to n do 
+	  if j <> i then Align[j] := CreateString(-x1+1, '_').Align[j] fi;
+	od;
+      else
+        Align[i] := Align[i, 1..x1-1].part.Align[i, x2+1..-1]; 
+      fi;
+      tmp[i] := part.tmp[i];
+    fi;
+    if length(tmp[i])<length(Seq[i]) then
+      p := length(tmp[i])+1;
+      part := Seq[i, p..-1];
+      x1 := PosinMA(Align[i], p-1);
+      x2 := x1 + length(part);
+      delta := x2 - length(Align[i]);
+      Align[i] := Align[i, 1..x1].part.Align[i, x2+1..-1];
+      if delta > 0 then 
+	for j to n do 
+	  if j <> i then Align[j] := Align[j].CreateString(delta, '_') fi;
+	od;
+      fi;
+    fi;
+  od;
+  msa := Align;
+end:
+
+ConvertTreeLocal := proc( t:Tree )
+if op(0,t)=Leaf then
+    tent := '';
+    for j to t[3]-1 do 
+	m := allall[t[3],j];
+	if type(m,{Match,Alignment}) and m[Length2] > length(tent) then
+	    tent := m[Seq2] fi
+    od;
+    for j from t[3]+1 to length(allall) do
+	m := allall[t[3],j];
+	if type(m,{Match,Alignment}) and m[Length1] > length(tent) then
+	    tent := m[Seq1] fi
+    od;
+    return( Leaf(copy(tent),t[2],t[3]) )
+else return( Tree( ConvertTreeLocal(t[1]), t[2], ConvertTreeLocal(t[3]) ) ) fi
+end:
+
+# ***** END Old procedures *****
+
+
+end:

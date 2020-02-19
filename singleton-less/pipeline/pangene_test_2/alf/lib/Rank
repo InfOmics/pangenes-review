@@ -1,0 +1,32 @@
+#
+# Rank:
+# Returns the sample ranks of the values in a list.
+#
+#                         Adrian Altenhoff, Feb 19. 2009
+#
+
+Rank := proc(a_:list ; order:procedure)
+    a := a_; n := length(a);
+    orderP := If(assigned(order), order, x->x);
+    ind := sort([seq(i,i=1..n)], x->orderP(a[x]));
+    rank := CreateArray(1..n);
+
+    v := a[ind[1]]; j := 1; rank[ind[1]] := 1;
+    for i from 2 to n do
+        if a[ind[i]]=v then next;
+        elif (a[ind[i]]<>v and i-j>1) then
+            meanval := sum(x,x=j..i-1)/(i-j);
+            for k from j to i-1 do rank[ind[k]] := meanval od:
+        fi;
+        j := i; v:=a[ind[i]]; rank[ind[i]] := i;
+    od;
+
+    # fix last ranks if more than one of those element exist.
+    if j<>n then
+        meanval := sum(x,x=j..n)/(n-j+1);
+        for k from j to n do rank[ind[k]] := meanval od:
+    fi;
+
+    return(rank);
+end:
+

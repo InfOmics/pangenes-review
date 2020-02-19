@@ -1,0 +1,273 @@
+#
+#	BipartiteMatching
+#		Find the lowest cost matching (one-to-one
+#	correspondence) in a bipartite graph where the Edge
+#	labels are weights.  That is, the sum of all the weights
+#	of the assignments is minimum, assuming that all edges
+#	are assigned.  Alternatively, the input can be a rectangular
+#	matrix with the weights.
+#
+#	BipartiteMatchingMax is identical to BipartiteMatching,
+#	but maximizes the sum of weights.
+#
+#
+#	BipartiteMatchingScore is suitable for scores of alignments
+#	(maximizes, removes non-significant alignments, those below
+#	MinScore, the second, optional, argument)
+#
+#	See comments at the end.
+#
+#			Gaston H. Gonnet (July 30, 2006)
+#
+BipartiteMatchingScore := proc( s:matrix(numeric) ; (MinScore=217):positive )
+s1 := copy(s);
+for z in s1 do for i to length(z) do if z[i] < MinScore then z[i] := 0 fi od od;
+BipartiteMatchingMax(s1)
+end:
+
+
+
+
+
+BipartiteMatching := proc( s:matrix(numeric) )
+#s[i,j] is the weight of the edge (i,j)
+# the function returns a list of the form [1=1,2=3,3=2] which means 1 is matched to 1 etc.
+
+n1 := length(s);
+if n1=0 then return([]) fi;
+n2 := length(s[1]);
+if n1 > n2 then
+     r := procname( transpose(s) );
+     return( [ seq( z[2]=z[1], z=r) ] )
+elif n1=1 then
+     return( [1=SearchArray(max(s[1]),s[1])] )
+elif n1=2 and n2=2 then
+     if s[1,1]+s[2,2] > s[1,2]+s[2,1] then return( [1=2,2=1] )
+     else return( [1=1,2=2] ) fi
+elif n1=2 then
+     best := [DBL_MAX];
+     all := {seq(i,i=1..n2)};
+     for i1 to n2 do
+	 base1 := s[1,i1];
+	 for i2 in all minus {i1} do
+	     base2 := base1+s[2,i2];
+	     if base2 < best[1] then best := [base2,[1=i1,2=i2]] fi
+	 od;
+     od;
+     return( best[2] )
+elif n1=3 then
+     best := [DBL_MAX];
+     all := {seq(i,i=1..n2)};
+     for i1 to n2 do
+	 base1 := s[1,i1];
+	 for i2 in all minus {i1} do
+	     base2 := base1 + s[2,i2];
+	     for i3 in all minus {i1,i2} do
+		 base3 := base2 + s[3,i3];
+	         if base3 < best[1] then best := [base3,[1=i1,2=i2,3=i3]] fi
+	     od
+	 od
+     od;
+     return( best[2] )
+fi;
+s1 := copy(s);
+maxs := 2*max(s1);
+for z in s1 do for i to length(z) do z[i] := maxs-z[i] od od;
+BipartiteMatchingMax(s1)
+end:
+
+
+
+###############################################################
+# Bipartite Matching -- find maximum sum - does the real work #
+###############################################################
+BipartiteMatchingMax := proc( s:matrix(numeric) )
+n1 := length(s);
+if n1=0 then return([]) fi;
+n2 := length(s[1]);
+if n1 > n2 then
+    r := procname( transpose(s) );
+    return( [ seq( z[2]=z[1], z=r) ] )
+fi;
+
+rows := {seq(i,i=1..n1)};
+cols := {seq(i,i=1..n2)};
+assig := []; # the current matching of columns to rows ([1=1,2=3,...])
+
+# make greedy assignments by choosing the edges with the largest values first
+vals := [];
+for i to n1 do for j to n2 do
+    if s[i,j] > 0 then vals := append(vals,[-s[i,j],i,j]) fi od od;
+vals := sort(vals);
+for v in vals while rows <> {} and cols <> {} do
+    if not member(v[2],rows) or not member(v[3],cols) then next fi;
+    assig := append( assig, v[2]=v[3] );
+    rows := rows minus {v[2]};
+    cols := cols minus {v[3]};
+od;
+
+#
+#	Find the highest cost path from s to t in the following graph
+#	(which will mean a rearrangement and improvement)
+#
+#
+#              -----> A1 <-------  B1
+#            /            -s[1,1] (if assigned)
+#           /
+#          /
+#         /                               
+#       s ----------> Ai --------> Bj ------------> t
+#                        s[i,j] (if not assigned)
+#
+#                    . . . . . . . . . . 
+#
+#
+#	stack[col] : [ cost_so_far, [rows in path], [cols in path] ]
+#
+
+assig := {op(assig)};
+improv := CreateArray(1..n2,true);
+gimprov := true;
+
+while gimprov do
+    gimprov := false;
+
+    Edge := CreateArray(1..n1,[0,0]);
+    RevEdge := CreateArray(1..n2,[0,0]);
+    for z in assig do
+        Edge[z[1]] := [s[z[1],z[2]],z[2]]; # score, matched to
+        RevEdge[z[2]] := [s[z[1],z[2]],z[1]]
+    od;
+
+    for start_row to n1 do
+        start_col := Edge[start_row,2];
+        stack := CreateArray(1..n2,[0]);
+        for j to n2 do if j <> start_col then
+	    v := s[start_row,j] - Edge[start_row,1];
+	    stj := stack[j];
+	    if v > stj[1] then stack[j] := [v,[],[j]] fi
+        fi od;
+        improvement := [];
+
+        for j to n2 do improv[j] := stack[j,1] > 0 od;
+        while member(true,improv) and improvement = [] do
+	    for j to n2 do if stack[j,1] > 0 and improv[j] then
+	        improv[j] := false;
+	        i := RevEdge[j,2];
+	        stj := stack[j];
+	        if i=0 or j=start_col then improvement := stj;  break
+		elif member(i,stj[2]) then next
+	        else v := stj[1] - RevEdge[j,1];
+		     for j2 to n2 do
+		         if v+s[i,j2] > stack[j2,1] then
+			     stack[j2] := [v+s[i,j2], append(stj[2],i),
+						      append(stj[3],j2)];
+			     improv[j2] := true
+		         fi
+		     od;
+	        fi
+	    fi od;
+        od;
+
+        if improvement <> [] then
+            prows := [start_row,op(improvement[2])];
+            pcols := [start_col,op(improvement[3])];
+            for i to length(prows) do
+	        assig := ( assig minus {prows[i]=pcols[i]} ) union
+	            {prows[i]=pcols[i+1]}
+            od;
+	    gimprov := true;
+	    break;
+        fi
+    od;
+od;
+
+
+[op(assig)]
+end:
+
+#t:=1000*Rand(matrix(positive)): zz:=BipartiteMatchingScore(t); sum(t[z[1],z[2]],z=zz); BruteForceBipMatching(t);
+#
+#  Comments: The code as written optimizes from the cols to rows back to cols,
+#	hence when there is a possibility of optimization from row to col back
+#	to row, it will miss it.  (This can be done by breaking the inner loop
+#	of the maximum flow to separate the two cases, which are already
+#	indicated by start_col=0.)  For the time being this is resolved by
+#	transposing the matrix and hence making sure that all the rows are
+#	assigned.  (This may not work in some cases where some of the scores
+#	are too low and hence the edge is "forbidden".)  The following
+#	matrix (maximization) illustrates the problem mentioned.
+# BadCase := [[799.0304, 40.6258], [838.5465, 30.7818], [884.3167, 605.0554]];
+
+## Testing Code by Gaston
+
+#Set(gc=3e7):
+#st := Stat():
+#to 50000 do
+#   t := 1024*Rand(matrix(positive)):
+#   zz := BipartiteMatchingScore(t);
+#   r := sum(t[z[1],z[2]],z=zz) - BruteForceBipMatching(t);
+#   if r > 0.001 then error('bad assignment') fi;
+#   UpdateStat( st, r );
+#od:
+#print(st);
+#
+#BruteForceBipMatching := proc( s:matrix(numeric) ; (MinScore=217):positive )
+#if length(s) > length(s[1]) then return( procname(transpose(s),MinScore) ) fi;
+#  rec := proc( s, rows, cols )
+#     if rows={} or cols={} then 0
+#     else r := -DBL_MAX;
+#	  r1 := rows[1];
+#	  for i in cols do if s[r1,i] >= MinScore then
+#	      r := max( r,
+#		rec( s, rows minus {r1}, cols minus {i} ) + s[r1,i]);
+#	  fi od;
+#	  r
+#     fi
+#  end:
+#rec( s, {seq(i,i=1..length(s))}, {seq(i,i=1..length(s[1]))} )
+#end:
+
+## Testing Code by Christian
+
+#Set(gc=3e7):
+#st := Stat():
+#to 50000 do
+#   t := 1024*Rand(matrix(positive)):
+#   zz := BipartiteMatchingScore(t);
+#   
+#   r := abs(RecompScore(t,zz) - BruteForceBipMatching(t));
+#   if r > 0.001 then printf('t := %A;',t); error('bad assignment') fi;
+#   updateStat( st, r );
+#   st := st + r;
+#od:
+#print(st);
+#
+#BruteForceBipMatching := proc( s:matrix(numeric) ; (MinScore=217):positive )
+#if length(s) > length(s[1]) then return( procname(transpose(s),MinScore) ) fi;
+#    s1 := copy(s);
+#    for z in s1 do for i to length(z) do z[i] := If(z[i]<MinScore,0,z[i]); od; od;
+#    print(s1);
+#  rec := proc( s, rows, cols )
+#     if rows={} or cols={} then 0
+#     else r := -DBL_MAX;
+#       r1 := rows[1];
+#         for i in cols do
+#	       r := max( r,
+#	       	 rec( s, rows minus {r1}, cols minus {i} ) + s[r1,i]);
+#		   od;
+#		     r
+#     fi
+#  end:
+#rec( s1, {seq(i,i=1..length(s1))}, {seq(i,i=1..length(s1[1]))} )
+#end:
+#
+#RecompScore := proc(s:matrix(numeric), assig; (MinScore=217):positive)
+#    res := 0;
+#    for i to length(assig) do
+#    if s[assig[i,1],assig[i,2]] > MinScore then
+#        res := res + s[assig[i,1],assig[i,2]];
+#	fi;
+#    od;
+#    return(res);
+#end;

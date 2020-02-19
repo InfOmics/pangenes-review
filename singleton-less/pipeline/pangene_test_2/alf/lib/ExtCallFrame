@@ -1,0 +1,107 @@
+# Purpose: Create a frame program for CallExternal
+# Author:  Lukas Knecht
+# Created: 21 Jul 1994
+#
+CreateCProgram := proc (p: procedure, name: string)
+  oldprintgc := Set (printgc=false);
+  params := [op (1, eval (p))];
+  descr := [op (4, eval (p))];
+  OpenWriting (name.'.c');
+  if length (descr) = 1 then
+    printf ('/* %s */\n', descr[1])
+  fi;
+  printf ('#include "extcalls.h"\n');
+  printf ('#define MaxReturnSize 10000\n');
+  printf ('#define MaxReturnArgs 1\n\n');
+  printf ('main (int argc, char **argv)\n');
+  printf ('{\n');
+  if length (params) > 0 then
+    printf ('  extref');
+    for i to length (params) do
+      if i > 1 then printf (',') fi;
+      if type (params[i], colon) then
+	printf (' *%s', params[i,1])
+      else
+	printf (' *%s', params[i])
+      fi
+    od;
+    printf (';\n')
+  fi;
+  printf ('\n  extenter (argv[1], MaxReturnSize, MaxReturnArgs);\n');
+  for i to length (params) do
+    if type (params[i], colon) then
+      printf ('  %s = extget', params[i,1]);
+      dim := 0;
+      t := params[i,2];
+      while type (t, structure(anything,array)) or
+      type (t, structure(anything,list)) or
+      type (t, structure(anything,matrix)) do
+	if type (t, structure(anything,matrix)) then
+	  t := [op (t)];
+	  dim := dim + 2
+	else
+	  t := [op (t)];
+	  dim := dim + max (length (t) - 1, 1)
+	fi;
+	t := t[1]
+      od;
+      acc := ' ';
+      if member(t,{'posint','integer'}) then printf ('int'); acc := 'N'
+      elif member(t,{'float','numeric','positive','negative','nonnegative'})
+	   then printf ('dbl');  acc := 'X'
+      elif member(t,{'string','symbol'}) then
+	   printf ('text'); dim := dim + 1; acc := 'C'
+      elif t = 'list' or t = 'array' then
+	   printf ('list'); acc := 'P'; dim := dim + 1
+      elif t = 'matrix' then
+	   printf ('list'); acc := 'P'; dim := dim + 2
+      fi;
+      if acc <> ' ' then
+	printf (' (%d, %d); /* access with EXT%c(%s', 
+		i, dim, acc, params[i,1]);
+	if dim = 0 then
+	  printf (',0')
+	else
+	  for j to dim do printf (',i%d', j) od
+	fi;
+	printf (') */\n')
+      else
+	printf (' (%d); /* WARNING: cannot pass type ''%a'' */\n', i, t);
+	OpenWriting (terminal);
+	printf ('WARNING: cannot pass %d%s parameter (has type ''%a'')\n',
+		i, If (i<=2, If (i=1, 'st', 'nd'), If (i=3, 'rd', 'th')), t);
+	OpenAppending (name.'.c')
+      fi
+    else
+      printf ('  %s = extget (%d);\n', params[i], i)
+    fi
+  od;
+  printf ('\n  /* Here comes the actual C code */\n\n');
+  printf ('  extexit ();\n');
+  printf ('}\n');
+  OpenWriting (terminal);
+  Set (printgc=oldprintgc);
+  printf ('%s := proc (', name);
+  for i to length (params) do
+    if i > 1 then printf (', ') fi;
+    if type (params[i], colon) then
+      printf ('%s: %a', params[i,1], params[i,2])
+    else
+      printf ('%s', params[i])
+    fi
+  od;
+  printf (')\n');
+  if length (descr) = 1 then
+    printf ('  description\n''');
+    for i to length (descr[1]) do
+      printf ('%c', If (descr[1,i] = '''', '''''', descr[1,i]))
+    od;
+    printf (''';\n')
+  fi;
+  printf ('  CallExternal (''%s''', name);
+  for i to length (params) do
+    printf (', %s', If (type (params[i], colon), params[i,1], params[i]))
+  od;
+  printf (')\n');
+  printf ('end:\n')
+end:

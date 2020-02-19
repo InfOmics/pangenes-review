@@ -1,0 +1,66 @@
+module external AAMutateGamma;
+##############################################################
+# Mutate a amino acid sequence according to gamma model.     #
+# Requires an array 'classes' that specifies the gamma class #
+# for each site.                                             #
+# DD 6 Feb. 2009
+# 
+#   23 Aug. 2011: mutate in-place
+##############################################################
+AAMutateGamma := proc(seq1:string, Pam:list(nonnegative), classes:array(posint))
+if not assigned(logPAM1) then
+    error('logPAM1 is not assigned. Use CreateDayMatrices().')
+fi;
+    # prepare matrices for the different gamma classes
+    MP := CreateArray(1..length(Pam),0):
+    for j to length(MP) do
+#        tmp:=remember(exp(Pam[j]*logPAM1));
+#        print(Pam[j]): print(tmp):
+#        for i from 2 to length(tmp) do
+#            tmp[i]:=tmp[i]+tmp[i-1];
+#        od;
+#        MP[j]:=transpose(tmp);
+        MP[j] := remember(GetMatrix(max(1/DBL_MAX, Pam[j]), logPAM1)):
+    od:
+#    for i to length(MP) do print(MP[i]): lprint() od:
+#    error('what''s wrong with this?'):
+    # now mutate
+    len:=length(seq1);
+#    seq2:=CreateString(len, 'X');
+    for i to len do
+        aa0:=AToInt(seq1[i]);
+        seq1[i]:=RandomAA(MP[classes[i], aa0]);
+#        seq2:=seq2.a;
+    od;
+    seq1;
+end:
+
+#######################################################
+# Return a random amino acid. The input is the vector #
+# with cumulated nucleotide probabilities. (f[i]      #
+# gives the probability of a nucleotide being on of   #
+# nucleotide 1 to i.)                                 #
+#######################################################
+RandomAA:=proc(CumFreq:array(numeric)) option internal;
+    do
+        r := Rand():
+        #print(r):
+        ind:=SearchOrderedArray(r,CumFreq) + 1;
+        #print(ind):
+        if ind<=20 then
+          	c:=IntToA(ind);
+          	break;
+          fi;
+    od:
+    c;
+end:
+
+GetMatrix := proc(Pam:positive, lp1:matrix) option internal;
+    tmp := exp(Pam*lp1):
+    for i from 2 to length(tmp) do
+        tmp[i]:=tmp[i]+tmp[i-1]:
+    od:
+    transpose(tmp)
+end:
+
+end: # module

@@ -1,0 +1,494 @@
+# Purpose: DNA Tools server processing (ParExecuteIPC version)
+# Author:  Gina Cannarozzi
+# Created: 14 May 2002
+#
+#
+MainTitle := 'No title specified';
+ParseMsg := proc (msg: string)
+  global db, DB, SPDF,msg, MainTitle;
+ # option trace;
+  description
+'Parses incoming message for DoEvolutionaryAnalysis and returns
+   - a text with commands if there is a correct data base to be EvolutionaryAnalyzed
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+  
+ db_path := '~darwin/DB/':
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    lprint ('Invalid incoming message');
+    return (0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    lprint ('Start of message body not found');
+    return (0)
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('?there is no message body.')
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  body := msg[first+3..first+2+last];
+  token := sscanf (body, '%s');
+  token := If (length (token) = 0, '', token[1]);
+  if length (token) < 20 or SearchString (token, 'TestNewFunction1') <> 0 and
+    SearchString (token, 'EvolutionaryAnalysis') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token))
+  fi;
+  seqs := CaseSearchString (token, body) + length (token) + body;
+    
+  dot := SearchString('.', seqs);
+ 
+  if dot > -1 then 
+    newdot  := SearchString('.', seqs[dot+1..-1]);
+    while newdot >-1 do
+      dot := newdot + dot+1;
+      newdot  := SearchString('.', seqs[dot+1..-1]);
+    od;
+    commands := seqs[dot+1..-1];
+    seqs := uppercase(seqs[1..dot]);
+  else
+    return (sprintf('There are no commands'));
+  fi;
+  
+  p := SearchString('title:', seqs);
+  if p>-1 then
+     p1 := SearchString('&', seqs[p+1..-1])+p+2;
+     p2 := SearchString('&', seqs[p1+1..-1])+p1;
+     if p2-p1>0 then 
+      MainTitle := seqs[p1..p2];
+      seqs:= seqs[1..p].seqs[p2+2..-1];
+     fi;
+  fi;
+  printf('<DBDESCR>Database for AllAll</DBDESCR>\n');
+  bad := copy([]);
+  for seqno do
+    printed := false;
+    while length (seqs) > 0 and (isspace(seqs[1]) ) do seqs := 1+seqs od;
+    i1 := SearchString(',',seqs);  if i1<0 then i1 := 10^7 fi;
+    i2 := SearchString('.',seqs);  if i2<0 then i2 := 10^7 fi;
+    i3 := SearchString(';',seqs);  if i3<0 then i3 := 10^7 fi;
+    it := min(i1,i2);
+    it := min(it, i3);
+    if it = 10^7 then
+      return ('?"'.seqs[1..min (length (seqs), 6)].
+	      '..." has no terminator ("," or "." or ";").')
+    fi;
+
+    # decide which is the format
+    if seqs[1] = '<' then
+      # entry in SGML format
+      if length (seqs) < 3 or seqs[1..3] <> '<E>' then
+	return ('?SGML entry "'.seqs[1..it+1].'" does not start with <E>.')
+      fi;
+      i3 := CaseSearchString ('</E>', seqs);
+      if i3 < 0 then
+	return ('?SGML entry "'.seqs[1..it+1].'" does not end with </E>.')
+      fi;
+      i4 := CaseSearchString ('<SEQ>', seqs);
+      if i4 < 0 or i4 > i3 then
+	return ('?SGML entry "'.seqs[1..it+1].'" has no <SEQ> tag.')
+      fi;
+      i5 := CaseSearchString ('</SEQ>', seqs);
+      if i5 < i4 or i5 > i3 then
+	return ('?SGML entry "'.seqs[1..it+1].'" has no </SEQ> tag.')
+      fi;
+      for i to i4 + 5 do
+	printf ('%c', If(isspace(seqs[i]),'',seqs[i]))
+      od;
+      upper := lower := false;
+      for i from i4 + 6 to i5 do
+	if isspace(seqs[i])  then next fi;
+	if CaseSearchString( seqs[i], 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0 then
+	  printf('%c',seqs[i]);
+	  upper := true
+	elif CaseSearchString( seqs[i], 'acdefghiklmnpqrstvwyx' ) >= 0 then
+	  printf('%c', IntToA( CaseSearchString( seqs[i],'arndcqeghilkmfpstwyvx')+1 ));
+	  lower := true
+	else bad := append(bad, '?"'.seqs[i].
+		     '" is an invalid character in the sequence "'.
+		     seqs[1..it].'".');
+	fi
+      od;
+      if upper and lower then
+	bad := append(bad, '?of mixed upper and lower case to describe sequence "'.
+		seqs[1..it].'".');
+      fi;
+      for i from i5 + 1 to i3 + 4 do
+	printf ('%c', If(isspace(seqs[i]),'',seqs[i]))
+      od;
+      printf ('\n');
+      it := i3 + 4
+    else
+      under := CaseSearchString ('_', seqs);
+      i1 := max(SearchString(';',seqs), SearchString(',',seqs));
+      ac := (under = -1 or under > i1) and it < 10 and it <= i1;
+      if ac then it := i1; fi;
+      if i1 < 0 or i1 > it then i1 := under; fi;
+      if i1 < 0 then i1 := 10^7 fi;
+      if (i1 < it) or ac or under > -1  then      
+	# must be an accession number or an ID
+	arg := sscanf (seqs[1..it], '%s %d-%d');
+	if length (arg) <> 1 and length (arg) <> 3 then
+	   bad := append(bad, '?"'.seqs[1..it].'" is not a valid sequence identification.');
+	fi;
+	if not type(SPDF,database) then
+	  OpenWriting (terminal);
+          #machine := TimedCallSystem('machine', 10);
+	  SPDF := ReadDb('~darwin/DB/SwissProt.Z'); 
+	  OpenAppending (db)
+	fi; 
+	if ac then it := it + 1; fi;
+	DB := SPDF;
+	i2 := 0;
+	if CaseSearchString ('_', Align) >0 and CaseSearchString ('__', Align)=-1 then
+	  ent := arg[1];
+	elif arg[1] > 'O' and arg[1] <= 'Z' and length(arg) < 10 then
+	  ent := SearchDb(arg[1]);
+	else
+	  ent := SearchDb(arg[1]);
+	fi;
+        ent_len := length([ent]);
+	if ent_len = 1 then
+#	  printf( '<E><DE>Input sequence number %d</DE><SEQ>', seqno );
+	  printf('%s',ent);
+#	  printf('%s',ent['seq']);
+#	  printf( '</SEQ></E>\n' );
+	  printed := true;
+        elif ent_len >1 then
+	   bad := append(bad, sprintf('?"%s" was found %d times in the database. Please specify more clearly.', arg[1],ent_len ));
+        elif ent_len <>1 then
+	   bad := append(bad, '?"'.arg[1].'" cannot be found in the database. Enter IDs or just the peptide sequences');
+	fi;
+	if length (arg) = 3 then
+	  t := [GetEntryInfo (ent, 'AC', 'ID', 'DE', 'OS', 'SEQ')];
+	  printf ('<E>');
+	  for i by 2 to length (t) do
+	    if t[i] = 'DE' then
+	      printf ('<DE>Pos %d to %d of %s</DE>\n',
+		      arg[2], arg[3], t[i+1])
+	    elif t[i] = 'SEQ' then
+	      if arg[2] > arg[3] or arg[2] < 1 or
+		arg[3] > length (t[i+1]) then
+		bad := append(bad, '?positions '.arg[2].' to '.arg[3].
+			' cannot be extracted from '.arg[1]);
+	      else
+  	        printf ('<SEQ>%s</SEQ>\n', t[i+1,arg[2]..arg[3]]);
+	      fi;
+	    else
+	      printf ('<%s>%s</%s>\n', t[i], t[i+1], t[i])
+	    fi
+	  od;
+	  printf ('</E>\n')
+	else 
+	  if bad = [] and printed = false then print( Entry(Offset(i2)) ); fi; 
+	fi
+      else
+	# must be an explicitly given amino acid sequence
+	printf( '<E><DE>Input sequence number %d</DE><SEQ>', seqno );
+	upper := lower := false;
+	for i to it do
+	  if isspace(seqs[i])  then next fi;
+	  if CaseSearchString( seqs[i], 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0 then
+	    printf('%c',seqs[i]);
+	    upper := true
+	  elif CaseSearchString( seqs[i], 'acdefghiklmnpqrstvwyx' ) >= 0 then
+	    printf('%c', IntToA( CaseSearchString( seqs[i],
+					'arndcqeghilkmfpstwyvx')+1 ));
+	    lower := true
+	  else
+	    bad := append(bad, '?"'.seqs[i].'" is an invalid character in the sequence "'.
+		    seqs[1..it].'".');
+	  fi
+	od;
+	if upper and lower then
+	  bad := append(bad, '?of mixed upper and lower case to describe sequence "'.
+		  seqs[1..it].'".');
+	fi;
+	printf( '</SEQ></E>\n' )
+      fi
+    fi;
+    seqs := it+seqs;
+    while length (seqs) > 0 and (isspace (seqs[1]) ) do seqs := 1 + seqs od;
+    if length (seqs) <= 1 then break fi;
+    if seqs[1] = '.' then seqs := 1 + seqs; break fi;
+    if seqs[1] = ';' then seqs := 1 + seqs; break fi;
+    if seqs[1] = ',' then seqs := 1 + seqs fi
+  od;
+  OpenWriting (terminal);
+  if bad <> [] then return(bad); fi;
+  err :=  traperror (ReadDb (db));
+  if err = lasterror then
+    return ('?the database format is invalid ('.err.
+	    '); check the validity of sequences.')
+  fi;
+  DB := ReadDb(db);
+  if DB[TotEntries] < 2 then
+    return( '?there are less than two sequences, should have at least two entries.')
+  fi;
+  for i to DB[TotEntries] do
+    if length(String(Sequence(Entry(i)))[1]) = 0 then
+      return( '?sequence #'.i.' has no amino acids.')
+    fi
+  od;
+  return (commands);
+end:
+ 
+AppendPostScript := proc (fromfile: string, tofile: string, title: string)
+  global tmpfile;
+  t := ReadRawFile (fromfile);
+  p := CaseSearchString ('\n', t);
+  OpenAppending (tofile);
+  printf ('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending (tmpfile)
+end:
+
+DoEvolutionaryAnalysis := proc( commands: string )
+ global  msg, db, prefix, n, printlevel, MainTitle, ct, nodes, ne, 
+   AA_Diff, CHANGES, SITES, SYNVAL:
+  description 'process a server request for the evolutionary analysis';
+
+  dir := '/home/cbrg/WWWApache/share/public_html/Server/results/';
+  str := sprintf('%d',trunc(Rand()*100));
+  pid := getpid();
+  prefix2 := sprintf('%d',pid) . str . '.';
+
+  doneds := true; kaks := true; cov := true ;
+
+   ne := DB[TotEntries];
+ 
+    tax_a := CreateArray(1..ne);
+    tax_d := CreateArray(1..ne);
+    label := CreateArray(1..ne);
+    seqs := CreateArray(1..ne);
+    dna := CreateArray(1..ne);
+
+    for i to ne do
+      tax_a[i] := SearchTag('ALI',Entry(i));
+      tax_d[i] := SearchTag('DALI',Entry(i));
+      label[i] := SearchTag('ID',Entry(i));
+      seqs[i] := SearchTag('SEQ',Entry(i));
+      dna[i] := SearchTag('DNA',Entry(i));
+    od;
+
+    if tax_a[1] = '' then tax_a := 0 fi;
+    if tax_d[1] = '' then tax_d := 0 fi;
+    if seqs[1] = '' then seqs := 0 fi;
+    if dna[1] = '' then dna := 0 fi;
+
+   if tax_a = 0 and tax_d = 0 then 
+    msa := MultiAlign(seqs,label);
+    tree := msa['Tree']
+   fi;
+
+   a := CompleteInputData(label,seqs,dna,tax_a,tax_d);
+
+    if tax_a = 0 then tax_a := a[4]; fi;
+    if tax_d = 0 then tax_d := a[5]; fi;
+    if seqs[1] = 0  then seqs := a[2]; fi;
+    if dna[1] = 0 then dna := a[1]; fi;
+
+   for i to DB[TotEntries] do
+     CheckDNA(seqs[i],dna[i]):
+     if not " then return('DNA doesnt match protein sequnce',i); fi;
+   od:
+
+  if tree = 0 then
+    results := GetMATreeNew(copy(tax_a)):
+    tree := copy(results[1]):
+    Dist := copy(results[2]):
+    Var := copy(results[3]):
+  fi;
+
+     utree := UnlabelTree3(tree):
+     print('');
+     a:= traperror(GetKaKs(utree, tax_a,tax_d,label)):
+     if a = lasterror then 
+       print(a):
+     fi:
+   OpenWriting(dir.prefix2.'neds');
+   neds:=ProcessMaliForNED(tax_d,label):
+   ct := copy(ne):
+   nodes := CreateArray(1..ne, 1..2):
+   nodes[ne] := [x,x]:
+
+   n := MakeNodes(utree):
+   nednodes := MakeNodes2(n,neds[4],neds[16]):
+   OpenAppending(dir.prefix2.'neds');
+    printf('\nnednodes:\n'):
+    for i to length(nednodes) do
+     printf('%d\t%a\t%a\t%5.3f\t%4d\n',i,nednodes[i,3],nednodes[i,4],nednodes[i,5,1],round (nednodes[i,5,1]*166.6667))
+    od:
+    printf('\n'):
+   OpenWriting(terminal);
+   CallSystem('enscript -r -fCourier7 -p '.dir.prefix2.'neds.ps '.dir.prefix2.'neds');
+
+   OpenAppending(tmpfile);
+   printf('Pick up your Ned Reports :\n');
+   printf('http://cbrg.inf.ethz.ch/Server/results/%sneds\n\n',prefix2);
+   printf('http://cbrg.inf.ethz.ch/Server/results/%sneds.ps\n\n',prefix2);
+   OpenWriting(terminal);
+
+
+end:
+
+init := proc ()
+  CreateDayMatrices():
+  Set(printgc = false):
+
+    #not sure dartreealone or maalone are needed
+    #or details or aa_ancestor
+   
+    ReadLibrary('Florida/dartreealone'):
+    ReadLibrary('Florida/aachangereport'):
+    ReadLibrary('Florida/structures_li'):
+    ReadLibrary('Florida/maketrips2'):
+    ReadLibrary('Florida/parsimony'):
+    ReadLibrary('Florida/probabilities'):
+    ReadLibrary('Florida/degeneracy2'):
+    ReadLibrary('Florida/li_parameters'):
+    ReadLibrary('Florida/ancients'):
+    ReadLibrary('Florida/makebranch'):
+    ReadLibrary('Florida/parsi_report'):
+    ReadLibrary('Florida/tree_KaKs'):
+    ReadLibrary('Florida/tree_mutations'):
+#   ReadLibrary('Florida/details'):
+    ReadLibrary('Florida/aa_ancestor'):
+    ReadLibrary('Florida/maashow'):
+    ReadLibrary('Florida/madshow'):
+    ReadLibrary('Florida/ttn_tvn.work2'):
+    ReadLibrary('Florida/codtocod'):
+
+    ReadLibrary('Florida/glob_mod'):
+    ReadLibrary('Florida/NED'):
+    ReadLibrary('DNATools');
+    ReadLibrary('Florida/KaKs'):
+    Li_Parsi_Globals():
+
+end:
+
+job := proc ()
+  global msg, db, prefix, MainTitle;
+  option trace;
+  prefix := '/tmp/'.getpid ().'.';
+  dir := '/home/cbrg/WWWApache/share/public_html/Server/results/';
+  db := prefix.'db';
+  CallSystem ('rm '.db.'*');
+  OpenWriting (db); 
+  cmds := ParseMsg (msg):
+  OpenWriting (terminal); 
+  res := 'error';
+  if type (cmds, string) or type(cmds, list) then
+    OpenWriting (tmpfile);	 
+    printf ('\nTitle of your job: %s\n\n', MainTitle);
+    if type(cmds, string) then
+      if (cmds[1] = '?') then 
+        lprint ('Sorry, your request could not be processed,');
+        printf ('because %s', cmds[2..-1]);
+        lprint ()
+      else 
+        a := traperror(DoEvolutionaryAnalysis (cmds)):
+        if a = lasterror then
+          lprint ();
+          lprint ();
+          lprint ('Sorry, your request could not be processed');
+          lprint ('because an error was encountered.');
+          lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+          lprint ('Thank you, the cbrg team.');
+          lprint ();
+          lprint ();
+          printf ('%s', a);
+          lprint ();
+        fi:
+      fi:
+    else
+      lprint ('Sorry, your request could not be processed,');
+      printf ('because the following errors occurred:\n');
+      for i to length(cmds) do
+        lprint (cmds[i]);
+      od:   
+    fi:
+    OpenWriting (terminal); 
+# OpenAppending ('~cbrg/EvolutionaryAnalysis/job.trace');
+    res := ReadRawFile (tmpfile);
+#   OpenAppending ('~cbrg/EvolutionaryAnalysis/job.trace');
+#    lprint('After Running DoEvolutionaryAnalysis EvolutionaryAnalysis:', res);
+    OpenWriting (terminal);
+  fi;
+  CallSystem ('rm '.prefix.'*');
+  res
+end:
+
+isspace := c -> SearchString(c, ' !\n') >= 0 :
+#isspace := c -> c <= ' ':
+isaa := c->SearchString( c, 'ACDEFGHIKLMNPQRSTVWYX' ) >= 0:
+isalpha := c->SearchString( c, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ.,;:<>\\/' ) >= 0:
+
+
+DbToArrays := proc(db)
+ 
+ err :=  traperror (ReadDb (db));
+ ne := db['TotEntries'];
+
+  seqs := CreateArray(ne):
+  dna :=  CreateArray(ne):
+  ali :=  CreateArray(ne):
+  dali := CreateArray(ne):
+  refs := CreateArray(ne):
+
+  for i to ne do
+    seqs[i] := SearchTag('SEQ',Entry(i));
+    dna[i] := SearchTag('DNA',Entry(i));
+    ali[i] := SearchTag('ALI',Entry(i));
+    dali[i] := SearchTag('DALI',Entry(i));
+    refs[i] := SearchTag('ID',Entry(i));
+    if refs[i] = '' then refs[i] := SearchTag('AC',Entry(i)); fi;
+
+  od;
+
+ [seqs,dna,ali,dali]
+end:
+
+CompleteInputData:= proc(label:{array(string),0}, seqs:{array(string),0},
+      dna:{array(string),0}, ali:{array(string),0},dali:{array(string),0})
+
+  alignment := isseqs := isdna := isdali := isali := false;
+  label1 := copy(label);
+  seqs1 := copy(seqs);
+  dna1 := copy(dna);
+  ali1 := copy(ali);
+  dali1 := copy(dali);
+  
+  if not( seqs = 0 or length(seqs[1]) = 0) then isseqs := true; fi;
+  if not( dna  = 0 or length(dna[1])  = 0) then isdna := true; fi;
+  if not( ali  = 0 or length(ali[1])  = 0) then isali := true; fi;
+  if not( dali = 0 or length(dali[1]) = 0) then isdali := true; fi;
+
+  if not isseqs and not isali then 
+	error ('either protein sequences or protein alignment must be defined'); fi;
+
+  if not isdna and not isdali then 
+	error ('either dna sequences or dna alignment must be defined'); fi;
+  
+  if isali or isdali then alignment := true; fi;
+
+  if alignment then
+   if not isali then ali1 := CreateProteinAlignFromDNA (seqs,dali1) fi;
+   if not isdali then dali1 := CreateDNAAlignFromProtein (dna,ali1) fi;
+   if not isseqs then seqs1 := CreateUngappedSequences(ali1); fi;
+   if not isdna then dna1 := CreateUngappedSequences(dali1); fi;
+   result := VerifyDNAMatchesProtein(seqs,dna);
+  else
+    msa := MultiAlign(seqs,label);
+    msa1 := DoMultiAlign(msa,'PROB GAP');
+    ali1 := msa1['MA'];
+    dali1 := CreateDNAAlignFromProtein (dna,ali1);
+  fi;
+
+[label1,seqs1,dna1,ali1,dali1];
+
+end:

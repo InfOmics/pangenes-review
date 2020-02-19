@@ -1,0 +1,278 @@
+#
+#	Incomplete Gamma Function
+#
+#	Gamma(a,x) = int( exp(-t) * t^(a-1), t=x..infinity )
+#
+#	and LnGamma(a,x) = ln(Gamma(a,x))
+#
+#	A&S 6.5
+#
+#					Gaston H. Gonnet (October 20, 2003)
+#
+
+
+#
+#   With one argument, it is the Gamma function implemented in the
+#	kernel.  With two arguments it stands for the Incomplete
+#	Gamma function,  Abramowitz & Stegun 6.5.3
+#
+#                                  infinity
+#                                 /
+#                                |           -t    (a - 1)
+#                 Gamma(a, x) =  |          e     t        dt
+#                                |
+#                               /
+#                                 x
+#
+Gamma := proc( a:numeric, x:nonnegative )
+if nargs=1 then proc(z) options builtin, numeric, zippable; 146 end(a)
+elif nargs <> 2 then error('invalid number of arguments')
+elif a <= 0 then error('first argument must be positive')
+
+elif a < x then exp( LnGamma(a,x) )
+
+else proc(z) options builtin, numeric, zippable; 146 end(a) -
+	exp( Lngamma(a,x) )
+     fi
+end:
+
+
+#
+#   With one argument, it is the logarithm of the Gamma function
+#	implemented in the kernel.  With two arguments it stands
+#	for the logarithm of the Incomplete Gamma function,
+#	Abramowitz & Stegun 6.5.3
+#
+LnGamma := proc( a:numeric, x:nonnegative )
+if nargs=1 then proc(z) options builtin, numeric, zippable; 145 end(a)
+elif nargs <> 2 then error('invalid number of arguments')
+elif a <= 0 then error('first argument must be positive')
+
+elif x < a or x < 2.7 then
+     lnga := proc(z) options builtin, numeric, zippable; 145 end(a);
+     lngax := Lngamma(a,x);
+     lnga + ln1x( -exp(lngax-lnga) )
+
+     # Abramowitz & Stegun 6.5.32
+elif x > 1.1*a and x > 18 then # 18 guarantees accuracy for 53 bit mantissas
+     s := t := 1;
+     for i while |t| > s*DBL_EPSILON and i-a < x
+	  do t := t * (a-i) / x;  s := s+t od;
+     (a-1)*ln(x) - x + ln(s)
+
+elif x < 500 then # accurate for 2.7 < x < 500, x > a
+     den := 0;
+     for i from max(35,round(8*x^(1/3))) by -1 to 1 do
+	 den := (i-a)/(1+i/(x+den)) od;
+     a*ln(x) - x - ln(x+den)
+
+else # now an O(a^(-9/2)) approximation is sufficient
+     a1 := a-1;
+     e := (x-a1) / sqrt(2*a1);
+
+     t38 := 1/a1;
+     t28 := a1^2;
+     t13 := e^2;
+     t16 := t13^2;
+     t18 := t16^2;
+     t19 := t13*t18;
+     t24 := t19^2;
+     t22 := t18^2;
+     t17 := t13*t16;
+     t20 := t17^2;
+     t8 := t13*t20;
+     t6 := t13*t22;
+     t4 := t13*t24;
+     t2 := 36*t16;
+     app2 := (-22/81*t17-2/135*t16+8/81*t18-4/135*t13-4/135)*t38+
+	1/61381435500*(-364176*t19-21850560*t16+57436110072*t8-1820880*t18-
+	7283520*t17-36891274365*t22-1609373040*t24+10796101635*t6+
+	125172960*t4-43701120*t13-43701120+(-29760756696+
+	(70400*t13-4787200)*t20)*t20)/t28^2+2/3*t13+2/3+(341/1215*t19+
+	1/25515*t2+8/2835+8/2835*t13-347/1215*t18+4/8505*t17+16/3645*t8-
+	248/3645*t20+(-45358/127575*t19+8/8505*t16+16/8505*t13+2/25515*t18+
+	8/25515*t17+3412/76545*t22-3701/15309*t8+203311/382725*t20-
+	2384/688905*t6+64/688905*t24+16/8505)*t38)/t28+(1/18*t13+1/12+2/9*t16+
+	(1/288+1/38880*t2+1/432*t13+4/243*t19-32/243*t18+103/540*t17+
+	(-139/51840-139/194400*t16-139/77760*t13+16/32805*t22-404/32805*t8+
+	1069/10935*t20-12139/43740*t19+680261/3061800*t18-139/680400*t17+
+	(-571/2488320-571/9331200*t16-571/3732480*t13+21376879/73483200*t19-
+	571/146966400*t18-571/32659200*t17-32584/492075*t22+
+	3042691/11022480*t8-18387797/36741600*t20+3718/492075*t6-
+	824/2066715*t24+16/2066715*t4)*t38)*t38)*t38)/sqrt(a1/2)*e;
+
+     lnapp2 := ln(app2) + a1*(ln(a1)-1) - t13;
+     lnapp1 := ln( erfc(e)*a1/2 ) + LnGamma(a1);
+     max(lnapp1,lnapp2) + ln1x( exp(-|lnapp2-lnapp1|) );
+     fi;
+end:
+
+#	The gamma(a,x) is defined as GAMMA(a) - GAMMA(a,x) A&S 6.5.2
+#
+#                                   x
+#                                 /
+#                                |      -t    (a - 1)
+#                 gamma(a, x) =  |     e     t        dt
+#                                |
+#                               /
+#                                 0
+#
+
+Lngamma := proc( a:numeric, x:nonnegative )
+if nargs <> 2 then error('invalid number of arguments')
+elif a <= 0 then error('first argument must be positive')
+
+elif x < 2.7 then
+     # Abramowitz & Stegun 6.5.33 (for x<2.7)
+     s := CreateArray(1..27);
+     s[1] := -x;
+     for i from 2 to length(s) do s[i] := -x*s[i-1]/i od;
+     a*ln(x) + ln( 1/a + sum( s[i]/(a+i), i=1..length(s) ))
+
+elif x > a then
+     lngax := LnGamma(a,x);
+     lnga := proc(z) options builtin, numeric, zippable; 145 end(a);
+     lnga + ln1x( -exp(lngax-lnga) )
+
+elif x < .95*a or a < 200 then
+     # Abramowitz & Stegun derived from 6.5.22 or similar to 26.4.6
+     s := t := 1;
+     for i while t > s*DBL_EPSILON do t := t*x/(a+i);  s := s + t od;
+     a*ln(x) - x + ln(s/a)
+
+else # now an O(a^(-9/2)) approximation is sufficient
+     a1 := a-1;
+     e := (x-a1) / sqrt(2*a1);
+
+     t35 := 1/a1;
+     t26 := a1^2;
+     t34 := 1/t26;
+     t12 := e^2;
+     t14 := t12^2;
+     t16 := t14^2;
+     t17 := t16*t12;
+     t21 := t16*t17;
+     t15 := t12*t14;
+     t19 := t16*t15;
+     t18 := t15^2;
+     t8 := t17^2;
+     t7 := t16*t19;
+     t3 := t16^2;
+     app2 := -2/3*t12-2/3+(-341/1215*t17-4/2835*t14-4/8505*t15+347/1215*t16+
+	248/3645*t18-16/3645*t19-8/2835*t12-8/2835)*t34+(2438444/93002175*t8+
+	4496/12629925*t14+4496/37889775*t15-48346894/51667875*t19+
+	24842609/41334300*t3-189656/93002175*t7+1124/189448875*t17+
+	(25051142/51667875+4352/55801305*t18)*t18-65430919/372008700*t21+
+	(1124/37889775-64/55801305*t21)*t16+8992/12629925*t12+
+	8992/12629925)/t26^2+(22/81*t15+2/135*t14-8/81*t16+(-64/688905*t8-
+	8/8505*t14-8/25515*t15-2/25515*t16-3412/76545*t3+45358/127575*t17-
+	203311/382725*t18+3701/15309*t19+2384/688905*t21-16/8505*t12-
+	16/8505)*t34+4/135*t12+4/135)*t35+(-1/18*t12-1/12-2/9*t14+(-1/432*t12-
+	1/288-103/540*t15+32/243*t16-4/243*t17-1/1080*t14+(139/77760*t12+
+	139/51840+139/194400*t14+139/680400*t15-680261/3061800*t16-
+	1069/10935*t18+404/32805*t19-16/32805*t3+12139/43740*t17+(571/2488320+
+	571/9331200*t14+571/32659200*t15+571/146966400*t16-
+	21376879/73483200*t17+18387797/36741600*t18-3042691/11022480*t19+
+	32584/492075*t3-3718/492075*t21+824/2066715*t8-16/2066715*t7+
+	571/3732480*t12)*t35)*t35)*t35)/sqrt(a1/2)*e;
+
+     lng := LnGamma(a1);
+     ln( app2 * exp( -t12 + a1*(ln(a1)-1) - lng ) + erfc(-e)*a1/2 ) + lng;
+     fi
+end:
+
+#
+#	Maple code used to derive the above:
+#
+#kernelopts( gcfreq=10^7 );
+#
+#Iter := 40;
+#OurLnG := proc( a, x )
+#    den := 0;
+#    for i from Iter by -1 to 1 do den := (i-a)/(1+i/(x+den)) od;
+#    evalf( a*ln(x) - x - ln(x+den))
+#end:
+#
+#Err := proc( x )
+#if type(x,numeric) then
+#     t := evalf(ln(GAMMA(x,x)));
+#     abs( (OurLnG(x,x) - t) / t )
+#else 'procname(args)' fi
+#end:
+#
+#
+#
+#Digits := 24;
+#U1e10 := rand(0..10^10-1):
+#U := () -> Float(U1e10(),-10):
+#maxerr := 0;
+#
+#for iter to 10000 do
+#    a := 200*U();
+#    x := a-U()*3*sqrt(a);
+#    if x<2.7 then next fi;
+#    lnax := ln(GAMMA(a)-GAMMA(a,x));
+#    olnax := OurLnG(a,x);
+#    err := (lnax-olnax) / abs(lnax);
+#    if abs(err) > maxerr then
+#	lprint( a, x, lnax, olnax, err );  maxerr := abs(err) fi
+#    od:
+#
+#
+##  Using a1 instead of a-1
+#Mode := gamma;
+#Order := 11;
+#assume(a1>0);
+#g := exp(-t)*t^a1;
+#factor( diff(g,t) );
+## maximum happens at t=a1
+#lng := simplify( ln(g), symbolic );
+#slng := map( factor, series( lng, t=a1 ));
+#lncons := op(1,slng) * (t-a1)^op(2,slng);
+#T := series( exp(subsop(1=0,3=0,slng)), t=a1 );
+#
+#corr1 := asympt( ln(a1*GAMMA(a1)) - lncons, a1 );
+#corr1 := asympt( 1/2*erfc( `if`(Mode=gamma,-e,e) )*exp(corr1), a1 );
+#
+#iT := -corr1;
+#for i by 2 to nops(T)-3 do
+#    iTi := factor( op(i,T) * int( exp( -t^2/(2*a1) ) * t^op(i+1,T),
+#	t = `if`( Mode=gamma, -infinity..e*sqrt(2*a1),
+#			      e*sqrt(2*a1)..infinity) ));
+#    if i = nops(T)-3 then iT := iT + O(1)*iTi else iT := iT + iTi fi
+#    od:
+#map( factor, asympt(iT,a1) );
+#eval( %, [ exp(e^2)=1/exp(-e^2), O=0, erf(e)=1-erfc(e), erfc(-e)=2-erfc(e) ] );
+#corr2 := collect( %, [exp(-e^2),a1], factor );
+#codegen[optimize]( [app2=corr2], tryhard );
+#
+#spat := O=0, e=(x-a1) / sqrt(2*a1), a1=a-1, a=5000.0, x=4900.0;
+#
+#
+#DBL_EPSILON := 2.2204e-16;
+#
+#
+#NumInteg := proc( a, x )
+#
+#lnx := evalf(ln(x));
+#base := -x + (a-1)*lnx;
+#
+#lninteg := -exp(y) + (a-1)*ln( exp(y)/x + 1 ) + y;
+#ylo := -40;
+#for yhi while evalf( -exp(yhi) + (a-1)*ln( exp(yhi)/x + 1 ) + yhi ) > -40 do od;
+#
+#tot0 := add( evalf(exp(-exp(y) + (a-1)*ln( exp(y)/x + 1 ) + y)), y=ylo..yhi );
+#
+#for k to 4 do
+#    t := 0;
+#    for y from ylo + 2^(-k) by 2^(1-k) to yhi do
+#	t := t + evalf( exp(-exp(y) + (a-1)*ln( exp(y)/x + 1 ) + y)) od;
+#    t := t*2^(1-k);
+#    d := tot0-t;
+#    tot0 := (tot0+t)/2;
+#    #lprint( k, t, d, tot0 );
+#    if abs(d) < tot0*sqrt(DBL_EPSILON) then break fi;
+#    od;
+#
+#base + ln(tot0)
+#end:

@@ -1,0 +1,102 @@
+# parameters for ALF
+# 
+# Daniel Dalquen, 2011
+
+# start parameters
+protStart := 200;      # number of proteins first organism have
+gammaLengthDist := [3, 133.8063]; # parameters for the gene length distribution (~Gamma(k, theta))
+minGeneLength := 10; # minimum length of a gene
+
+### substitution models
+## model definition
+# available models: nucleotide substitution: F84, GTR, HKY, TN93
+#                   codon substitution: CPAM, ECM, ECMu, M0, M2, M3, M8, CustomC
+#                   aa substitution: GCB, JTT, LG, WAG, CustomP
+#
+# format: SubstitutionModel(name:string, parameters:list, frequencies:list, neutralDNA:boolean)
+#     the number of arguments required depend on the model:
+#     models CPAM, ECM, ECMu, GCB, JTT, WAG and LG require just the name of the model
+#     when using a custom matrix, pass the path to the matrix file as parameter
+#     for M-series models, pass also the codon frequencies
+#     finally, for nucleotide models specify as fourth parameter whether non-sense mutations should be allowed
+#
+# order of parameters:
+#     for custom empirical models: parameters[1] should contain a path to a matrix in PAML format
+#     for M-series models:   kappa = parameters[1]
+#                            omega = parameters[2] (single value or list)
+#                            P     = parameters[3] (probabilities of w-class[es]) 
+#                            p     = parameters[4] (for M8, 1st parameter of beta distribution)
+#                            q     = parameters[5] (for M8, 2nd parameter of beta distribution)
+#     for nucleotide models: GTR: a..f  = parameters[1]..parameters[6]
+#                            HKY: alpha = parameters[1], beta = parameters[2]
+#                            F84: kappa = parameters[1], beta = parameters[2]
+#                            TN93: alpha1 = parameters[1], alpha2 = parameters[2], beta = parameters[3]
+substModels := [
+SubstitutionModel('WAG')
+]:
+
+## model selection
+# supply an array of frequencies of models 1..n defined above for random assignment
+# supply an array of of length protStart with model assignments for each initial gene
+modelAssignments := [1]:
+## model switch
+# matrix with probabilitis of switch from model i to model j after speciation/duplication
+# a switch is not possible between  M-series and non M-series models
+modelSwitchS := [[1]]:
+modelSwitchD := [[1]]:
+###
+
+### parameters for gap model
+indelModel := 'ZIPF';         # ZIPF, NEGBIN, QG, CUSTOM
+indelVector := []:          # define a custom indel distribution here
+ Z_c := 1.821:             # exponent of Zipfian distribution
+###
+
+### tree parameters
+treeType := 'Custom':       # BDTree, ToLSample, Custom
+scaleTree := false:          # scale tree to match Pam distance defined below (parameter mutRate)
+ultrametric := false:
+
+treeFile := 'orthoinf_tree.drw':             # if using custom tree, specify path to tree file
+###
+
+# probabilities and evolution parameters
+amongGeneDistr := 'Gamma': # distribution of rates among genes. Use 'None' for no variation or 'Custom'
+                           # for using custom rates from file stored at aGPath.
+aGAlpha := 1:              # Shape parameter of among gene distribution. The mean is always moved to 1
+                           # in order to keep the mean branch length.
+aGPath := '/home/ddalquen/synthetic-evolution/customRates.drw': # path to file with custom rates (see example file)
+amongSiteDistr := 'None'; # distribution of rates (Gamma or Poisson)
+                             # 'Poisson' generates a random number of domains (at most areas) per
+                             # gene with rates drawn from a Poisson distribution around the mean
+                             # rate (given by mutRate). motifFreq defines the fraction of domains
+                             # with mutation rate 0 (motif).
+                             # 'Gamma' uses gamma rates. The number of bins is defined by the areas
+                             # parameter. Additionally, motifs occur with frequency motifFreq.
+                             # If user-defined rates are given, this option is ignored.
+                             # For M-series models this option is ignored and replaced with the classes of the model
+areas := 5;                  # maximal number of areas with different mutRate within a gene
+motifFreq := 0.01:           # rate for of invariable sites
+alphaG := 1;                 # alpha parameter of gamma function
+
+### parameters for gene duplication
+geneDuplRate := 0.000;    # rate that gene duplication occurs
+  transDupl := 0.5;     # ratio of tranlocation after duplication
+  numberDupl := 5;     # maximal number of genes involved in one duplication
+  fissionDupl := 0;   # rate of fission after duplication of a single gene
+  fusionDupl := 0;    # rate of fusion of two genes after duplication
+  
+### parameters for gene loss  
+geneLossRate := 0.000;    # rate that gene loss occurs
+  numberLoss := 5:    # maximal number of genes involved in one duplication
+
+lgtRate := 0.006;         # rate that single lateral gene transfer occurs
+  orthRep := 1;       # how much of the transfer will be orthologous
+                       # replacement (rest is novel gene acquisition)
+
+aaGainRate := 0.00005;       # rate that a gene gains 1 aa, p for single genes
+aaLossRate := 0.00005;       # rate that a gene loses 1 aa, p for single genes
+maxIndelLength := 50;   # maximal length of indels
+
+# simulation name
+mname := 'orthoinf_0dupl_40lgt'; 

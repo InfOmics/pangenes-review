@@ -1,0 +1,25 @@
+# joins an array of string into a single string, with, optionally,
+# a separator specified as second argument.
+#                                      cd, 2008
+
+ConcatStrings := proc(a_:array({string,numeric});(b=''):string)
+    if length(a_) = 0 then return(''); fi;
+    a := copy(a_); for i to length(a) do a[i] := string(a[i]) od;
+    n := length(a);
+    lb := length(b);
+    res := CreateString(sum(zip(length(a)))+(n-1)*lb);
+    cur := 1;
+    for i to n do
+        for j to length(a[i]) do
+            res[cur] := a[i,j];
+            cur := cur+1;
+        od;
+        if i < n then
+            for j to lb do
+                res[cur] := b[j];
+                cur := cur+1;
+            od;
+        fi;
+    od;
+    return(res);
+end:

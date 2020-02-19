@@ -1,0 +1,19 @@
+#FIG 3.2
+Landscape
+Center
+Inches
+Letter  
+100.00
+Single
+-2
+1200 2
+4 0 0 50 0 18 15 0.0000 4 240 6570 750 825 Processing an image from Darwin to a xxx.gif with Gimp\001
+4 0 0 50 0 18 15 0.0000 4 240 4890 750 1725    Choose Color or Gray (better than B/W)\001
+4 0 0 50 0 18 15 0.0000 4 240 4770 750 2025    Select Strong antialiasing (two places)\001
+4 0 0 50 0 18 15 0.0000 4 240 5340 750 2325    Set resolution to 80 is good for a web page\001
+4 0 0 50 0 18 15 0.0000 4 240 5115 750 2625       100 is the default size, usually too large\001
+4 0 0 50 0 18 15 0.0000 4 240 6600 750 3225 Rotate the image if needed (right-click on image, Image,\001
+4 0 0 50 0 18 15 0.0000 4 225 3105 750 3525          Transforms, Rotate )\001
+4 0 0 50 0 18 15 0.0000 4 240 7215 750 4125 Save (right-click, File, Save As)  remove the supurious "-pg1"\001
+4 0 0 50 0 18 15 0.0000 4 15 75 11475 3300  \001
+4 0 0 50 0 18 15 0.0000 4 240 8745 750 1425 Gimp opens a dialog box (Load Postscript) to set parameters for the input\001

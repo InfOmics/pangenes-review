@@ -1,0 +1,49 @@
+#
+# CenterTreeRoot - Place root of tree such that the number of leaves on 
+#                  each side is most equal.  Useful for circular trees
+#                  when the root has been placed far from the center.
+#
+#                         Alexander Roth  (2007-04-02)
+#
+CenterTreeRoot := proc(tree:Tree) -> Tree;
+  t:=copy(tree);
+  bestt:=t;
+  if type(t[Left], Leaf) then ll:=0; lr:=0; else
+    ll:=TreeSize(t[Left,Left]);
+    lr:=TreeSize(t[Left,Right]); fi;
+  if type(t[Right], Leaf) then rl:=0; rr:=0; else
+    rl:=TreeSize(t[Right,Left]);
+    rr:=TreeSize(t[Right,Right]); fi;
+  diffmin:=abs((ll+lr)-(rl+rr));
+  if ll+lr > rl+rr then i:=Left;
+    if ll > lr then j:=Left else j:=Right fi;
+  else i:=Right;
+    if rl > rr then j:=Left else j:=Right fi;
+  fi;
+  do
+    t:=RotateTree(t,i,j);
+    if type(t[Left], Leaf) then ll:=0; lr:=0; else
+      ll:=TreeSize(t[Left,Left]);
+      lr:=TreeSize(t[Left,Right]); fi;
+    if type(t[Right], Leaf) then rl:=0; rr:=0; else
+      rl:=TreeSize(t[Right,Left]);
+      rr:=TreeSize(t[Right,Right]); fi;
+    diff:=abs((ll+lr)-(rl+rr));
+    if ll+lr > rl+rr then i:=Left;
+      if ll > lr then j:=Left else j:=Right fi;
+    else i:=Right;
+      if rl > rr then j:=Left else j:=Right fi;
+    fi;
+    if diff<diffmin then 
+      bestt:=t; diffmin:=diff;
+    else break fi;
+  od;
+  bestt;
+end:
+
+# Count the number of Leaves in a tree.  AR (2007-04-02)
+TreeSize := proc(t:{Tree,Leaf});
+  if type(t, Leaf) then return(1) fi;
+  TreeSize(t[Left])+TreeSize(t[Right]);
+end:
+

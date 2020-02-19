@@ -1,0 +1,325 @@
+
+DM := CreateDayMatrix(logPAM1, 250); 
+#db_path := GetMachine():
+db_path := '~darwin/DB/':
+DB := ReadDb(db_path.'SwissProt.Z');
+ReadLibrary(MolWeight); 
+
+Freq := [7.5845, 5.1788, 4.5240, 5.3052, 1.7024, 4.0380, 6.3174, 6.8896, 
+2.2341, 5.7035, 9.2922, 5.9156, 2.3668, 4.0401, 4.9300, 7.1768, 5.7698, 1.2650, 
+3.2118, 6.5277, 0.02671766];
+
+nrbuck := 1000:
+ReadLibrary('AllBuckets'.nrbuck):
+
+SampleSize := 15:
+Stddev := 0.005;
+Title := 'No title specified';
+
+isspace := c -> c<=' ' or c=',' or c=':' or c=';':
+separator := c -> c='(' or c=')' or c='=':
+nonwhite := c -> c='"' or c='&':
+newtok := c -> c=':' or c=';':
+
+Reverse := proc(t: string);
+ r := '';
+ for i from length(t) to 1 by -1 do r := r.t[i];od;
+ r;
+end:
+GetAmino := proc(M: array(numeric), perm);
+# M: Array of masses: (total Mass), (- 1 aa), (-2 aa), ... (- n aa)
+# Seq: array of sequences (just for testing)
+# Get most probable amino acids from masses
+# Returns a list of the form:  seq1 := [{[A]}, {[A, G],[E],[K],[M],[Q]}, {[A, A],[H]}, {[P],[V]}]
+# {...} : or
+# [...] : sum 
+
+delta := 0.01;
+min1 := min(AAWeight); 
+d := ' ';
+avg := 0;
+for i to 20 do avg := avg + DM[Sim,i,i]; od;
+avg := avg/20;
+
+seq := CreateArray(1..length(M)-1,'');
+for i from 1 to length(M)-1 do
+   weight := M[i] - M[i+1];
+   if  (perm = true) and (weight < 3*min1 + delta*weight) then
+   for j to 20 do
+     wj := AAWeight[j];
+     aj := IntToA(j); 
+     if abs(wj - weight) < delta*weight then
+       er :=10*log(erfc(abs(wj - weight)/weight*100)+0.0001);
+       seq[i] := If(seq[i]='', [[er, aj.d]], [op(seq[i]) , [er, aj.d]]); 
+     fi; 
+     if (perm = true) and (weight < 3*min1 + delta*weight) then 
+       for k from 1 to 20 do
+         wjk := wj + AAWeight[k];  
+         ajk := sprintf('%s',copy(aj.IntToA(k))); 
+         if abs(wjk - weight) < delta*weight then
+           er :=10*log(erfc(abs(wjk - weight)/weight*100)+0.0001) - avg;
+           seq[i] := If(seq[i]='', [[er, ajk.d]], [op(seq[i]) , [er, ajk.d]]); 
+         fi;
+       od;
+     fi; 
+   od;  
+   fi;
+od;
+
+for i to length(seq) do
+  s := seq[i];
+  if length(s)>1 then
+     s := sort([op(s)], x -> -x[1]);
+     d := s[1,1];
+#     for j from 1 to length(s) do s[j,1] :=  s[j,1] - d; od; 
+     w := min(SearchOrderedArray (14-d, -transpose(s)[1]), 6);
+     seq[i] := s[1] ;
+     for j from 2 to w do
+       seq[i] := seq[i],s[j];
+     od;
+     seq[i] :=[seq[i]];
+   fi;
+od;
+seq := [op(seq), [[0, M[i]-18]]];
+frag := '';
+for i to length(seq) do
+  if seq[i]<>''  then frag := frag, seq[i];
+  else frag :=  frag, [[0, M[i] - M[i+1]]];
+  fi;
+od;
+frag := frag[2..-1];
+frag := Fragment(frag);
+end:
+
+NextToken := proc()
+global InputString;
+
+while length(InputString) > 0 and isspace(InputString[1]) do
+     InputString := 1+InputString od;
+if length(InputString) = 0 then return( 'EOS' )
+elif separator(InputString[1]) then
+     r := InputString[1];
+     InputString := 1+InputString;
+elif nonwhite(InputString[1]) then
+     r := '';
+     InputString := 1 + InputString;
+     while not nonwhite(InputString[1])  do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     InputString := 1+InputString;
+else r := '';
+     while not isspace(InputString[1]) and not separator(InputString[1]) do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     fi;
+r
+end:
+
+NextLine := proc()
+global InputString;
+
+while length(InputString) > 0 and (isspace(InputString[1]) or newtok(InputString[1])) do
+     InputString := 1+InputString od;
+if length(InputString) = 0 then return('');
+elif separator(InputString[1]) then
+     r := InputString[1];
+     InputString := 1+InputString;
+elif nonwhite(InputString[1]) then
+     r := '';
+     InputString := 1 + InputString;
+     while not nonwhite(InputString[1])  do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     InputString := 1+InputString;
+else r := '';
+     while not newtok(InputString[1]) and length(InputString)>1 do
+	  r := r . InputString[1];
+	  InputString := 1+InputString;
+	  od;
+     fi;
+r.';'
+end:
+
+ParseLine := proc()
+ global InputLine;
+
+  while length(InputLine) > 0 and isspace(InputLine[1]) do InputLine := 1+InputLine od;
+  if length(InputLine) = 0 then r := ''
+  elif separator(InputLine[1]) then
+     r := InputLine[1];
+     InputLine := 1+InputLine;
+  elif nonwhite(InputLine[1]) then
+     r := '';
+     InputLine := 1 + InputLine;
+     while not nonwhite(InputLine[1])  do
+	  r := r . InputLine[1];
+	  InputLine := 1+InputLine;
+     od;
+     InputLine := 1+InputLine;
+  else r := '';
+     while not isspace(InputLine[1]) and not separator(InputLine[1]) and length(InputLine)>0 do
+	r := r . InputLine[1];
+	InputLine := 1+InputLine;
+     od;
+  fi;
+  r
+end:
+
+ParseMsg := proc (msg: string)
+global InputString, InputLine, SampleSize, Title, Terminus, Stddev, Database;
+   if length (msg) < 10 or msg[1..5] <> 'From ' then
+      lprint ('Invalid incoming message');
+      return (0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+      lprint ('Start of message body not found');
+      return (0)
+  fi;
+
+  InputString := first+msg;
+  comm := NextToken();
+
+  if SearchString('massdynsearch',comm)=0 and SearchString('testnewfunction',comm)=0 then lprint('opcode not found');  return('opcode not found') fi;
+  List := [];
+
+  do
+	tok := NextToken();
+	if tok='EOS' then break
+        elif SearchString('Weights',tok)>=0 then
+	  InputLine := NextLine(); 
+	  OrigLine := InputLine;
+	  while InputLine <> '' and SearchString('EN',InputLine)=-1 do
+	     Weights := [];
+	     while InputLine<>'' do
+                tok := ParseLine();
+	        w := sscanf(tok,'%f');
+		if type(w,[numeric]) then
+	           if w[1] < 100 then return( sprintf(
+		         '?the weight %f is too small for a digested fragment', w[1] )) fi;
+	           Weights := append(Weights, w[1]);      
+	        fi;
+	     od;
+	     if length(Weights)<3 then 
+	       return( sprintf('?You must at least enter 2 weights per fragment. You entered \n%s\n', OrigLine ));
+	     fi;
+             List := append(List, Weights);
+	     InputLine := NextLine();
+	  od;
+	   if length(List)<3 then 
+	       return( sprintf('?You must at least enter 2 fragments. You entered \n%s\n', OrigLine ));
+	   fi; 
+	  return(List);
+	elif SearchString('samplesize',tok)=0 then
+	     t2 := NextToken();
+	     t3 := NextToken();
+	     w := sscanf( t3, '%f' );
+	     if t2 <> '=' or not type(w,[integer]) or w[1] < 1 then
+   	       return( '?Modification of sample size to be displayed is in the wrong format, found: ' .tok.t2.t3 ); 
+	     fi;
+	     SampleSize := w[1];
+        elif SearchString('stddev',tok)=0 then
+	     t2 := NextToken();
+	     t3 := NextToken();
+	     w := sscanf( t3, '%f' );
+	     if t2 <> '='  then
+   	       return( '?Modification of stddev to be displayed is in the wrong format, found: ' .tok.t2.t3 ); 
+	     elif w[1] > 0.1 then
+ 	       return( '?The standard deviation is too big! E.g. 0.1 means 10%! You entered ' .tok.t2.t3 ); 
+             elif w[1] < 0.0000001 then
+ 	       return( '?Your measurements cannot be perfect! You must have some error! You entered : ' .tok.t2.t3 ); 
+             fi;
+	     Stddev := w[1];
+	elif SearchString('Title',tok)=0 then
+	     t2 := NextToken();
+             Title :=t2;
+	elif SearchString('Database',tok)=0 then
+	     t2 := NextToken();
+             Database :=t2;
+        elif SearchString('Terminus',tok)=0 then
+	     Terminus := NextToken();
+	fi;	
+  od;
+  if length(Weights) < 2 then return('?no weights of fragments were given') fi;
+  if (length(List)<1) then return('?unidentified system error'); else List fi:
+end:
+
+
+###############
+# MainProgram #
+###############
+init := proc () end:
+
+job := proc ()
+  global msg, SampleSize, Terminus, Title, Stddev, AllBuckets, Database;
+  wts := ParseMsg (msg);
+  Terminus := 'N';
+  res := 'ERROR';
+  if not type(wts,numeric) then
+    prefix := '/tmp/'.getpid ().'.';
+    if type(wts,string) then
+      OpenWriting (tmpfile);
+      lprint ('Sorry, your request could not be processed,');
+      lprint ('because', wts[2..-1])
+    elif type(wts, array) then
+	OpenWriting (tmpfile);
+        printf('Title of your search: %s\n\n',Title);
+	printf('Database selected: %s\n\n',Database);
+	db_path := '~darwin/DB/':
+        if ( Database = 'SwissProt 39.18' ) then
+          DB := ReadDb(db_path.'SwissProt');
+        elif( Database = 'Fusobacterium nucleatum' ) then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/FUSNU/fus.nuc.genome.db');
+        elif ( Database = '15 Genomes' ) then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/DB15/db15');
+	elif ( Database = 'C. elegans' ) then
+    	  DB := ReadDb ('/pub/home/darwin/DB/genomes/CAEEL/wormpep/wormpep.db');
+ 	elif ( Database = 'C. albicans' ) then
+   	   DB := ReadDb ('/pub/home/darwin/DB/genomes/CANAL/canal.db');
+	elif ( Database = 'Schizosaccharomyces pombe' ) then
+          DB := ReadDb('/pub/home/darwin/DB/genomes/SCHPO/schpo.db');
+        fi;
+        if Terminus = 'C' then printf('C-terminal digest\n\n');        
+        else  printf('N-terminal digest\n'); fi;
+	Frags := CreateArray(1..length(wts));
+  
+        for i to length(wts) do 
+          wts[i] := -sort(-wts[i]);
+	  if length(wts[i]) <2 then
+	    lprint('You have to specify at least two weights per fragment');
+	    printf('Your weights for fragment %d:',i);
+	    lprint(wts[i]);
+	    return (res);
+          fi;	
+	  Frags[i] := GetAmino(wts[i], true);
+	  printf('\nFragment %d:\n%a\n->\n',i, wts[i]);
+	  print(Frags[i]);
+	od;
+	printf('\nSearching on %s release %s.\n',
+	       SearchTag ('DBNAME', DB[string]), 
+	       SearchTag ('DBRELEASE', DB[string]));
+	lprint('The matches are printed in decreasing order of significance.');
+        res := [op(DynProgMassDb(Frags, SampleSize, Terminus, DB, Stddev, 0))]; 
+        res := sort(res, x -> -x[1]);
+#print(res);
+        r := MassDynSearchResult(Frags, Terminus, res, Stddev);
+        print(r);
+#        print('The result would be printed here, but right now its just a test...');
+    else
+      OpenWriting(tmpfile);
+      lprint('Internal error, unable to complete request')
+    fi;
+    OpenWriting (terminal);
+    CallSystem ('rm '.prefix.'*');
+    res := ReadRawFile (tmpfile)
+  fi;
+  res
+end:
+
+# ReadProgram('~cbrg/MassDynSearch/MassDynSearch'):
+# wts := ParseMsg (msg);
+
+ 

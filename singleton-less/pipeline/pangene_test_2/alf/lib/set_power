@@ -1,0 +1,16 @@
+#
+#	allow powerset computation, 2 ^ {a,b,c...}
+#
+#	Gaston H. Gonnet (Oct 7th, 2012)
+#
+set_power := proc( a, b )
+if not ( a=2 and type(b,set) ) then
+     error(a,b,'invalid arguments for power')
+elif length(b) > 20 then error('power set too large')
+elif b={} then return( {{}} )
+elif length(b)=1 then return( { {}, b } )
+else x := b[1];
+     p := procname( 2, b minus {x} );
+     p union { seq( w union {x}, w=p ) }
+fi end:
+

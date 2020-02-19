@@ -1,0 +1,429 @@
+
+#
+#  Finding sequences from molecular weight traces
+# 
+#			Gaston H. Gonnet (Apr 1992)
+#	rewritten	Gaston H. Gonnet (Jan 1994)
+#	changed		Chantal Korostensky (May 1996)
+#
+# 
+# This function receives as parameters a Protein() data structure
+# and the number of matches to be returned.
+#
+# The arguments of Protein which will be used by SearchMassDb are:
+#
+#    ApproxMass( <numeric> )	- approximate mass in daltons
+#    DigestionWeights( DigestorName, weights, ... )
+#				- weights obtained from using the digestor
+#
+#   The search is done against the database which is currently
+#   loaded (with the command ReadDb).  This could be a protein
+#   or a nucleotice database.  This version will work with both.
+#
+###############################################################################
+#
+#  The following enzymes are recognized at present:
+#
+# Enzyme name		cuts between			except for
+# ###########		############			##########
+#
+# Armillaria	 	Xaa-Cys,Xaa-Lys
+# ArmillariaMellea	Xaa-Lys
+# BNPS_NCS		Trp-Xaa
+# Chymotrypsin		Trp-Xaa,Phe-Xaa,Tyr-Xaa,	Trp-Pro,Phe-Pro,Tyr-Pro,
+#			Met-Xaa,Leu-Xaa,		Met-Pro,Leu-Pro
+# Clostripain		Arg-Xaa
+# CNBr_Cys		Met-Xaa,Xaa-Cys
+# CNBr			Met-Xaa
+# AspN			Xaa-Asp
+# LysC			Lys-Xaa
+# Hydroxylamine		Asn-Gly
+# MildAcidHydrolysis	Asp-Pro
+# NBS_long		Trp-Xaa,Tyr-Xaa,His-Xaa
+# NBS_short		Trp-Xaa,Tyr-Xaa
+# NTCB			Xaa-Cys
+# PancreaticElastase	Ala-Xaa,Gly-Xaa,Ser-Xaa,Val-Xaa
+# PapayaProteinaseIV	Gly-Xaa
+# PostProline		Pro-Xaa				Pro-Pro
+# Thermolysin		Xaa-Leu,Xaa-Ile,Xaa-Met,
+#			Xaa-Phe,Xaa-Trp,Xaa-Val
+# TrypsinArgBlocked	Lys-Xaa				Lys-Pro
+# TrypsinCysModified	Arg-Xaa,Lys-Xaa,Cys-Xaa		Arg-Pro,Lys-Pro,Cys-Pro
+# TrypsinLysBlocked	Arg-Xaa				Arg-Pro
+# Trypsin		Arg-Xaa,Lys-Xaa			Lys-Pro		
+# V8AmmoniumAcetate	Glu-Xaa				Glu-Pro
+# V8PhosphateBuffer	Asp-Xaa,Glu-Xaa			Asp-Pro,Glu-Pro
+#
+# the following double digests were added (CH.K):
+# ----------------------------------------------
+# CNBrTrypsin		Met-Xaa
+#			Arg-Xaa,Lys-Xaa			Lys-Pro
+# CNBrAspN		Met-Xaa
+#			Xaa-Asp
+# CNBrLysC		Met-Xaa
+#			Lys-Xaa
+# CNBrV8AmmoniumAc.	Met-Xaa
+#			Glu-Xaa				Glu-Pro
+# CNBrV8PhosphateBf.	Met-Xaa
+# 			Asp-Xaa,Glu-Xaa			Asp-Pro,Glu-Pro
+
+
+
+###############################################################################
+# This function is now in the kernel
+##################################################
+#
+# Common digestion functions
+#
+# Trypsin breaks a protein after every Arginine (R)
+# or after every Lysine (K) not followed by a Proline (P).
+#
+DigestTrypsin := proc( s:string )
+
+ls := length(s);
+res := NULL;
+i := 1;
+# the fragments will be defined between i and j
+for j to ls-1 do
+    if s[j] = 'R' or s[j] = 'K' and s[j+1] <> 'P' then
+        res := res, s[i..j];
+        i := j+1
+        fi
+    od;
+# collect the last fragment
+[res, s[i..ls]]
+end:
+#
+#
+# Asp-N breaks a protein before every Aspartic Acid (D)
+# Consequently every fragment (except the first) starts with D
+#
+DigestAspN := proc( s:string )
+
+ls := length(s);
+res := NULL;
+i := 1;
+# the fragments will be defined between i and j
+for j from 2 to ls do
+    if s[j] = 'D' then
+        res := res, s[i..j-1];
+        i := j
+        fi
+    od;
+# collect the last fragment
+[res, s[i..ls]]
+end:
+
+MakeCutMatrix := proc( where:string, wherenot:string )
+
+Cut := CreateArray(1..21,1..21,false);
+w := where;
+
+do  if w[4] <> '-' then error('invalid "where" format') fi;
+    if w[1..3] = 'Xaa' then
+	 j := AAAToInt(w[5..7]);
+	 if j<1 or j>20 then error('invalid "where" format') fi;
+	 for i to 20 do Cut[i,j] := true od;
+    elif w[5..7] = 'Xaa' then
+	 i := AAAToInt(w[1..3]);
+	 if i<1 or i>20 then error('invalid "where" format') fi;
+	 for j to 20 do Cut[i,j] := true od;
+    else i := AAAToInt(w[1..3]);
+	 j := AAAToInt(w[5..7]);
+	 if i<1 or i>20 or j<1 or j>20 then error('invalid "where" format') fi;
+	 Cut[i,j] := true
+	 fi;
+    if length(w) < 8 then break fi;
+    if w[8] <> ',' then error('invalid "where" format') fi;
+    w := 8+w;
+    od;
+
+if nargs=2 then
+    w := wherenot;
+
+    do  if w[4] <> '-' then error('invalid "wherenot" format') fi;
+        if w[1..3] = 'Xaa' then
+	     j := AAAToInt(w[5..7]);
+	     if j<1 or j>20 then error('invalid "wherenot" format') fi;
+	     for i to 20 do Cut[i,j] := false od;
+        elif w[5..7] = 'Xaa' then
+	     i := AAAToInt(w[1..3]);
+	     if i<1 or i>20 then error('invalid "wherenot" format') fi;
+	     for j to 20 do Cut[i,j] := false od;
+        else i := AAAToInt(w[1..3]);
+	     j := AAAToInt(w[5..7]);
+	     if i<1 or i>20 or j<1 or j>20 then
+		error('invalid "wherenot" format') fi;
+	     Cut[i,j] := false
+	     fi;
+        if length(w) < 8 then break fi;
+        if w[8] <> ',' then error('invalid "wherenot" format') fi;
+        w := 8+w;
+        od;
+
+    fi;
+Cut
+end:
+
+#######################################################################
+#
+# PC/GENE PROTEIN CLEAVAGE METHODS DATA FILE.
+#  (Courtesy of Amos Bairoch)
+# //###################################################################
+# Armillaria m., Cys mod.  
+# Armillaria mellea protease after aminoethylation of Cys residues.
+Armillaria_matrix := MakeCutMatrix( 'Xaa-Cys,Xaa-Lys' ):
+# 
+# Protein sequencing: a practical approach, IRL, Oxford, (1989).
+# Aminoethylation is not reversible under practical conditions. 
+# A. mellea protease can be replaced by Myxobacter AL-1 protease II.
+# //###################################################################
+# Armillaria mellea.       
+# Digestion with Armilliaria mellea protease (EC 3.4.99.2).
+ArmillariaMellea_matrix := MakeCutMatrix( 'Xaa-Lys' ):
+# 
+# Protein sequencing: a practical approach, IRL, Oxford, (1989).
+# A. mellea protease can be replaced by Myxobacter AL-1 protease II.
+# See also the variant of this method, with modification of Cys.
+# //###################################################################
+# BNPS or NCS/urea.        
+# BNPS-skatole or NCS/urea (N-Chloro-Succinimide).
+BNPS_NCS_matrix := MakeCutMatrix( 'Trp-Xaa' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Trp is modified.
+# Problem: with NCS, Met may be modified into a sulfone.
+# //###################################################################
+# Chymotrypsin.            
+# Digestion with the enzyme chymotrypsin (EC 3.4.21.1).
+Chymotrypsin_matrix := MakeCutMatrix( 'Trp-Xaa,Phe-Xaa,Tyr-Xaa,Met-Xaa,Leu-Xaa',
+	'Trp-Pro,Phe-Pro,Tyr-Pro,Met-Pro,Leu-Pro' ):
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Not very specific, sometimes can also cut after His, Asn, Gln, Lys and Thr.
+# 
+# //###################################################################
+# Clostripain.             
+# Clostripain (EC 3.4.22.8) or Endoprotease Arg-C (EC 3.4.21.40).
+Clostripain_matrix := MakeCutMatrix( 'Arg-Xaa' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Clostripain need reducing conditions and prefers Arg-Pro bonds.
+# Same specificity can be obtained with trypsin, after blockage of Lys residues
+# //###################################################################
+# CNBr, Cys methylated.
+# CNBr after methylation of Cys by methyl p-nitrobenzene sulfonate.
+CNBr_Cys_matrix := MakeCutMatrix( 'Met-Xaa,Xaa-Cys' ):
+# 
+# 
+# Cys can become modified to Ser. Met is modified to homoserine lactone.
+# Met-Thr, Met-Ser and Met-Cys are cleaved poorly.
+# //###################################################################
+# CNBr.
+# Digestion with cyanogen bromide in 70% formic acid.
+CNBr_matrix := MakeCutMatrix( 'Met-Xaa' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Met is modified to homoserine lactone. No cleavage after Met-sulfoxide.
+# Problem: Cys could be oxidized (but it is reversible). May oxidize Trp.
+# //###################################################################
+# Endoprotease Asp-N.
+# Digestion with the Endoprotease Asp-N enzyme from P. fragi.
+AspN_matrix := MakeCutMatrix( 'Xaa-Asp' ):
+# 
+# Drapeau G.R., J. Biol. Chem. 255:839-840(1980).
+# Will cleave also on the N-terminal side of cysteic-acid; this can be avoided
+# by alkylation of Cys.
+# //###################################################################
+# Endoprotease Lys-C.
+# Digestion with the Endoprotease Lys-C enzyme (EC 3.4.99.30).
+LysC_matrix := MakeCutMatrix( 'Lys-Xaa' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Same specificity can be obtained with trypsin after blockage of Arg residues.
+# The enzyme is acitve in 5M urea and in 1% SDS.
+# //###################################################################
+# Hydroxylamine.           
+# Digestion with hydroxylamine 2M at pH 9.0.
+Hydroxylamine_matrix := MakeCutMatrix( 'Asn-Gly' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Not completely specific, can sometimes cut other Asn-Xaa bonds.
+# The Asn residue is converted to a mixture of alpha and beta hydroxamates.
+# //###################################################################
+# Mild acid hydrolysis.    
+# Peptide hydrolysis in mild-acid conditions (generally at pH 2.5).
+MildAcidHydrolysis_matrix := MakeCutMatrix( 'Asp-Pro' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Not a very efficient method; yields are typically between 30 and 80%.
+# Some loss of amide groups from Asn and Gln may occur.
+# //###################################################################
+# NBS, long exposure.      
+# Cleavage with N-Bromo-Succinimide, long exposure.
+NBS_long_matrix := MakeCutMatrix( 'Trp-Xaa,Tyr-Xaa,His-Xaa' ):
+# 
+# 
+# A shorter exposure will not cleave after His (see corresponding method).
+# Problem: Trp, Tyr and His are irreversibly oxidized.
+# //###################################################################
+# NBS, short exposure.     
+# Cleavage with N-Bromo-Succinimide, short exposure.
+NBS_short_matrix := MakeCutMatrix( 'Trp-Xaa,Tyr-Xaa' ):
+# 
+# 
+# These conditions are unfavorable for histidine cleavage.
+# Problem: Trp, Tyr and His may be irreversibly oxidized.
+# //###################################################################
+# NTCB.                    
+# Cleavage with NTCB (2-nitro-5-thiocyanobenzoic acid).
+NTCB_matrix := MakeCutMatrix( 'Xaa-Cys' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Cys is 5-cyanylated and can be reduced to Ala with Ni Raney.
+# Problem: Cys can irreversibly cyclise.
+# //###################################################################
+# Pancreatic Elastase.     
+# Digestion with the pancreatic elastase enzyme (EC 3.4.21.36).
+PancreaticElastase_matrix := MakeCutMatrix( 'Ala-Xaa,Gly-Xaa,Ser-Xaa,Val-Xaa' ):
+# 
+# Protein sequencing: a practical approach, IRL, Oxford, (1989).
+# Not very specific.
+# 
+# //###################################################################
+# Papaya proteinase IV.
+# Digestion with Papaya proteinase IV (EC 3.4.22.-) (PPIV).
+PapayaProteinaseIV_matrix := MakeCutMatrix( 'Gly-Xaa' ):
+# 
+# Buttle D.J., Ritonja A., Pearl L.H., et al., FEBS Lett. 260:15-197(1990).
+# 
+# 
+# //###################################################################
+# Post Proline enzyme.     
+# Digestion with Post Proline Cleaving enzyme (EC 3.4.21.26).
+PostProline_matrix := MakeCutMatrix( 'Pro-Xaa', 'Pro-Pro' ):
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Cleaves Ala-Xaa and CMC-Xaa slowly (CMC is carboxymethyl-Cys).
+# Works only with proteins or fragments less then 50 residues long.
+# //###################################################################
+# Thermolysin.             
+# Digestion with thermolysin (EC 3.4.24.4).
+Thermolysin_matrix := MakeCutMatrix( 'Xaa-Leu,Xaa-Ile,Xaa-Met,Xaa-Phe,Xaa-Trp,Xaa-Val' ):
+# 
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Can also cleave to the N-terminal of Ala, Tyr, Thr, and occasionally other
+# residues.
+# //###################################################################
+# Trypsin, Arg blocked.    
+# Trypsin after reversible modification of Arg residues (ie: CHD).
+TrypsinArgBlocked_matrix := MakeCutMatrix( 'Lys-Xaa', 'Lys-Pro' ):
+# Protein sequencing: a practical approach, IRL, Oxford, (1989).
+# One of the variants of the classic trypsin method.
+# The same specificity can be obtained with endoprotease Lys-C.
+# //###################################################################
+# Trypsin, Cys modified.   
+# Trypsin after aminoethylation of Cys residues.
+TrypsinCysModified_matrix := MakeCutMatrix( 'Arg-Xaa,Lys-Xaa,Cys-Xaa',
+	'Arg-Pro,Lys-Pro,Cys-Pro' ):
+# 
+# One of the variants of the classic trypsin method.
+# Aminoethylation is not reversible under practical conditions. 
+# //###################################################################
+# Trypsin, Lys blocked.    
+# Trypsin after reversible modification of Lys residues (ie: EPTA).
+TrypsinLysBlocked_matrix := MakeCutMatrix( 'Arg-Xaa', 'Arg-Pro' ):
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# One of the variants of the classic trypsin method.
+# The same specificity can be obtained with clostripain.
+# //###################################################################
+# Trypsin.                 
+# Digestion with Trypsin enzyme (EC 3.4.21.4).
+#Trypsin_matrix := MakeCutMatrix( 'Arg-Xaa,Lys-Xaa', 'Arg-Pro,Lys-Pro' ):
+Trypsin_matrix := MakeCutMatrix( 'Arg-Xaa,Lys-Xaa', 'Lys-Pro' ):
+# Sequencing of proteins and peptides, Allen G., Elsevier, 2nd ed. (1989).
+# Cleavage of Trp-Xaa and Tyr-Xaa may occur under forcing conditions. 
+# Cleavage after Arg or Lys surrounded by negative charges is very slow.
+# Note added at the CBRG:  Arg-Pro is also broken (70%) by Trypsin
+# //###################################################################
+# V8 in ammonium acetate.  
+# Staphylococcal protease V8 in ammonium acetate buffer at pH 4.0.
+V8AmmoniumAcetate_matrix := MakeCutMatrix( 'Glu-Xaa', 'Glu-Pro' ):
+# Drapeau G.R., Can. J. Biochem. 56:534-544(1978).
+# See also the method with V8 in phosphate buffer, which will cut Asp-Xaa.
+# 
+# //###################################################################
+# V8 in phosphate buffer.  
+# Staphylococcal protease V8 in phosphate buffer at pH 7.0.
+V8PhosphateBuffer_matrix := MakeCutMatrix( 'Asp-Xaa,Glu-Xaa', 'Asp-Pro,Glu-Pro' ):
+# Drapeau G.R., Can. J. Biochem. 56:534-544(1978).
+# Slow to cut when Xaa is Phe, Val or Leu.
+# See also the method with V8 in ammonium buffer, which will not cut after Asp.
+# //###################################################################
+# New Enzymes added (CH.K, 14.05.96)
+# The following are double digests as indicated by the name...
+CNBrTrypsin_matrix := MakeCutMatrix( 'Met-Xaa,Arg-Xaa,Lys-Xaa', 'Lys-Pro'):
+CNBrAspN_matrix := MakeCutMatrix( 'Met-Xaa,Xaa-Asp'):
+CNBrLysC_matrix := MakeCutMatrix( 'Met-Xaa,Lys-Xaa'):
+CNBrV8AmmoniumAcetate :=  MakeCutMatrix( 'Met-Xaa,Glu-Xaa','Glu-Pro'):
+CNBrV8PhosphateBuffer :=  MakeCutMatrix( 'Met-Xaa,Asp-Xaa,Glu-Xaa','Asp-Pro,Glu-Pro'):
+
+MakeCutMatrix := noeval(MakeCutMatrix):
+
+#
+# return the protein fragments that would result from
+# a digestion with the given enzyme
+#
+DigestSeq := proc( seq:string, Enzyme:{matrix(boolean),symbol} )
+
+if type(Enzyme,symbol) then
+    enz := eval( symbol(Enzyme.'_matrix') );
+    if not type(enz,matrix(boolean)) then
+	error(Enzyme,'is not a known digestor') fi;
+    return( procname(seq,enz) ) fi;
+ls := length(seq);
+if ls < 1 then return([]) fi;
+r := [];
+i := 1;
+a1 := AToInt(seq);
+
+for j from 2 to ls do
+    a2 := AToInt(seq[j]);
+    if Enzyme[a1,a2] then
+	r := append(r,seq[i..j-1]);
+	i := j
+	fi;
+    a1 := a2;
+    od;
+append(r,seq[i..ls]);
+end:
+
+#
+# return the weights of the protein fragments that would
+# result from a digestion with the given enzyme
+#
+DigestWeights := proc( seq:string, Enzyme:{matrix(boolean),symbol} )
+
+if type(Enzyme,symbol) then
+    enz := eval( symbol(Enzyme.'_matrix') );
+    if not type(enz,matrix(boolean)) then
+	error(Enzyme,'is not a known digestor') fi;
+    return( procname(seq,enz) ) fi;
+ls := length(seq);
+if ls < 1 then return([]) fi;
+r := [];
+a1 := AToInt(seq);
+w := 18+AAWeight[a1];
+
+for j from 2 to ls do
+    a2 := AToInt(seq[j]);
+    if Enzyme[a1,a2] then
+	r := append(r,w);
+	w := 18
+	fi;
+    w := w + AAWeight[a2];
+    a1 := a2;
+    od;
+append(r,w);
+end:
+
+# make sure AAWeight table is loaded
+GetMolWeight:

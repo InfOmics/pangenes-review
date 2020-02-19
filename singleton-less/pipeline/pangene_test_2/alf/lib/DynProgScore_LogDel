@@ -1,0 +1,323 @@
+#
+#       DynProgScore for logarithmic deletion costs
+#
+#       This function is identical to DynProgScore in
+#       functionality, the only difference is that it
+#       uses a logarithmic deletion cost.
+#
+#       Gaston H. Gonnet (Jan 20th, 2008)
+#
+DynProgStrings_LogDel_table := table():
+DynProgStrings_LogDel := proc( al:Alignment )
+    v := DynProgStrings_LogDel_table[al];
+    if v = 'unassigned' then
+         r := remember(DynProgBoth_LogDel(al[Seq1],al[Seq2],al[DayMatrix], al[modes]));
+         return(r[2]);
+    else return(v) fi
+end:
+
+DynProgScore_LogDel := proc( s1:string, s2:string, dm:DayMatrix, modif:{string,set(string)} )
+    global DynProgStrings_LogDel_table;
+    r := remember(DynProgBoth_LogDel(args));
+    DynProgStrings_LogDel_table[r[3]] := r[2];
+    return(r[1]);
+end:
+
+
+
+DynProgBoth_LogDel := proc( s1:string, s2:string, dm:DayMatrix, modif:{string,set(string)}; DelCost:list(numeric) )
+   if nargs < 2 or nargs > 5 then error('invalid number of arguments')
+   elif nargs=2 then return(remember(procname(s1,s2,DM,{'Local','LogDel'})))
+   elif nargs=3 then return(remember(procname(s1,s2,dm,{'Local','LogDel'})))
+   elif type(modif,string) then return(remember(procname(s1,s2,dm,{modif})))
+   elif modif intersect {'Local','Global','CFE','CFEright','Shake'} = {} then
+        return(remember(procname(s1,s2,dm,modif union {'Local'})))
+   fi;
+   
+   if length( modif intersect {'Local','Global','CFE','CFEright','Shake'}) > 1 then
+       error( modif intersect {'Local','Global','CFE','CFEright','Shake'}, 'incompatible arguments')
+   elif length( modif intersect {'Affine','LogDel'}) > 1 then
+       error( modif intersect {'Affine','LogDel'}, 'incompatible arguments')
+   fi;
+   
+   l1 := length(s1);
+   l2 := length(s2);
+   lm := max(l1,l2)+1;
+   if modif intersect {'Global','Local'} = {} then error('not implemented yet') fi;
+   
+   ##################
+   # Initialization #
+   ##################
+   
+   if nargs=5 then
+       for i to length(DelCost) do
+           if DelCost[i] >= 0 then error('cost function not negative') fi;
+       od:
+       for i from 2 to length(DelCost) do
+           if DelCost[i] >= DelCost[i-1] then error('cost function not strictly decreasing') fi;
+       od:
+       for i from 3 to length(DelCost) do
+           if DelCost[i-1] >= (DelCost[i] + DelCost[i-2])/2 then error('cost function not strictly convex',i-1) fi;
+       od:
+
+       # fill the deletion costs until they have the necessary length
+       while length(DelCost) < lm+1 do
+           DelCost := append(DelCost,DelCost[-1]);
+       od:
+   else
+	error('must provide deletion cost array')
+   fi:
+   
+   S := CreateArray( 1..l1+1, 1..l2+1);
+   
+   #
+   #    S[i,j] contains the best score of aligning
+   #    s1[1...i-1] to s2[1..j-1]
+   #
+   if member('Global',modif) then
+       for i from 2 to l1+1 do S[i,1] := DelCost[i-1] od;
+       for i from 2 to l2+1 do S[1,i] := DelCost[i-1] od;
+   fi;
+   
+   Bisect := proc(StackScore:numeric, Stackj:posint, CurrScore:numeric, Currj:posint, Minj:posint, Maxj:posint)
+       # check whether old gap is always better than new
+       CurrStartScore := StackScore + DelCost[Minj-Stackj];
+       NewStartScore := CurrScore + DelCost[Minj-Currj];
+
+       if NewStartScore <= CurrStartScore then
+           return(Minj);
+       fi:
+
+       # check whether new gap is always better than current
+       CurrEndScore := StackScore + DelCost[Maxj-Stackj];
+       NewEndScore := CurrScore + DelCost[Maxj-Currj];
+
+       if NewEndScore >= CurrEndScore then
+           return(Maxj);
+       fi:
+
+       # else perform the bisection
+       upper := Maxj;
+       lower := Minj;
+       while lower <> upper do
+           middle := floor((lower+upper)/2);
+           CurrStackScore := StackScore + DelCost[middle-Stackj];
+           NewStackScore := CurrScore + DelCost[middle-Currj];
+
+           if CurrStackScore > NewStackScore then
+               upper := middle;
+           elif CurrStackScore < NewStackScore then
+               lower := middle+1;
+           else return(middle) fi;
+       od:
+       return(lower);
+   end:
+   
+   #
+   #    Stack for deletions
+   #    The stack for deletions is a row (or column) stack
+   #    which holds only the possible candidate deletions
+   #    which could still be selected.
+   #
+   #    Each entry is a triplet (explained for a row)
+   #    [ S[i,k], k, jmax ] which means that
+   #
+   #    S[i,k] + C0 + C1*log10(j-k) is a possible candidate
+   #    cost for a deletion of s2 from k .. j-1, provided that j <= jmax
+   #    (rememmber that S[i,j] matches s1[1..i-1] with s2[1..j-1])
+   #
+   #    Clearly, if all the matrix is kept, S[i,k] does not need
+   #    to be stored.
+   #
+   #    The local function UpdateStack takes a stack and adds
+   #    a new point and returns the updated stack
+   #
+   UpdateStack := proc( st:list([numeric,posint,positive]),
+        CurrScore:numeric, Currj:posint )
+   if st=[] or length(st)=1 and st[1,1] <= CurrScore then
+        return([[CurrScore,Currj,lm+1]])
+   # if st[1,3] < Currj+1 the top of the stack is no longer best
+   # if st[1,1] <= CurrScore the new one is definitely better
+   elif st[1,3] < Currj+1 or st[1,1] <= CurrScore then
+        return(procname( st[2..-1], CurrScore, Currj ))
+   else 
+
+        j := Bisect(st[1,1], st[1,2], CurrScore, Currj, Currj+1, st[1,3]);
+
+        # if j <= Currj+1, the new one will never be better
+        if j <= Currj+1 then return(st)
+        # if j >= st[1,3], the top of the stack will never be used
+        elif j >= st[1,3] then return(procname( st[2..-1], CurrScore, Currj ))
+        else return([ [CurrScore,Currj,j], op(st) ]) fi
+   fi
+   end:
+
+   coldel := CreateArray( 1..l2+1, [] );
+   for i to l2+1 do coldel[i] := UpdateStack( coldel[i], S[1,i], 1 ) od;
+   
+   
+   #############
+   # Main loop #
+   #############
+   best := [-1];
+   for i1 from 2 to l1+1 do
+       rowdel := UpdateStack( [], S[i1,1], 1 );
+       for i2 from 2 to l2+1 do
+           Sd := S[i1-1,i2-1] + dm[Sim,s1[i1-1],s2[i2-1]];
+           Sc := coldel[i2,1,1] + DelCost[i1-coldel[i2,1,2]];
+           Sr := rowdel[1,1] + DelCost[i2-rowdel[1,2]];
+           S[i1,i2] := v := max(Sd,Sc,Sr);
+           if v<0 and member(Local,modif) then S[i1,i2] := v := 0 fi;
+           if v > best[1] then best := [v,i1,i2] fi;
+   
+           rowdel := UpdateStack( rowdel, v, i2 );
+           coldel[i2] := UpdateStack( coldel[i2], v, i1 );
+       od
+   od:
+   
+   #################################
+   #  Compute the aligned strings  #
+   # (to store them for later use) #
+   #################################
+   dps1 := CreateString(l1+l2);
+   dps2 := CreateString(l1+l2);
+   j := l1+l2+1;
+   if member(Local,modif) then i1 := best[2];  i2 := best[3]
+   else i1 := l1+1;  i2 := l2+1 fi;
+   while i1 > 1 or i2 > 1 do
+       if member(Local,modif) and S[i1,i2] <= 0 then break fi;
+       if i1>1 and i2>1 and S[i1-1,i2-1] + dm[Sim,s1[i1-1],s2[i2-1]] = S[i1,i2]
+           then j := j-1;  dps1[j] := s1[i1-1];  i1 := i1-1;
+                           dps2[j] := s2[i2-1];  i2 := i2-1;
+       else for i to i2-1 while S[i1,i]+DelCost[i2-i] <> S[i1,i2] do od;
+           if i < i2 then
+               to i2-i do
+                  j := j-1;  dps1[j] := '_';  dps2[j] := s2[i2-1];  i2 := i2-1 od;
+               next
+           fi;
+           for i to i1-1 while S[i,i2]+DelCost[i1-i] <> S[i1,i2] do od;
+           if i < i1 then
+               to i1-i do
+                  j := j-1;  dps1[j] := s1[i1-1];  dps2[j] := '_';  i1 := i1-1 od;
+               next
+           fi;
+           error('should not happen')
+       fi
+   od;
+   
+   if member('Local',modif) then
+       return([ [best[1], i1..best[2]-1, i2..best[3]-1],
+       [ best[1], dps1[j..-1], dps2[j..-1]],
+       Alignment(s1[i1..best[2]-1],s2[i2..best[3]-1], best[1],dm,0,0,modif)])
+   else return([ [S[l1+1,l2+1], 1..l1, 1..l2],
+       [S[l1+1,l2+1],dps1[j..-1],dps2[j..-1]],
+       Alignment(s1,s2,S[l1+1,l2+1],dm,0,0,modif)])
+   fi
+end:
+
+
+# AltSpli stands for Alternative splicing and it refers to the algorithms
+# that solve the recursion:
+# S[i,j] := max( S[i-1,j-1] + D[Seq1[i-1],Seq2[j-1]],
+#		 S[i-k1,j-k2] + Del(k1,k2) )
+
+#	There are 3 simple possibilities for the Del(k1,k2) function
+#	Del(k1,k2) = Del(k1+k2)			Sum
+#		   = Del(max(k1,k2))		Max
+#		   = Del(k1) + Del(k2)		2Del
+
+
+DynProgBoth_AltSpliSum := proc( s1:string, s2:string, dm:DayMatrix, modif:{string,set(string)} )
+   if nargs < 2 or nargs > 4 then error('invalid number of arguments')
+   elif nargs=2 then return(remember(procname(s1,s2,DM,{'Local','LogDel'})))
+   elif nargs=3 then return(remember(procname(s1,s2,dm,{'Local','LogDel'})))
+   elif type(modif,string) then return(remember(procname(s1,s2,dm,{modif})))
+   elif modif intersect {'Local','Global','CFE','CFEright','Shake'} = {} then
+        return(remember(procname(s1,s2,dm,modif union {'Local'})))
+   fi;
+   
+   if length( modif intersect {'Local','Global','CFE','CFEright','Shake'}) > 1 then
+       error( modif intersect {'Local','Global','CFE','CFEright','Shake'}, 'incompatible arguments')
+   elif length( modif intersect {'Affine','LogDel'}) > 1 then
+       error( modif intersect {'Affine','LogDel'}, 'incompatible arguments')
+   fi;
+   
+   l1 := length(s1);
+   l2 := length(s2);
+   lm := max(l1,l2)+1;
+   if modif intersect {'Global','Local'} = {} then error('not implemented yet') fi;
+   
+   ##################
+   # Initialization #
+   ##################
+   if dm[DelCost] = NULL then
+	C0 := dm[FixedDel];
+	C1 := dm[IncDel];
+   else error('not implemented yet') fi;
+   S := CreateArray( 1..l1+1, 1..l2+1):
+   Del := CreateArray( 1..l1+1, 1..l2+1, -DBL_MAX):
+   
+   #
+   #    S[i,j] contains the best score of aligning
+   #    s1[1..i-1] to s2[1..j-1]
+   #
+   minscore := -DBL_MAX;
+   if member('Global',modif) then
+	for i from 2 to l1+1 do S[i,1] := C0+C1*(i-2) od;
+	for i from 2 to l2+1 do S[1,i] := C0+C1*(i-2) od;
+   elif member('Local',modif) then
+	minscore := 0;
+   fi;
+   
+   #
+   #    Stack for deletions
+   #	There is no need for a stack in this case, only one candidate
+   #	is possible.  This is stored in the array Del
+
+   
+   #############
+   # Main loop #
+   #############
+   best := [-DBL_MAX];
+   for i1 from 2 to l1+1 do
+       for i2 from 2 to l2+1 do
+	   Del[i1,i2] := v := max( Del[i1-1,i2]+C1, Del[i1,i2-1]+C1, S[i1-1,i2]+C0, S[i1,i2-1]+C0 );
+           S[i1,i2] := v := max(S[i1-1,i2-1] + dm[Sim,s1[i1-1],s2[i2-1]],v,minscore);
+           if v > best[1] then best := [v,i1,i2] fi;
+       od
+   od:
+   
+   #################################
+   #  Compute the aligned strings  #
+   # (to store them for later use) #
+   #################################
+   dps1 := CreateString(l1+l2);
+   dps2 := CreateString(l1+l2);
+   j := l1+l2+1;
+   if member(Local,modif) then i1 := best[2];  i2 := best[3]
+   else i1 := l1+1;  i2 := l2+1 fi;
+   while i1 > 1 or i2 > 1 do
+	if member(Local,modif) and S[i1,i2] <= 0 then break fi;
+	if i1>1 and i2>1 and S[i1-1,i2-1] + dm[Sim,s1[i1-1],s2[i2-1]] = S[i1,i2]
+           then j := j-1;  dps1[j] := s1[i1-1];  i1 := i1-1;
+                           dps2[j] := s2[i2-1];  i2 := i2-1;
+	elif max( Del[i1-1,i2]+C1, S[i1-1,i2]+C0 ) = S[i1,i2] then
+		j := j-1;  dps1[j] := s1[i1-1];  i1 := i1-1;
+			   dps2[j] := '_'
+	elif max( Del[i1,i2-1]+C1, S[i1,i2-1]+C0 ) = S[i1,i2] then
+		j := j-1;  dps2[j] := s2[i2-1];  i2 := i2-1;
+			   dps1[j] := '_'
+	else error('should not happen')
+	fi
+   od;
+   
+   if member('Local',modif) then
+       return([ [best[1], i1..best[2]-1, i2..best[3]-1],
+       [ best[1], dps1[j..-1], dps2[j..-1]],
+       Alignment(s1[i1..best[2]-1],s2[i2..best[3]-1], best[1],dm,0,0,modif)])
+   else return([ [S[l1+1,l2+1], 1..l1, 1..l2],
+       [S[l1+1,l2+1],dps1[j..-1],dps2[j..-1]],
+       Alignment(s1,s2,S[l1+1,l2+1],dm,0,0,modif)])
+   fi
+end:
+

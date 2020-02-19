@@ -1,0 +1,51 @@
+###############################################################
+# Functions to create a random MSA accoring to a given tree.  #
+# 				   Adrian Schneider, May 2005 #
+###############################################################
+
+module external CreateRandMultAlign;
+
+CreateRandMultAlign := proc(tree: Tree, len: posint ;
+		(DelType = NULL): {'ExpGaps', 'ZipfGaps'},
+		(meth = NULL): string )
+
+if not assigned(AF) then CreateDayMatrices() fi;
+
+s0 := CreateRandSeq(len, AF);
+seqs := MutateTree(tree, s0, DelType);
+
+labels := [];
+for L in Leaves(tree) do
+    labels := append(labels,L[Label]);
+od;
+
+MAlign(seqs, meth, labels);
+end:
+
+########################################################
+# MutateTree recursively mutates sequence s0 according #
+# to the tree and returns the sequences at the leaves  #
+# in prefix order.				       #
+########################################################
+MutateTree := proc(tree: Tree, s0: string ; (DelType = NULL): string)
+
+if type(tree, Leaf) then return([s0]) fi;
+
+h0 := tree[Height];
+
+# process left subtree
+hl := tree[Left,Height];
+s1 := Mutate(s0, abs(h0-hl), DelType);
+sl := MutateTree(tree[Left], s1, DelType);
+
+# process right subtree
+hr := tree[Right,Height];
+s2 := Mutate(s0, abs(h0-hr), DelType);
+sr := MutateTree(tree[Right], s2, DelType);
+
+return([op(sl),op(sr)]);
+
+end:
+
+
+end: # end module

@@ -1,0 +1,37 @@
+#
+# Compute the molecular weight of a sequence
+#
+GetMolWeight := proc( s:{string,array(string)} )
+
+if type(s,array(string)) then return( zip(GetMolWeight(s)) ) fi;
+w := 18;
+for i to length(s) do
+    j := AToInt(s[i]);
+    if j < 1 then error('invalid code in sequence') fi;
+    w := w + AAWeight[j]
+    od;
+w
+end:
+
+AAWeight := CreateArray(1..21):
+AAWeight[AAAToInt(Gly)] := 57.052:
+AAWeight[AAAToInt(Ala)] := 71.079:
+AAWeight[AAAToInt(Ser)] := 87.078:
+AAWeight[AAAToInt(Pro)] := 97.117:
+AAWeight[AAAToInt(Val)] := 99.113:
+AAWeight[AAAToInt(Thr)] := 101.105:
+AAWeight[AAAToInt(Cys)] := 103.144:
+AAWeight[AAAToInt(Ile)] := 113.160:
+AAWeight[AAAToInt(Leu)] := 113.160:
+AAWeight[AAAToInt(Asn)] := 114.104:
+AAWeight[AAAToInt(Asp)] := 115.089:
+AAWeight[AAAToInt(Gln)] := 128.131:
+AAWeight[AAAToInt(Lys)] := 128.174:
+AAWeight[AAAToInt(Glu)] := 129.116:
+AAWeight[AAAToInt(Met)] := 131.198:
+AAWeight[AAAToInt(His)] := 137.142:
+AAWeight[AAAToInt(Phe)] := 147.177:
+AAWeight[AAAToInt(Arg)] := 156.188:
+AAWeight[AAAToInt(Tyr)] := 163.17:
+AAWeight[AAAToInt(Trp)] := 186.213:
+AAWeight[21] := sum(AAWeight[i],i=1..20)/20:

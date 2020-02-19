@@ -1,0 +1,128 @@
+###########################################################
+#
+#  Before reading this file, the following command should be executed:
+#
+#  Loading a (small) database.  E.g. ReadDb(ABselec);');
+#
+#
+#				Gaston H. Gonnet (Dec 1990)
+#
+
+SmallAllAll := proc( MinSim:numeric )
+
+
+if nargs=0 then
+    print('Setting the minimum cost to accept a Match. MinSim := 100');
+    return( procname(100)) fi;
+
+CreateDayMatrices();
+if not type( DB,database) then
+    error('No database has been loaded, please use ReadDb(...)'); fi;
+
+ne := DB[TotEntries];
+if ne < 3 then
+    printf('Only %d entries found.\n', ne );
+    error('Too few entries to do an all-against-all match'); fi;
+
+if ne > 630 then
+    printf('A total of %d entries found.\n', ne );
+    error('Too many entries to do an all-against-all match'); fi;
+
+AllAll := CreateArray(1..ne,1..ne);
+ConnComp := CreateArray(1..ne):
+for i to ne do ConnComp[i] := i od:
+offs := CreateArray(1..ne):
+for i to ne do offs[i] := op(Sequence(Entry(i))) od:
+totm := 0;  lrms := ne*(ne-1)/2;
+ts := time();
+
+for i to ne-1 do
+    for j from i+1 to ne do
+
+	totm := totm+1;
+	if mod(totm,17) = 0 then
+	    printf('done %d out of %d, %4.2f%%, %3.1f mins to go\n',
+		totm,lrms,100*totm/lrms,(time()-ts)/totm*(lrms-totm)/60 )
+	    fi;
+
+	m := DynProgScore(Sequence(Entry(i)),Sequence(Entry(j)),DM,JustScore);
+	if m[1] < MinSim-15 then next fi;
+	m := Align(Sequence(Entry(i)),Sequence(Entry(j)),DMS);
+	if m[Sim] >= MinSim then
+	    AllAll[i,j] := m;
+            if ConnComp[i] <> ConnComp[j] then
+	        if ConnComp[i] < ConnComp[j] then
+	             e1 := ConnComp[i];  e2 := ConnComp[j]
+	        else e1 := ConnComp[j];  e2 := ConnComp[i] fi;
+	        for k to ne do if ConnComp[k]=e2 then ConnComp[k] := e1 fi od
+	        fi
+	    fi
+	od
+    od;
+
+flag := false;
+for i to ne do if ConnComp[i] <> 1 then
+	flag := true;
+	t := DB[entry,i]+3+DB[string];
+	printf('%s is disconnected (position %d, group %d)\n',
+	    t[1..40], i, ConnComp[i] ) fi od;
+
+if flag then
+    CountCC := CreateArray(1..ne);
+    for i to ne do j := ConnComp[i];  CountCC[j] := CountCC[j]+1 od;
+    for i to ne do if CountCC[i] > 1 then
+	NewFileName := DB[FileName] . '.' . i;
+	printf('Connected component %d stored in file %s\n',
+	    i, NewFileName );
+	OpenWriting(NewFileName);
+	for j to ne do if ConnComp[j] = i then print(Entry(j)) fi od;
+	OpenWriting(terminal);
+	fi od;
+    error('disconected components detected - connected components saved') fi;
+
+#
+# Place all the results in the file: <dbasename>.AA
+OpenWriting( DB[FileName] . '.AA' );
+printf('# generated on %s\n',date());
+printf('# %g secs used to self-match, refine and compute best PAM\n',time());
+printf('# generated with Mincost = %g\n',MinSim);
+lprint('Set(echo=0):');
+lprint('AllAll :=', AllAll, ':');
+if type(DelModel,posint) then lprint('DelModel :=',DelModel,';') fi;
+lprint('Set(echo=1):');
+lprint();
+printf('ReadDb(''%s'');\n', DB[FileName] );
+printf('Title := DB[FileName];\n');
+lprint( );
+lprint( 'Set(gc=10^7):' );
+lprint( 'CreateDayMatrices();' );
+lprint( );
+lprint( 'ReadLibrary( ProbModel ):' );
+lprint( );
+lprint( 'ne := length(AllAll);' );
+lprint( 'Dist := CreateArray(1..ne,1..ne):' );
+lprint( 'Var := CreateArray(1..ne,1..ne):' );
+lprint( 'for i to ne do for j from i+1 to ne do' );
+lprint( '    AllAll[j,i] := AllAll[i,j];' );
+lprint( '    if AllAll[i,j] <> 0 then' );
+lprint( '	Dist[i,j] := Dist[j,i] := AllAll[i,j,PamNumber];' );
+lprint( '	Var [i,j] := Var [j,i] := AllAll[i,j,PamVariance];' );
+lprint( '	fi' );
+lprint( '    od od;' );
+lprint( 'Names := CreateArray(1..ne):' );
+lprint( 'for i to ne do Names[i] := DB[entry,i] od:' );
+lprint( 'Names := CrossReference(Names):' );
+lprint( );
+lprint( 'tree := MinSquareTree(Dist,Var,Names);' );
+lprint( );
+lprint( 'tt := ConvertTree(tree):' );
+lprint( '#Ptt := ProbTree(tt):   # to build ancestral seqs and mul alignment' );
+lprint( '#ReadLibrary( PrintScript ):   # to print the results of ProbTree' );
+lprint( );
+lprint( '#DrawTree(tree);' );
+lprint( '#DrawUnrootedTree(tree);' );
+OpenWriting(terminal);
+print('SmallAllAll completed');
+
+end:
+

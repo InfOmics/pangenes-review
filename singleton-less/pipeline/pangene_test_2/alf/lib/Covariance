@@ -1,0 +1,148 @@
+#
+#	Class Covariance and associated methods
+#
+#	This class allows the collection, storing and computation
+#	of covariances.
+#
+#	Gaston H Gonnet (April 21st, 2003)
+#
+
+Covariance := proc(
+	Description:string,
+	VarNames:list,
+	StorMatrix:matrix(numeric),
+	StorSum:list(numeric),
+	Minimum:list(numeric),
+	Maximum:list(numeric),
+	Number:integer,
+	First:list(numeric) )
+option polymorphic;
+
+if nargs=0 then Covariance('')
+elif nargs=1 then noeval( Covariance(Description,[],[],[],[],[],0,[]) )
+elif nargs=2 then
+     n := length(VarNames);
+     if n < 2 then error('too few variables') fi;
+     noeval( Covariance(Description,VarNames,CreateArray(1..n,1..n),
+	CreateArray(1..n),[],[],0,[]) )
+elif nargs=8 then noeval( Covariance(args) )
+else error('invalid arguments for Covariance') fi
+end:
+
+
+
+
+Covariance_update := proc( cov:Covariance, val:list(numeric) ) option internal;
+n := length(val);
+if cov[Number]=0 then
+     if cov[VarNames]=[] then
+	  if n < 2 then error('too few variables') fi;
+	  cov[VarNames] := [seq(i,i=1..n)];
+	  cov[StorMatrix] := CreateArray(1..n,1..n);
+	  cov[StorSum] := CreateArray(1..n)
+     elif n <> length(cov[VarNames]) then
+	  error('number of variables does not match Covariance definition')
+	  fi;
+     cov[Number] := 1;
+     cov[Minimum] := copy(val);
+     cov[Maximum] := copy(val);
+     cov[First] := copy(val);
+     cov
+
+elif n <> length(cov[VarNames]) then
+     error('number of variables does not match Covariance definition')
+else v2 := val-cov[First];
+     for i to n do
+	 if val[i] < cov[Minimum,i] then cov[Minimum,i] := val[i] fi;
+	 if val[i] > cov[Maximum,i] then cov[Maximum,i] := val[i] fi;
+	 od;
+     cov[StorSum] := cov[StorSum] + v2;
+     # use exterior product, see bio-recipe on AtA
+     cov[StorMatrix] := cov[StorMatrix] + transpose([v2]) * [v2];
+     cov[Number] := cov[Number]+1;
+     cov
+     fi
+end:
+
+
+
+Covariance_plus := proc( a, b ) option internal;
+if type([args],[Covariance,list]) then Covariance_update(args)
+elif type([b,a],[Covariance,list]) then Covariance_update(b,a)
+elif type([args],list(Covariance)) then Covariance_union(args)
+else error('cannot update Covariance in',args) fi
+end:
+
+
+
+
+Covariance_select := proc( c:Covariance, sel ) option internal;
+n := length(c[VarNames]);
+if nargs <> 2 then error('cannot assign values to Covariance')
+elif c[Number] < 1 then error('cannot select from an empty Covariance')
+elif lowercase(sel) = 'mean' then c[StorSum]/c[Number] + c[First]
+elif c[Number] < 2 then error('needs at least two data points to compute')
+elif lowercase(sel) = 'maxvariance' then
+     r := c[CovMatrix];
+     a := Eigenvalues(r,s);
+     [a[n], [ seq(s[i,n],i=1..n) ]]
+elif lowercase(sel) = 'variance' then
+     m := c[Number];
+     s := c[StorSum];
+     cov := c[StorMatrix];
+     [ seq( (cov[i,i]-s[i]^2/m) / (m-1), i=1..n ) ]
+elif lowercase(sel) = 'eigenvalues' then
+     a := Eigenvalues(c[CovMatrix],s);
+     [a,transpose(s)]
+elif lowercase(sel) = 'covmatrix' then
+     m := c[Number];
+     r := CreateArray(1..n,1..n);
+     s := c[StorSum];
+     cov := c[StorMatrix];
+     for i to n do for j from i to n do
+	 r[i,j] := r[j,i] := ( cov[i,j] - s[i]*s[j]/m ) / (m-1) od od;
+     r
+elif lowercase(sel) = 'corrmatrix' then
+     r := c[CovMatrix];
+     for i to n do
+	for j from i+1 to n do
+	    r[i,j] := r[j,i] := r[i,j] / sqrt(r[i,i]*r[j,j]) od;
+	r[i,i] := 1
+	od; 
+     r
+else error(sel,'is an unknown selector for Covariance') fi
+end:
+
+
+Covariance_print := proc( c:Covariance ) option internal;
+n := length(c[VarNames]);
+m := c[Number];
+fmt := '%8.4f';
+if m=0 then printf( 'no data collected for %s\n', c[Description] );
+	    return() fi;
+printf( 'Covariance analysis for %s, %d data points\n', c[Description], m );
+printf( '       ' );
+for i to n do printf( '%8.8s', sprintf( '%a', c[VarNames,i] )) od;
+printf( '\nMeans  ' );  t := c[Mean];
+for i to n do printf( fmt, t[i] ) od;
+printf( '\nCovariance matrix\n' );
+t := c[CovMatrix];
+for i to n do
+    printf( '%6.6s ', sprintf( '%a', c[VarNames,i] ));
+    for j to i do printf( fmt, t[i,j] ) od;
+    printf( '\n' )
+    od;
+end:
+
+
+Covariance_Rand := proc() option internal;
+n := Rand(2..8);
+c := Covariance( 'Random data' );
+to Rand(2..20) do Covariance_update(c,Rand(array(Normal,n))) od;
+c
+end:
+
+
+
+CompleteClass( Covariance );
+#Protect( Covariance );

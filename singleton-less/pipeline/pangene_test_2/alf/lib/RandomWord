@@ -1,0 +1,92 @@
+SampleText :=
+'This paper reviews performance of hybrid and monolithically integrated \
+transmitter arrays based on directly modulated lasers with a \
+focus on the wavelength accuracy and stability under normal operating \
+conditions We also consider power stability chromatic dispersion penalties \
+and the channel cross talk Large numbers of four wavelength devices were \
+obtained and evaluated under a program designed to provide university \
+based system researchers with advanced components We show that multi \
+wavelength laser arrays capable of high performance out of the box \
+operation can be now produced for research type systems Future higher \
+performance systems will be more complex than today s systems since the \
+wavelength domain will be used to help route signals through different \
+static or reconfigurable network paths In these next generation systems \
+several parameters may vary which would have deleterious effects in a \
+environment including variable insertion losses channel addition and \
+deletion add drop multiplexing unstable laser power non uniform \
+gain fast gain transients in cascades and non uniform accumulation \
+of dispersion and nonlinearities In order to ensure robust system operation \
+we discuss in this paper various dynamic schemes for compensating damaging \
+effects so that these complex systems maintain high performance Additionally \
+optical networks will provide high speed point to point connections and \
+passive wavelength routing but the true power of optics for high throughput \
+networking will require advances in high speed optical switching Significant \
+functions and capabilities can be enabled by high speed optical switches \
+and cross connects but issues regarding control and routing are ripe for \
+extensive research We highlight one function that being all optical packet \
+header replacement Peculiarities of dynamic phase hologram recording in \
+photorefractive media having high optical non linearity are discussed \
+Shifting and deformation of Bragg angle during recording of phase holograms \
+was observed These effects were explained by titling and curving of the \
+dynamic hologram during their recording and by variation of the photoinduced \
+refractive index versus the hologram depth Computer generated holograms are \
+limited by conventional lithographic fabrication capabilities which rely on \
+accurate deposition exposure and developing of photosensitive chemicals \
+We present alternate fabrication technologies which use a focused laser \
+beam to write submicron patterns by inducing changes in a metal or silicon \
+film and glass Circular laser writing systems built at are \
+described This paper has reviewed some techniques and equipment for the \
+fabrication of binary multilevel and continuous relief developed at \
+The methods are discussed of the parallel optoelectronic realization \
+of the compositional fuzzy inference rule and the multiple valued logic \
+data processing scheme Original optoelectronic design gates are proposed \
+for MAXIMUM MINIMUM LITERAL logic operators as well as for parametrical \
+T operators Optoelectronic fuzzy controller set up is being realized on \
+the basis of these logical gates The optical system for high speed data \
+recording in the volume media is considered The increase of speed and \
+density recording by more than one order is reached through the usage of \
+The radial deflection of the light beam on the basis of the scanner with \
+the accompaniment of a traveling acousto optical lens Multilayer recording \
+of microgratings and multilevel phase data coding The heterodyne phase \
+sensitive method of reading The evaluation of speed and bit density is \
+given Adiabatically perturbed picosecond solitons are considered as the \
+lock on signal carriers being distributed through an optical fiber sync \
+network Interferometric technique of measuring time intervals with the \
+help of train average field strength correlation functions to a \
+subpicosecond accuracy is developed in the event of arriving the optical \
+soliton like pulses at a high repetition rate Such an advantage of this \
+technique as the ability of operating on the trains of low power picosecond \
+optical pulses in particular adiabatically perturbed picosecond solitons \
+in single mode fibers is revealed Results of trial experiments with the \
+mock up implemented as optical part of the sync network for a short base \
+radiointerferometer are present ':
+
+SampleTextLC := lowercase(SampleText);
+PatIndex := sort( [ seq( i+SampleTextLC, i=0..length(SampleTextLC)-10 ) ] ):
+
+SearchPatIndex := proc( pat:string )
+lp := length(pat);
+lo := 0;  hi := length(PatIndex)+1;
+while hi - lo > 1 do
+    j := round( (hi+lo)/2 );
+    if pat < PatIndex[j] then hi := j else lo := j fi od;
+lo2 := lo;  hi := length(PatIndex)+1;
+while hi - lo2 > 1 do
+    j := round( (hi+lo2)/2 );
+    if pat = PatIndex[j,1..lp] then lo2 := j else hi := j fi od;
+[lo+1, lo2]
+end:
+
+r := '';
+t := ' ';
+do
+    inds := SearchPatIndex(t);
+    if inds[2] - inds[1] >= 5 then
+         i := inds[1] + round( (inds[2]-inds[1])*Rand() + 0.5 );
+         t := t . PatIndex[i,length(t)+1];
+	 if t[length(t)] = ' ' then r := r . t;  break fi
+    else r := r . t[1];
+         t := 1+t;
+         fi;
+    od; 
+r;

@@ -1,0 +1,133 @@
+#
+#	Find a Consensus Multiple-Sequence Alignment
+#
+#	This is a subset of the positions where the pairwise
+#	alignments all coincide.
+#
+#	The input is a matrix(Alignment) where AA[i,j] is the
+#	Alignment of sequence i vs sequence j.
+#
+#	Experimental code
+#
+#				Gaston H. Gonnet (Dec 6th, 2006)
+#
+ConsensusAlignment := proc( AA:matrix({0,Alignment}) )
+
+# transform the input alignments into Matches (to use the offsets)
+n := length(AA);
+Off1 := CreateArray(1..n,1..n);
+Off2 := CreateArray(1..n,1..n);
+DPS := CreateArray(1..n,1..n);
+for i1 to n do for i2 from i1+1 to n do
+    m := Match(AA[i1,i2]);
+    Off1[i1,i2] := m[Offset1];
+    Off2[i1,i2] := m[Offset2];
+    DPS[i1,i2] := DynProgStrings(AA[i1,i2])
+od od;
+r := [];
+
+do
+    mOff := CreateArray(1..n,-DBL_MAX);
+    for i1 to n do for i2 from i1+1 to n do
+        if length(DPS[i1,i2,2]) = 0 then return(r) fi;
+        mOff[i1] := max(mOff[i1],Off1[i1,i2]);
+        mOff[i2] := max(mOff[i2],Off2[i1,i2]);
+    od od;
+
+    lrgap := 0;
+    for i1 to n do for i2 from i1+1 to n do
+        lrgap := max( lrgap, mOff[i1]-Off1[i1,i2], mOff[i2]-Off2[i1,i2] );
+    od od;
+
+    if lrgap = 0 then
+         # found one consensus position
+         pos := [ seq( DPS[i1,i1+1,2,1], i1=1..n-1 ), DPS[1,n,3,1] ];
+	 for i1 to n do
+	     t := mOff[i1]+DB[string];
+	     if pos[i1] <> '_' and pos[i1] <> t[1] then
+	          error(mOff,i1,pos,t[1], 'should not happen') fi
+	 od;
+         r := append(r,pos);
+         # advance all alignments one position
+         for i1 to N do for i2 from i1+1 to n do
+	     if DPS[i1,i2,2,1] <> '_' then Off1[i1,i2] := Off1[i1,i2]+1 fi;
+	     if DPS[i1,i2,3,1] <> '_' then Off2[i1,i2] := Off2[i1,i2]+1 fi;
+	     DPS[i1,i2,2] := 1+DPS[i1,i2,2];
+	     DPS[i1,i2,3] := 1+DPS[i1,i2,3];
+         od od;
+    else # has to advance alignments which are behind
+         for i1 to N do for i2 from i1+1 to n do
+             while Off1[i1,i2] < mOff[i1] or Off2[i1,i2] < mOff[i2] do
+	         if length(DPS[i1,i2,2]) = 0 then return(r) fi;
+	         if DPS[i1,i2,2,1] <> '_' then Off1[i1,i2] := Off1[i1,i2]+1 fi;
+	         if DPS[i1,i2,3,1] <> '_' then Off2[i1,i2] := Off2[i1,i2]+1 fi;
+	         DPS[i1,i2,2] := 1+DPS[i1,i2,2];
+	         DPS[i1,i2,3] := 1+DPS[i1,i2,3];
+	     od;
+         od od;
+    fi;
+od:
+
+
+end:
+
+
+################################################################################
+################################################################################
+################################################################################
+
+prefix := Cyanobacteria;
+Set(gc=1e7):
+
+if length(FileStat('UseHOMEdir'))>0 then
+    hdir := TimedCallSystem('echo $HOME')[2][1..-2]:
+else hdir := '/home/darwin' fi:
+wdir := hdir.'/v2/source/bio-recipes/Orthologues/':
+ReadProgram( wdir . 'lib/darwinit' );
+GS := GenomeSummaries:
+CreateDayMatrices();
+
+fn := TimedCallSystem( 'ls -t ' . wdir . 'Matrix/' . prefix . '* | head -1' ):
+if fn[1] <> 0 then lprint('cannot find file',fn);  quit fi;
+if fn[2,-4..-2] = '.gz' then fname := fn[2,1..-5] else fname := fn[2,1..-2] fi:
+printf( '# reading %s\n', fname );
+ReadProgram( fname );
+
+M := Orthologous:
+N := length(M[1]):
+lM := length(M):
+ns := [seq(GS[i,TotEntries],i=genomes)]:
+histog2 := CreateArray(1..N):
+for i to lM do j := sum( If(z=0,0,1), z=M[i] );  histog2[j] := histog2[j]+1 od:
+if histog <> histog2 then
+    lprint(histog,histog2,histog2-histog,'inconsistent data');  quit fi;
+
+i := SearchString( '/Matrix/', fname ):
+if i < 0 then lprint('should not happen',i,fname);  quit fi;
+Alsname := fname[1..i] . '/Als/' . fname[i+9..-1]:
+ReadProgram( Alsname );
+
+groups := []:
+for i to lM do
+    if Als[i]=0 then next fi;
+    for i1 to N do if M[i,i1] > 0 then
+        for i2 from i1+1 to N do
+            if M[i,i2] > 0 and not type(Als[i,i1,i2],AlignSum) then
+                error(i,i1,i2,M[i],'missing alignment') fi
+        od
+    fi od;
+    if {op(M[i])} <> {0} then groups := append(groups,i) fi
+od:
+
+for g in groups do
+    AA := Als[g]:
+    for i1 to length(AA) do for i2 from i1+1 to length(AA) do
+        as := AA[i1,i2];
+        if as[Gen1] > as[Gen2] then as := AlignSum( as[Entry2], as[Entry1],
+	    as[Score], as[PamDistance], as[Range2], as[Range1], as[PamVariance],
+	    as[Gen2], as[Gen1], as[Other] ) fi;
+        AA[i1,i2] := AA[i2,i1] := Alignment(as)
+    od od;
+    cons := ConsensusAlignment( AA );
+    lprint(g,length(cons),AA[1,2,Length1],length(cons)/AA[1,2,Length1])
+od:

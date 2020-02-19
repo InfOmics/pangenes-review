@@ -1,0 +1,148 @@
+#
+#	Complex, implementation of complex numbers for Darwin
+#
+#				Gaston H. Gonnet (July 1998)
+#
+#	An example of Object oriented programming in Darwin
+#
+
+Complex := proc( Re:numeric, Im:numeric )
+option polymorphic;
+description
+'Data structure Complex( Re, Im )
+Representation of complex numbers by a pair of numerical
+arguments, the real part and the complex part.
+
+- Operations:
+    Initialization:      a := Complex(1,1);
+                         b := Complex(0,1);
+    All arithmetic operations:
+			 a+b, a-b, a*b, a/b, a^b
+    Special functions	 exp(a), ln(a), sin(a), cos(a), tan(a)
+    Printing:            print(a);
+			 printf( ''%.3f'', a );
+    Type testing:	 type(a,Complex);
+
+- Conversions:
+    To string	: string(a)
+ 
+- Selectors:
+    a[Re] : real part
+    a[Im] : imaginary part';
+if nargs <> 2 then error('invalid number of arguments')
+else noeval(procname(args)) fi
+end:
+
+
+
+Complex_cos := proc(c:Complex) -> Complex; option internal;
+t := exp(c[Im]);  Complex( cos(c[Re])*(t+1/t)/2, -sin(c[Re])*(t-1/t)/2 ) end:
+
+
+
+
+Complex_exp := proc(c:Complex) -> Complex; option internal;
+t := exp(c[Re]);  Complex( t*cos(c[Im]), t*sin(c[Im]) ) end:
+
+
+
+Complex_ln := proc(c:Complex) -> Complex; option internal;
+Complex( ln(c[Re]^2+c[Im]^2)/2, arctan(c[Im],c[Re]) ) end:
+
+
+
+Complex_plus := proc( a:{Complex,numeric}, b:{Complex,numeric} ) -> Complex;
+option internal;
+if type(a,numeric) then Complex(a+b[1],b[2])
+elif type(a,Complex) then
+     if type(b,numeric) then Complex(a[1]+b,a[2])
+     elif type(b,Complex) then Complex(a[1]+b[1],a[2]+b[2])
+     else error('invalid sum of Complex') fi
+else error('invalid sum of Complex') fi
+end:
+
+
+
+Complex_power := proc( a:{Complex,numeric}, b:{Complex,numeric} ) -> Complex;
+option internal;
+if type(b,integer) then
+     if b<0 then
+	  t := procname(a,-b);
+	  d := 1 / ( t[1]^2 + t[2]^2 );
+	  Complex( d*t[1], -d*t[2] )
+     elif b=0 then Complex(1,0)
+     elif b=1 then a
+     else t := procname( a, trunc(b/2) );
+	  t := t*t;
+	  if mod(b,2)=1 then t*a else t fi
+	  fi
+elif a=1 then Complex(1,0)
+elif a=0 then
+     if b[1] < 0 then error('division by zero')
+     elif b[1] = 0 then error('0^imaginary is undefined')
+     else Complex(0,0) fi
+else if type(a,Complex) then exp( ln(a) * b )
+     else exp( Complex( ln(abs(a)), If( a<0, Pi, 0 ) ) * b ) fi
+     fi
+end:
+
+
+
+Complex_print := proc( c:Complex ) printf( '%g\n', c ) end:
+Complex_printf := proc( fmt:string, L:Complex )
+option internal;
+if L[1]=0 then
+     if L[2]=1 then 'i'
+     elif L[2]=-1 then '-i'
+     else sprintf( sprintf('%si',fmt), L[2] ) fi
+elif L[2]=1 then sprintf( sprintf('%s+i',fmt), L[1] )
+elif L[2]=-1 then sprintf( sprintf('%s-i',fmt), L[1] )
+elif L[2]<0 then sprintf( sprintf('%s%si',fmt,fmt), L[1], L[2] )
+else sprintf( sprintf('%s+%si',fmt,fmt), L[1], L[2] ) fi
+end:
+
+
+
+
+
+Complex_sin := proc(c:Complex) -> Complex; option internal;
+t := exp(c[Im]);  Complex( sin(c[Re])*(t+1/t)/2, cos(c[Re])*(t-1/t)/2 ) end:
+
+
+
+Complex_string := proc( ) option internal;
+Complex_printf( '%g', args ) end:
+
+
+
+Complex_tan := proc(c:Complex) -> Complex; option internal;
+expim := exp(c[Im]);
+sinhim := (expim-1/expim)/2;
+coshim := expim-sinhim;
+cosre := cos(c[Re]);
+f := 1/(cosre^2+sinhim^2);
+Complex( f*sin(c[Re])*cosre, f*sinhim*coshim ) end:
+
+
+
+Complex_times := proc( a:{Complex,numeric}, b:{Complex,numeric} ) -> Complex;
+option internal;
+if type(a,numeric) then Complex(a*b[1],a*b[2])
+elif type(a,Complex) then
+     if type(b,numeric) then Complex(a[1]*b,a[2]*b)
+     elif type(b,Complex) then
+	  Complex( a[1]*b[1] - a[2]*b[2], a[1]*b[2] + a[2]*b[1] )
+     else error('invalid product of Complex') fi
+else error('invalid product of Complex') fi
+end:
+
+Complex_type := noeval( Complex(numeric,numeric) ):
+
+Complex_abs := proc( a:Complex ) ->numeric; option internal;
+sqrt( a[Re]^2 + a[Im]^2 ) end:
+
+conjugate := proc( a:{numeric,Complex,list} )
+if type(a,numeric) then a
+elif type(a,list) then zip(conjugate(a))
+else Complex(a[Re],-a[Im]) fi
+end:

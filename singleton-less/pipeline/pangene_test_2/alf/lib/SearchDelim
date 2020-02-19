@@ -1,0 +1,26 @@
+#
+#	SearchDelim - search delimiters in a string, return all
+#		the parts between delimiters
+#
+#	SearchDelim( delim, txt ) returs a list of strings,
+#		where each string in the list is one of the parts of
+#		the txt delimited by occurrences of delim.
+#
+#	SearchDelim is ideal to break up a string which contains
+#	many lines separated by <cr>
+#
+#	If the string after the last occurrence of delim is empty,
+#	it is not added to the list.
+#
+#					Gaston H. Gonnet (Apr 10, 2005)
+#
+SearchDelim := proc( delim:string, txt:string ) -> list(string);
+if length(delim) < 1 then error(delim,'delimiter cannot be empty') fi;
+r := [];
+if type(txt,symbol) then s := ''.txt else s := txt fi;
+do   i := CaseSearchString( delim, s );
+     if i < 0 then return( If( s='', r, append(r,s) )) fi;
+     r := append(r,s[1..i]);
+     s := i+length(delim) + s;
+od
+end:

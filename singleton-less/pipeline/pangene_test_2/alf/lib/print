@@ -1,0 +1,748 @@
+#
+# Print objects with more detail
+print := proc(x) option polymorphic;
+if nargs=0 then lprint()
+elif nargs > 1 then for z in [args] do print(z) od
+elif type(x,procedure) then procedure_print(x)
+elif type(x,matrix) then PrintMatrix(x)
+elif type(x,structure) and assigned( symbol( ''.(op(0,x)).'_string' )) then
+     printf( '%s\n', string(x) )
+elif type(x,string) and length(x) >= 7 and x[1..3]='<E>' then Entry_print(x)
+else lprint(x) fi
+end:
+
+
+DayMatrix_print := proc( x:DayMatrix ) option internal;
+lprint(x);
+m := x[Sim];
+dim := length(m);
+sumd := sum( x[Sim,z,z], z=['S', 'P', 'N', 'D', 'E', 'Q', 'H', 'R',
+                'K', 'M', 'I', 'L', 'V', 'F', 'Y', 'W'] );
+if x[type] = 'Peptide' and dim=20 then
+     scrold := Set(screenwidth = 106);
+     sumd := sum( If( member(IntToA(z),{'A','C','G','T'}), 0, m[z,z]),
+	z=1..20 );
+     if sumd = -16*50 then
+	  fmt := '%7.2f';
+	  order := ['A','C','G','T']
+     else fmt := '%5.1f';
+	  order := ['C', 'S', 'T', 'P', 'A', 'G', 'N', 'D', 'E', 'Q', 'H', 'R',
+		'K', 'M', 'I', 'L', 'V', 'F', 'Y', 'W'] fi;
+     for i to length(order) do 
+	 mi := m[AToInt(order[i])];
+	 printf('%c ',order[i]);
+	 for j to i do printf( fmt, mi[AToInt(order[j])] ) od;
+	 printf('\n')
+     od;
+     Set(screenwidth = scrold)
+elif x[type] = 'Nucleotide' and dim=64 then
+     scrold := Set(screenwidth = 85);
+     for j1 to 4 do 
+	 printf('\n    ');
+	 for j2 to 4 do 
+	     for j3 to 4 do
+		 printf('  %c%c%c',IntToB(j1),IntToB(j2),IntToB(j3))
+	     od
+	 od;
+	 for i1 from j1 to 4 do 
+	     for i2 to 4 do
+		 for i3 to 4 do
+		     printf('\n%c%c%c ',IntToB(i1),IntToB(i2),IntToB(i3));
+		     for j2 to If(j1 < i1,4,i2) do
+			 for j3 to If(j1 < i1 or j2 < i2,4,i3) do
+			     printf( '%5.1f',
+				 m[16*i1+4*i2+i3-20,16*j1+4*j2+j3-20])
+			 od
+		     od
+		 od
+	     od
+	 od;
+	 printf('\n')
+     od;
+     Set(screenwidth = scrold)
+else scrold := Set(screenwidth = 5*dim+3 );
+     for i to dim do 
+	 printf('%3d ',i);
+	 for j to i do printf('%5.1f',m[i,j]) od;
+	 printf('\n')
+     od;
+     Set(screenwidth = scrold)
+fi;
+NULL
+end:
+
+#
+#  Match_print written by (probably ghg), modified by T.F. Jenny, Sept 93
+Match_print := proc( m:Match, dm:DayMatrix, optspm:[numeric,string,string] )
+option internal;
+if nargs = 1 then
+     if   type(DM,DayMatrix) and |DM[PamNumber]-m[PamNumber]| < 0.001 or
+         m[PamNumber] = 0 then
+          return(Match_print(m,DM))
+     elif type(DMS,array(DayMatrix)) then
+          j := SearchDayMatrix(m[PamNumber],DMS);
+          if |j[PamNumber]-m[PamNumber]| < 0.5 then
+               return(Match_print(m,j))
+          fi;
+          lprint(m);
+          return()
+     else lprint(m); return() fi
+fi;
+
+if not type(DB,database) then error('DB not assigned correctly') fi;
+if   m[Sim] <= 0 or m[Length1] = 0 or m[Length2] = 0 or m[PamNumber] = 0 then
+     m1 := Align(Sequence(m),dm,Global)
+else m1 := m fi;
+
+if not type(m1,string) then
+     if nargs=3 then spm := optspm
+     elif type(m1,Match) then spm := DynProgStrings(m1,dm)
+     else spm := DynProgStrings(m1) fi;
+     if   dm[type] = 'Nucleotide' then
+          print_NMatch(m1,dm,spm) 
+     else
+          sec := PM_SecStrucMatch(m,spm);
+          ls := length(spm[2]);
+          iden := 0;
+          mid := CreateString(ls);
+	  map := dm['Mapping'];
+          for i to ls do 
+	      c2i := map(spm[2,i]);
+	      c3i := map(spm[3,i]);
+              if   c2i = c3i then iden := iden+1; mid[i] := '|'
+	      elif map <> AToInt or c2i <= 20 and c2i >= 1 and
+				    c3i <= 20 and c3i >= 1 then
+                   c := dm[Sim,c2i,c3i];
+                   if   0 <= c then
+                        mid[i] := If(dm[MaxOffDiag]*0.5 < c,'!',':')
+                   elif dm[MinSim]*0.5 < c then mid[i] := '.'
+                   fi
+              fi
+          od;
+          printf( 'lengths=%d,%d simil=%3.1f, PAM_dist=%g, identity=%3.1f%%\n',
+		m1[Length1], m1[Length2], spm[1],
+		If( m[PamNumber]=0, dm[PamNumber], m[PamNumber]), 100*iden/ls );
+          PrintHeader(m1[Offset1]);
+          PrintHeader(m1[Offset2]);
+          width := Set(screenwidth = 80);
+          Set(screenwidth = width);
+          for i by width to ls do
+              if sec[1] <> '' then lprint(sec[1,i..min(i+width-1,ls)]) fi;
+              lprint(spm[2,i..min(i+width-1,ls)]);
+              lprint(mid[i..min(i+width-1,ls)]);
+              lprint(spm[3,i..min(i+width-1,ls)]);
+              if sec[2] <> '' then lprint(sec[2,i..min(i+width-1,ls)]) fi;
+              if i+width <= ls then lprint() fi
+          od
+     fi
+fi
+end:
+
+
+print_NMatch := proc (m: Match, dm: DayMatrix, spm: [numeric,string,string])
+  option internal;  description
+  'Print a nucleotide-nucleotide Match.';
+  ls := length (spm[2]);
+  pep1 := CreateString (ls);
+  mid := CreateString (ls);
+  pep2 := CreateString (ls);
+  j := iden := codons := stops := dellen1 := dellen2 := 0;
+  codon1 := CreateString (3);
+  codon2 := CreateString (3);
+  mpos := CreateArray (1..3);
+  for i to ls do
+    if spm[2,i] = '_' then
+      dellen1 := dellen1 + 1
+    else
+      if dellen1 > 4 then
+	mark := sprintf ('(%d)', dellen1);
+	at := i - dellen1 + round ((dellen1 - length (mark)) / 2);
+	for k to length (mark) do
+	  spm[2,at+k-1] := mark[k]
+	od
+      fi;
+      dellen1 := 0
+    fi;
+    if spm[3,i] = '_' then
+      dellen2 := dellen2 + 1
+    else
+      if dellen2 > 4 then
+	mark := sprintf ('(%d)', dellen2);
+	at := i - dellen2 + round ((dellen2 - length (mark)) / 2);
+	for k to length (mark) do
+	  spm[3,at+k-1] := mark[k]
+	od
+      fi;
+      dellen2 := 0
+    fi;
+    if spm[2,i] <> '_' and spm[3,i] <> '_' then
+      j := j + 1;
+      mpos[j] := i;
+      codon1[j] := spm[2,i];
+      codon2[j] := spm[3,i];
+      if j = 3 then
+	midch := ' ';
+	p1 := If(codon1[1] = '-', 21, CodonToInt (codon1));
+	p2 := If(codon2[1] = '-', 21, CodonToInt (codon2));
+	if p1 = p2 then
+	  midch := '|';
+	  iden := iden + 3
+	else
+	 c1 := CodonToCInt (codon1);
+	 c2 := CodonToCInt (codon2);
+	 if c1 > 0 and c2 > 0 then
+	    c := dm[Sim,c1,c2];
+	    if c >= 0 then
+	      midch := If( c > dm[MaxOffDiag]/2, '!', ':' )
+	    elif c > dm[MinSim]/2 then
+	      midch := '.'
+	    fi
+	  fi
+	fi;
+	pep1[mpos[1]] := '<';
+	pep1[mpos[2]] := If(p1=22,'$',IntToA(p1));
+	pep1[mpos[3]] := '>';
+	mid[mpos[2]] := midch;
+	pep2[mpos[1]] := '<';
+	pep2[mpos[2]] := If(p2=22,'$',IntToA(p2));
+	pep2[mpos[3]] := '>';
+	codons := codons + 1;
+	if p1 = 22 and p2 = 22 then
+	  stops := stops + 1
+	fi;
+	j := 0
+      fi
+    fi
+  od;
+  if j <> 0 then
+    error ('Assertion failed')
+  fi;
+  printf ('lengths=%d,%d simil=%3.1f, PAM_dist=%g, offsets=%.0f,%.0f,\n  ',
+	  m[Length1], m[Length2], spm[1], m[PamNumber], 
+	  m[Offset1], m[Offset2]);
+  printf ('codons=%d, stops=%d, ', codons, stops);
+  printf ('identity=%3.1f%%\n', iden*100/ls );
+  PrintHeader (m[Offset1]);
+  PrintHeader (m[Offset2]);
+  width := Set(screenwidth=80);  Set(screenwidth=width);
+  for i by width to ls do
+    j := min (i + width - 1, ls);
+    lprint (spm[2,i..j]);
+    lprint (pep1[i..j]);
+    lprint (mid[i..j]);
+    lprint (pep2[i..j]);
+    lprint (spm[3,i..j]);
+    if i + width <= ls then lprint() fi
+  od
+end:
+
+#
+#  PrintHeader written by ?, modified by T.F. Jenny, Sept 93
+PrintHeader := proc( offs:{integer,string} )
+option internal;  description
+  'Print information regarding a sequence given by its offsets into DB.';
+if type(offs,string) then
+     if type(DB,database) and GetOffset(offs) >= 0 and
+	GetOffset(offs) <= DB[TotChars] then procname(GetOffset(offs)) fi;
+else t := [GetEntryInfo(offs,'ID','AC','DE','OS','OC','KW','RES')];
+     t1 := '';
+     for i by 2 to length(t) do t1 := t1.sprintf('%s=%a   ',t[i],t[i+1]) od;
+     if length(t1) > 0 then print( Paragraph(t1) ) fi
+     fi
+end:
+
+#
+# PrintMatrix: Print a numerical matrix well spaced
+#	GhG.  (adaptable format, GhG Jun/98)
+PrintMatrix := proc( A:array(array), format:string )
+
+if A=[] then return( lprint(A) ) fi;
+n := length(A);  m := length(A[1]);
+
+if not type(A,array(numeric,n,m)) then
+    lprint('[');
+    for i to n do printf(' ');  print(A[i]) od;
+    lprint(']');
+    return() fi;
+
+if nargs = 2 then fmt := format
+elif type(A,array(integer,n,m)) then
+     fmt := sprintf( '%%%d.0f', length( max(-10*min(A),max(A)) ) + 1 )
+else maxa := max(A);  mina := min(A);
+     if mina < 0 and mina > -1 then mina := -1 fi;
+     l := length( floor(max(-10*mina,maxa)));
+     width := Set(screenwidth=80);  Set(screenwidth=width);
+     l2 := min( 12, max( 5, floor(width/m) ));
+     if maxa < 1e-4 then fmt := sprintf( '%%%d.5g', l2)
+     elif l >= 8 then fmt := sprintf( '%%%d.0f', l+1 )
+     elif 11*m <= width and maxa < 1 and mina >= 0 then fmt := '%11.8f'
+     elif 12*m <= width and maxa < 1 then fmt := '%12.8f'
+     else fmt := sprintf( '%%%d.%df', l2, max(0,l2-l-2) ) fi
+     fi;
+
+for i to n do
+    for j to m do printf(fmt,A[i,j]) od;
+    printf('\n') od;
+
+end:
+matrix_print := op(PrintMatrix):
+
+#
+# procedure_print( x ): print calling sequence and description of a proc
+#
+#	if it is called with a disassembled procedure,
+#	   then pretty-print the entire code
+#	else print helpful information on usage, description, etc.
+#
+procedure_print := proc( x:{procedure,structure(anything,procedure)} )
+option internal;
+
+if type(x,structure(anything,procedure)) and length(x)>5 and length(x)<8 then
+
+     width := Set(screenwidth=80);  Set(screenwidth=width);
+     par := x[1];
+     loc := x[2];
+     opt := x[3];
+     des := x[4];
+     res := x[5];
+     bdy := x[6];
+     if(length(x)>6) then
+         opa := x[7];
+     else
+         opa := [];
+     fi:
+
+
+     # print something which has been disassembled
+     # this is the pretty-print of a procedure
+     printf( 'proc(' );
+     len := 5;
+     for i to length(par) do
+	 if i > 1 then printf( ',' );  len := len+1 fi;
+	 z := par[i];
+	 if type(z,symbol) then out := sprintf( ' %s', z );
+	 elif type(z,structure(anything,colon)) then
+	      out := sprintf( ' %s:%A', z[1], assemble(z[2]) )
+	 else error(z,'invalid parameter') fi;
+	 if len+length(out) >= width then printf( '\n    ' );  len := 4 fi;
+	 len := len+length(out);
+	 printf( '%s', out )
+     od;
+     for i to length(opa) by 3 do
+	 if i > 1 then printf( ',' );
+	 else printf( ';' ) fi;
+	 len := len+1;
+	 z := opa[i];
+	 if type(z,structure(anything,colon)) then
+	      if type(z[1],structure(anything,equal)) then
+	           out := sprintf( ' (%s=%A):%A', z[1][1], assemble(z[1][2]), assemble(z[2]) )
+	      else
+	           out := sprintf( ' %s:%A', z[1], assemble(z[2]) )
+              fi:
+	 else error(z,'invalid optional parameter') fi;
+	 if len+length(out) >= width then printf( '\n    ' );  len := 4 fi;
+	 len := len+length(out);
+	 printf( '%s', out )
+     od;
+     printf( ' )' );
+     if res <> expseq() then printf( ' -> %A;', assemble(res) ) fi;
+     printf( '\n' );
+     if length(loc) > 0 then
+	 w := sort( [op(loc)] );
+	 printf( 'local %s', w[1] );
+	 for i from 2 to length(w) do printf( ', %s', w[i] ) od;
+	 printf( ';\n' )
+	 fi;
+     w := FindGlobalVars( bdy );
+     if w <> {} then
+	 w := sort( [op(w)] );
+	 printf( 'global %s', w[1] );
+	 for i from 2 to length(w) do printf( ', %s', w[i] ) od;
+	 printf( ';\n' )
+	 fi;
+     if length(opt) > 0 then
+	 w := sort( [op(opt)] );
+	 if length(w) > 1 then
+	      printf( 'options %s', w[1] )
+	 else printf( 'option %s', w[1] ) fi;
+	 for i from 2 to length(w) do printf( ', %s', w[i] ) od;
+	 printf( ';\n' )
+	 fi;
+     if type(des,string) then printf( 'description ''%a'';\n', des ) fi;
+     procedure_printR( EvalParLoc(bdy,par,loc), '', width, false );
+     printf( 'end:\n' );
+     return();
+elif not type(x,procedure) then error('invalid arguments')
+     fi;
+
+a := [op(1,eval(x))];
+d := [op(4,eval(x))];
+rt := op(5,eval(x));
+t := If( type(x,name), sprintf('%s: Usage: %s( ', x, x ), 'proc( ' );
+for i to length(a) do
+    if i > 1 then t := t . ', ' fi;
+    if type(a[i],name) then t := t . sprintf('%s',a[i])
+    elif type(a[i],colon) then t := t . sprintf('%s:%a',op(1,a[i]),op(2,a[i]))
+    else t := t . '==incorrect argument==' fi od;
+t := t . ' )';
+if rt <> NULL then t := t . sprintf( '\nReturns: %a', rt ) fi;
+print( Paragraph( t, -4 ));
+if length(d)=1 then printf('%s\n',d[1])
+elif type(x,string) then
+     a := eval(symbol( x . '_Description' ));
+     if type(a,Description) then printf('%s',string(a)) fi
+     fi;
+NULL
+end:
+
+
+EvalParLoc := proc( s, par, loc )
+option internal;
+if type(s,{string,numeric,list(numeric)}) then return(s)
+elif type(s,structure) then
+     if type(s,structure(integer,Param)) then
+	  if s[1] <= 0 and s[1] >= -2 then s
+	  elif s[1] >= 1 and s[1] <= length(par) then
+	       r := par[s[1]];
+	       if type(r,structure(anything,colon)) then r[1] else r fi
+	  else error('invalid Param') fi
+     elif type(s,structure(integer,Local)) then
+	  if s[1] >= 1 and s[1] <= length(loc) then loc[s[1]]
+	  else error('invalid Local') fi
+     elif type(s,structure) and op(0,s)=procedure then
+	  procname(s[-1],s[1],s[2])
+     else r := NULL;
+	  for z in s do r := r, procname(z,par,loc) od;
+	  noeval(op(0,s)(r))
+     fi
+else error('invalid arguments') fi
+end:
+
+FindGlobalVars := proc( s )
+option internal;
+if type(s,{string,numeric,list(numeric)}) then return( {} )
+elif type(s,structure) then
+     r := {};
+     if type(s,structure(anything,Assign)) then
+	  for i to length(s)-1 do
+	      if type(s[i],name) then r := r union {s[i]} fi od
+     elif type(s,structure(anything,ForLoop)) and type(s[1],name) then
+	      r := r union {s[1]} fi;
+     for z in s do r := r union procname(z) od;
+     r
+else error('invalid arguments') fi
+end:
+
+ReadLibrary_print := proc(a,b)
+option internal;
+if nargs=1 then ReadLibrary(a);  procedure_print(a)
+elif nargs=2 then ReadLibrary(a,b);  procedure_print(b) fi;
+NULL
+end:
+
+procedure_printR := proc( s, ind:string, wid:posint, scolon )
+option internal;
+
+if type(s,{name,numeric,string}) then printf( '%s%a\n', ind, s );  return() fi;
+
+if s=expseq() then t := ''
+elif scolon then
+     t := sprintf( '%A;', assemble(s) )
+else t := sprintf( '%A', assemble(s) ) fi;
+
+if length(t)+length(ind) <= wid then printf( '%s%s\n', ind, t )
+elif type(s,structure(anything,StatSeq)) then
+     for i to length(s)-1 do procname(s[i],ind,wid,true) od;
+     procname(s[length(s)],ind,wid,false)
+elif type(s,structure(anything,IfStat)) then
+     for i by 2 to length(s)-1 do
+	 if i=1 and length(s)=2 then t := 'if'
+	 elif i=1 then t := 'if  ' else t := 'elif' fi;
+	 si := sprintf( '%A', assemble(s[i]) );
+	 si1 := sprintf( '%A', assemble(s[i+1]) );
+	 if length(si)+length(si1)+length(ind)+11 <= wid then
+	      printf( '%s%s %s then %a\n', ind, t, si, si1 )
+	 elif length(si)+length(ind)+10 <= wid then
+	      printf( '%s%s %s then\n', ind, t, si );
+	      procname( s[i+1], ind.'     ', wid, false )
+	 else procedure_print_fit( s[i], t.' ', ' then', ind, wid );
+	      procname( s[i+1], ind.'     ', wid, false ) fi
+	 od;
+     if mod(length(s),2) = 1 then
+	 si := sprintf( '%A', assemble(s[length(s)]) );
+	 if length(si)+length(ind)+8 <= wid then
+	      printf( '%selse %s fi%s\n', ind, si, If(scolon,';','') )
+	 else printf( '%selse\n', ind );
+	      procname( s[length(s)], ind.'     ', wid, false );
+	      printf( '%sfi%s\n', ind, If(scolon,';','') );
+	      fi
+     else printf( '%sfi%s\n', ind, If(scolon,';','') ) fi
+elif type(s,structure(anything,ForLoop)) then
+     bdy := s[length(s)];
+     t2 := If( bdy=expseq(), '', sprintf( '%A', assemble(bdy) ));
+     if length(t)-length(t2)+length(ind)-4 <= wid then
+	  printf( '%s%s\n', ind, t-(length(t2)+4) );
+     else printf( '%s%s%s\n', ind, t, If(scolon,';','') );  return() fi;
+     procname( bdy, ind . '    ', wid, false );
+     if scolon then printf( '%sod;\n', ind ) else printf( '%sod\n', ind ) fi
+elif type(s,structure(anything,{structure,Assign})) then
+     if scolon then procedure_print_fit(s,'',';',ind,wid)
+     else procedure_print_fit(s,'','',ind,wid) fi
+else error(s,'not implemented yet3') fi
+end:
+
+#
+#  print  head.s.tail split in parts so that it fits
+procedure_print_fit := proc( s, head:string, tail:string, ind:string,
+    wid:posint )
+option internal;
+
+ts := sprintf('%s%A%s',head,assemble(s),tail);
+lind := length(ind);
+nl := round( (length(ts)-4) / (wid-lind-4) + 0.5 );
+
+if nl < 2 then error('should not happen')
+elif nl=2 then
+     for i from length(s) by -1 to 1 do
+	 tsi := sprintf('%A',assemble(s[i]));
+	 k := CaseSearchString(tsi,ts);
+	 if k<0 then error(ts,tsi,'should not happen') fi;
+	 if k>0 and ts[k]=' ' then k1 := k-1 else k1 := k fi;
+	 if length(ts)-k < wid-lind-4 and k1 < wid-lind then
+	      printf( '%s%s\n%s    %s\n', ind, ts[1..k1], ind, ts[k+1..-1] );
+	      return() fi
+	 od;
+     fi;
+
+# find all separators outside quotes
+sep := [0];  betqu := false;
+for i to length(ts) do
+    if ts[i]='''' then betqu := not betqu fi;
+    if not betqu and ts[i]=' ' then sep := append(sep,i) fi
+    od;
+sep := append(sep,length(ts)+1);
+
+i1 := lind;  printf( '%s', ind );  prsome := false;
+for i from 2 to length(sep) do
+    if prsome and i1+sep[i]-sep[i-1] > wid then
+	i1 := lind+4;  printf( '\n   %s', ind );  prsome := false fi;
+    if prsome then printf( ' ' ) fi;
+    printf( '%s', ts[sep[i-1]+1 .. sep[i]-1] );
+    i1 := i1+sep[i]-sep[i-1];
+    prsome := true;
+    od;
+printf( '\n' )
+
+end:
+
+
+
+
+
+GetPositions := proc(str: string, what: string)
+	option internal;
+  description 'returns all positions of what in the string';
+  start := 1;
+  pos := 0;
+  res := copy([]);
+  while pos > -1 do
+    pos := SearchString(what, str[start..-1]);  
+    if pos > -1 then
+       pos := pos + start;
+       res := append(res, pos); 
+       start := pos+length(what);
+     fi;
+   od:
+   return(res);
+  
+end:
+
+Replace := proc(str: string, old: string, new: string)
+	option internal;
+  description 'Replaces all occurences of old string with new string';
+  
+  start := 1;
+  pos := 0;
+  res := copy('');
+  counter := 0;
+  while pos > -1 do
+    pos := SearchString(old, str[start..-1]);  
+    if pos > -1 then
+       counter := counter+1;
+       pos := pos + start;
+       if pos > 0 then res := res.str[start..pos-1].new;   
+       else res := res.new; fi;
+       start := pos+length(old);
+     fi;
+   od:
+   if start <= length(str) then res := res.str[start..-1]; fi;
+   if counter > 0 and length(new) < length(old) then 
+     result := Replace(res, old, new);
+     res := result[1]; 
+     counter := counter + result[2];
+   fi;
+   
+   return([res, counter]);
+end:
+ 
+
+
+#
+# PM_SecStrucMatch written by L.J.Knecht, Sept 93
+PM_SecStrucMatch:= proc(m: Match, spm: [numeric, string, string])
+  PM_SecString (m[Offset1], spm[2]), PM_SecString (m[Offset2], spm[3])
+end:
+
+Table_print := proc() option internal; printf( '%s\n', string(args)) end:
+
+
+PM_SecString := proc (ofs: integer, spm: string)
+  res := '';
+  if ofs >= 0 and ofs < DB[TotChars] then
+    entry := Entry (GetEntryNumber (ofs));
+    sec := SearchTag ('SEC', entry);
+    if length (sec) > 0 then
+      p := ofs - GetOffset( SearchTag('SEQ',entry) );
+      res := CreateString (length (spm));
+      for i to length (spm) do
+	if AToInt(spm[i]) > 0 then p := p + 1; res[i] := sec[p] fi
+      od
+    fi
+  fi;
+  res
+end:
+
+
+#
+# print the results of SearchMassDb
+#
+MassProfileResults_print := proc( BestMatches ) option internal;
+
+len := length(BestMatches[1]);
+k := len;
+delta := 2;
+if len = 4 or len = 6 then masses := false else masses := true;  delta := 3 fi;
+printf( '\n\nScore  n k' );
+to (k-2)/delta-1 do printf( '  n k' ) od;
+printf( '   AC      DE		   OS\n' );
+for i from length(BestMatches) by -1 to 1 do
+ if length(BestMatches[i])>3 then       
+    ei := [GetEntryInfo(Entry(BestMatches[i,2]),'AC','DE','OS')];
+    tei := sprintf('%5.1f%3d%2d ', BestMatches[i,1],
+	BestMatches[i,3], BestMatches[i,4], tei[3..-1] );
+    if masses then
+      for j from 6 by 3 to k do
+  	  tei := tei . sprintf('%2d%2d ', BestMatches[i,j], BestMatches[i,j+1]);
+      od;
+    else
+      for j from 5 by 2 to k do
+  	  tei := tei . sprintf('%2d%2d ', BestMatches[i,j], BestMatches[i,j+1]);
+      od;
+    fi; 
+    for j from 2 by 2 to length(ei) do
+	if j=2 then tei := tei . ei[j] else tei := tei . '  ' . ei[j] fi od;
+    if  masses  then     
+      for mm from 5 by 3 to len do
+	tmp := BestMatches[i,mm]; tmp := -sort(-tmp);
+	tmp1 := sort(tmp, x->abs(x));
+	doub := false; 
+	for j from 2 to length(tmp) while doub = false do
+	  if abs(tmp1[j]) = abs(tmp1[j-1]) then doub := true fi;
+	od;
+	for j from 2 to length(tmp)
+	    while tmp[j] > 0 or (tmp[j] <> tmp[j-1] and doub = true) do od;
+	if j<= length(tmp) then
+	   tei := tei . sprintf(' Unmatched weights: [%4.1f',-tmp[j]); 
+	   for l from j+1 to length(tmp) do
+		if tmp[l] < 0 and (tmp[l] = tmp[l-1] or doub = false) then 
+		   tei := tei . sprintf(', %5.1f',-tmp[l]); 
+	   fi; od;  
+	   tei := tei . sprintf('].');
+	else tei := tei . sprintf(' All weights matched.'); 
+	fi;
+      od;
+    fi;
+    print(Paragraph(tei, -5*(k-2)/delta-15));
+  fi;
+od:
+NULL
+end:
+
+
+#
+# print a string so that it can be read back with darwin
+#
+DarwinReadableString_print := proc( s:string ) option internal;
+printf('''');
+for i to length(s) do
+    if s[i] = '''' then printf('''''')
+    elif s[i] = '\n' then printf('\\n')
+    else printf('%c',s[i]) fi
+    od;
+printf('''');
+NULL
+end:
+
+
+MassMatch_print := proc() option internal;
+ width := Set(screenwidth=80);  
+ Set(screenwidth=width); 
+ r := args;
+
+ Reverse := proc(t: string);
+   r := '';
+   for i from length(t) to 1 by -1 do r := r.t[i];od;
+   r;
+  end:
+
+ s1 := '...'.Reverse(r[2]).'...';
+ s2 := '...'.Reverse(r[3]).'...';
+
+ printf('Similarity: %f\n',r[1]);
+ printf('Offsets: %d (fragment) and %d (sequence)\t\t',r[4], r[5]);
+ printf('Lengths: %d and %d \n\n',r[6], r[7]);
+ times:=round(length(s1)/width+0.5);
+ for i to times do     
+   printf('%a\n',  s1[width*(i-1)+1 .. min(width*i,length(s1))] );
+   printf('%a\n',  s2[width*(i-1)+1 .. min(width*i,length(s2))] );
+   lprint();	
+ od;
+ 
+end:
+
+Fragment_print := proc() option internal;
+ r := [args];
+ for i to length(r) do
+   for j to length(r[i])-1 do printf('%a ',r[i,j]); od;
+   printf('%a\n',r[i,j]);
+ od;
+   
+end: 
+
+MassDynSearchResult_print := proc() option internal;
+  r := args;
+  Frags := r[1];
+  Terminus := r[2];
+  result := r[3]; 
+  Stddev := r[4];
+  result := sort(result, x -> -x[1]);
+  lprint();
+  for i from 1 to length(result) do
+    tot := 0; 
+    seq2 := sprintf('%s',string(Sequence(Entry(result[i,2])))):
+    printf('Matching against sequence entry %d: %a: %a:\n\n',result[i,2],
+	GetEntryInfo(Entry(result[i,2]), 'ID')[2],
+	GetEntryInfo(Entry(result[i,2]), 'DE')[2]);
+    for frag to length(Frags) do  
+      # seq1 :=  Frags[frag]:
+       if SearchString('c',Terminus)=0 then
+	   r := DynProgMass(Frags[frag], Reverse(seq2), Stddev, 0):
+       else
+	   r := DynProgMass(Frags[frag], seq2, Stddev, 0):
+       fi;
+       print(r);
+       tot := tot + r[1];
+    od;
+     printf('Total score %3.2f:\n-----------------------------------------------\n\n',tot);
+  od;
+end:

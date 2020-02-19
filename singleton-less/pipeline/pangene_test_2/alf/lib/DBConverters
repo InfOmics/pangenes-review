@@ -1,0 +1,101 @@
+#
+#  converstion script to transform a darwin Genome DB into
+#  an SeqXML conformant file.
+#
+#  SeqXML emerged from the Quest for Orthologs conference in 2009.
+#
+#  schema file is available at http://seqxml.org/0.2/seqxml.xsd
+#  
+#                                      Adrian A. August 2010
+
+WriteSeqXML := proc(fn:string)
+    global DB;
+    if nargs<1 then 
+        error('no output filename assigned'); 
+    elif nargs>1 then
+        if type(DB,database) then curDB := DB: fi:
+        if type(args[2],string) then
+            DB := ReadDb(args[2]);
+        elif type(args[2],database) then 
+            DB := args[2];
+        fi:
+    elif not type(DB,database) then 
+        error(args,'no database specified'); 
+    fi:
+    seqXMLversion := '0.2';
+    rel := SearchTag('DBRELEASE',DB['string']);  # default release tag
+    srcTag := SearchTag('SOURCE', DB['string']);
+    dbnTag := SearchTag('DBNAME', DB['string']);
+    cmnTag := SearchTag('COMMENT',DB['string']);
+    code := SearchTag('5LETTERNAME', DB['string']);
+    sci := SearchTag('SCINAME',DB['string']);
+    tax := SearchTag('TAXONID',DB['string']);
+    if tax='' then 
+       tax := traperror(TaxonId(code));
+       if tax=lasterror then tax := '0';
+       else tax := string(tax) fi:
+    fi:
+
+    if SearchString('genome reviews',cmnTag)>0 then
+        src := 'Genome Reviews';
+    elif SearchString('ebi.ac.uk',srcTag)>0
+          or cmnTag[1..6]='\nID   ' then
+        src := 'EBI';
+    elif SearchString('ensembl.org', srcTag)>0 then
+        src := 'Ensembl';
+    elif SearchString('ensemblgenomes.org', srcTag)>0 then
+        src := 'EnsemblGenomes';
+    elif SearchString('ncbi.nlm.nih.gov', srcTag)>0
+           and cmnTag[1..6]='\nLOCUS' then
+        src := 'NCBI';
+    elif SearchString('from NCBI', dbnTag)>0 then
+        src := 'NCBI';
+    elif SearchString('from JGI', dbnTag)>0 then
+        src := 'JGI';
+    elif SearchString('from Phytozome', dbnTag)>0 then
+        src := 'Phytozome';
+    elif SearchString('BROAD Institute', dbnTag)>0 then
+        src := 'BROAD Institute';
+    elif SearchString('from Wormbase', dbnTag)>0 then
+        src := 'WormBase';
+    elif SearchString('flybase.net', srcTag)>0 then
+        src := 'FlyBase';
+    elif SearchString('dictyBase', dbnTag)>0 then
+        src := 'dictyBase';
+    elif SearchString('from GiardiaDB', dbnTag)>0 then
+        src := 'GiardiaDB';
+    elif SearchString('from the International Rice Genome Sequencing Project', dbnTag)>0 then
+        src := 'Int. Rice Genome Sequencing Project';
+    elif SearchString(' from ', dbnTag)>0 then
+        src := dbnTag[ SearchString('from',dbnTag)+6 .. -1];
+    else src := 'unknown'; lprint('WARNING: unknown genome source'); fi:
+
+    refFields := ['Uniprot/SWISSPROT','UniprotKB/Swiss-Prot', 
+                  'Uniprot/SPTREMBL', 'IPI', 'RefSeq_peptide'];
+    verb := Set(printgc=false);
+    OpenWriting(fn):
+    printf('<?xml version="1.0"?>\n');
+    printf('<seqXML source="%s" sourceVersion="%s" seqXMLversion="%s">\n', 
+            src, rel, seqXMLversion);
+    for i to DB[TotEntries] do
+        e := Entry(i);
+        printf(' <entry id="%s%05d">\n',code,i);
+        printf('  <species name="%s" ncbiTaxID="%s"/>\n', sci, tax);
+        printf('  <AAseq>%s</AAseq>\n', Sequence(e));
+        for tag in refFields do
+            id := SearchTag(tag, e):
+            if id='' then next fi;
+            printf('  <DBRef type="%s" source="%s" id="%s"/>\n', 'AA', tag, id);
+        od:
+        id := SearchDelim('; ', SearchTag('ID',e))[1]:
+        ac := SearchDelim('; ', SearchTag('AC',e)):
+        for z in {id, op(ac)} do
+            printf('  <DBRef type="%s" source="%s" id="%s"/>\n', 'AA', src, z);
+        od:
+        printf(' </entry>\n');
+    od:
+    printf('</seqXML>\n');
+    OpenWriting(previous):
+    Set(printgc=verb);
+    if type(curDB,database) then DB := curDB fi:
+end:

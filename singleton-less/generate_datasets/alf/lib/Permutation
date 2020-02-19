@@ -1,0 +1,47 @@
+#
+#	Permutation class
+#
+#				Gaston H. Gonnet (Sep 26, 2005)
+#
+Permutation := proc( p:{list(posint),posint} )
+if nargs <> 1 then error('invalid number of arguments')
+elif type(p,posint) then noeval( procname( [seq(i,i=1..p)] ))
+elif {op(p)} <> {seq(i,i=1..length(p))} then
+    error('permutation is not over consecutive integers')
+else noeval( procname(args) ) fi
+end:
+
+Permutation_times := proc( a, b )
+if type(a,Permutation) and type(b,Permutation) then
+     a1 := a[1];
+     b1 := b[1];
+     n := length(a1);
+     if length(b1) <> n then error(args,
+	'product of Permutations must be of the same length') fi;
+     noeval( Permutation( [ seq( b1[a1[i]], i=1..n ) ] ))
+else error( args,
+    'Permutations can only be mutiplied (composed) by Permutations') fi
+end:
+
+Permutation_power := proc( a, b )
+if type(a,Permutation) and type(b,integer) then
+     n := length(a[1]);
+     if b < 0 then
+	  a1 := procname(a,-b)[1];
+	  r := CreateArray(1..n);
+	  for i to n do r[a1[i]] := i od;
+	  noeval( Permutation(r) )
+     elif b=0 then Permutation(n)
+     elif b=1 then a
+     elif mod(b,2)=0 then r := procname(a,b/2);  r*r
+     else a * procname(a,b-1)
+     fi
+else error( args,
+    'Permutations can only be powered to integer powers') fi
+end:
+
+Permutation_Rand := proc( p )
+noeval( Permutation( Shuffle(op(p)) ))
+end:
+
+CompleteClass( Permutation );

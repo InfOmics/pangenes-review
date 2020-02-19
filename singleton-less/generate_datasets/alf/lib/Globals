@@ -1,0 +1,28 @@
+###############################################
+# Functions to handle global variables inside #
+# other functions.			      #
+#	      Adrian Schneider, Feb 10, 2006  #
+###############################################
+
+
+# Returns the global variables set by any    
+# function.				    
+Globals := proc(func:procedure)
+globs := {}:
+ass := indets(disassemble(eval(func)),structure(anything,Assign));
+for z in ass do
+    lhs := z[1];
+    while type(lhs,structure(anything,select)) do lhs := lhs[1] od:
+    if type(lhs,structure(anything,{Local,Param})) then next fi;
+    globs := {op(globs),lhs};
+od:
+return(globs);
+end:
+
+# Unassign all global variables from a function
+UnassignGlobals := proc(func:procedure ; (except={}):set)
+globs := Globals(func) minus except;
+for z in globs do;
+    assign(z,string(z));
+od:
+end:

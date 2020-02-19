@@ -1,0 +1,165 @@
+#######################################################
+# Various functions to score a given alignment        #
+# or find the best scoring matrix for the alignment.  #
+#                            Adrian Schneider, 2004   #
+#######################################################
+
+################################################################
+# Input: 2 aligned DNA or AA strings (with gaps '_') plus a    #
+# 	 Day- or CodonMatrix.      			       #
+# Output: Score of the alignment.			       #
+################################################################
+ScoreAlignment:=proc(dps1:string, dps2:string,  dm:{DayMatrix,CodonMatrix})
+if length(dps1)<>length(dps2) then error('aligned strings must be of the same length.') fi;
+if type(dm,CodonMatrix) or dm['type']='Codon' then
+        if mod(length(dps1),3)<>0 then 
+	error('codon sequences must have a multiple of 3 as length.') fi;
+        len:=length(dps1)/3;
+        s1:=[seq(CodonToCInt(dps1[3*i-2..3*i]),i=1..len)];
+        s2:=[seq(CodonToCInt(dps2[3*i-2..3*i]),i=1..len)];
+else
+	len:=length(dps1);
+	s1:=[seq(AToInt(dps1[i]),i=1..len)];
+	s2:=[seq(AToInt(dps2[i]),i=1..len)];
+fi;
+gapopen:=0;
+score:=0;
+for i to len do
+	if s1[i]>0 and s2[i]>0 then  # no gap
+		score:=score+dm[Sim,s1[i],s2[i]];
+		gapopen:=0;
+	elif s1[i]=0 then # gap in seq1
+		if gapopen<>1 then #start new gap
+			score:=score+dm[FixedDel];
+			gapopen:=1;
+		else # contd. gap
+			score:=score+dm[IncDel];
+		fi;
+	else # gap in seq2
+		if gapopen<>2 then #start new gap
+			score:=score+dm[FixedDel];
+			gapopen:=2;
+		else # contd. gap
+			score:=score+dm[IncDel];
+		fi;
+	fi;
+od;
+score
+end:
+
+###################################################################
+# To score synonymous positions only, this function should be     #
+# used because it is optimzed and thus faster. Here the alignment #
+# is scored with each of the matrices in the global array SynMS.  #
+###################################################################
+EstimateSynPAM := proc(dps1,dps2)
+if length(dps1)<>length(dps2) then 
+    error('both dyn. prog strings must have the same length.') 
+fi;
+len:=length(dps1)/3;
+sp1:=CreateArray(1..len,0); 
+sp2:=CreateArray(1..len,0);
+x:=0;
+for i to length(dps1) by 3 do
+    if dps1[i]='_' then c1:=0 else c1:=CodonToCInt(dps1[i..i+2]) fi;
+    if dps2[i]='_' then c2:=0 else c2:=CodonToCInt(dps2[i..i+2]) fi;
+    if c1<>0 and c2<>0 and CIntToInt(c1)=CIntToInt(c2) then
+	x:=x+1;
+	sp1[x]:=c1;
+	sp2[x]:=c2;	
+    fi;
+od;
+sp1:=sp1[1..x];
+sp2:=sp2[1..x];
+
+# score with all SynPAM matrices
+maxS:=-99999: maxCM:=0;
+for i to length(SynMS) do
+    simi := SynMS[i][Sim];
+    sc := sum(simi[sp1[j],sp2[j]], j=1..x);
+    if sc>maxS then maxS:=sc; maxCM:=i fi;
+od:
+
+# variance computation
+if maxCM = length(SynMS) then V := DBL_MAX
+elif x=0 then maxCM := length(SynMS); V := DBL_MAX;
+elif maxS=0 then maxCM := length(SynMS); V := DBL_MAX;
+else 
+    y := max(2,maxCM);
+    fy := maxS;
+    fym := fyp := 0;
+    for j to x do
+	fym:=fym+SynMS[y-1][Sim,sp1[j],sp2[j]];
+	fyp:=fyp+SynMS[y+1][Sim,sp1[j],sp2[j]];
+    od;
+    V := -1/( (fyp-2*fy+fym)/((SynMS[y+1,PamNumber]-SynMS[y-1,PamNumber])/2)^2);
+    V := V*10/ln(10); # from 10*log10 to ln
+fi;
+# return score, best SynPAM and variance
+[maxS, SynMS[maxCM][PamNumber], V];
+end:
+
+# for backward compatibility
+BestSynScore :=proc() option internal; EstimateSynPAM(args)[2] end:
+
+#######################################################
+# Estimate the CodonPAM value of two aligned strings. #
+#######################################################
+EstimateCodonPAM := proc( dps1:string, dps2:string, cms:list(DayMatrix) )
+if length(dps1) <> length(dps2) then 
+     error('aligned strings must be of the same length') 
+elif mod(length(dps1),3) <> 0 then
+     error('codon sequences must have a multiple of 3 as length') 
+fi;
+len := length(dps1)/3;
+
+# convert the strings to the codon encoding and use the internal function
+s1 := CreateString(len,'_');
+s2 := CreateString(len,'_');
+CodonAlign;	# load CodonToChar
+for i to len do
+    c1 := dps1[3*i-2..3*i];
+    c2 := dps2[3*i-2..3*i];
+    if SearchString('_',c1) = -1 then s1[i] := CodonToCharTable[c1] fi;
+    if SearchString('_',c2) = -1 then s2[i] := CodonToCharTable[c2] fi;
+od:
+EstimatePam(s1,s2,cms)
+end:
+
+#####################################
+# align DNA a to a DynProgString
+#####################################
+AlignDNA := proc(dps,e:Entry)
+option internal;
+gencode := 1;
+t := SearchTag('ALTGENETICCODE',DB[string]);
+if t<>'' then gencode := parse(t) fi;
+d2 := CreateString(length(dps));
+j := 1;
+for i to length(dps) do
+    if dps[i]='_' then next fi;
+    d2[j] := dps[i]; j := j+1;
+od:
+d2 := d2[1..j-1];
+pep := Sequence(e);
+dna := SearchTag('DNA',e);
+off := SearchString(d2,pep);
+off := 3*off+1;
+dd2 := '':
+for i to length(dps) do
+    if dps[i]='_' then
+        dd2 := dd2.'___';
+    else
+        c := dna[off..off+2];
+        if not member(dps[i],AltGenCode(gencode,c)) then
+            lprint('WARNING: ',dps[i],'<>',c);
+            dd2 := dd2.'___';
+        else
+            dd2 := dd2.c;
+        fi;
+        off := off+3;
+    fi;
+od:
+dd2;
+end:
+

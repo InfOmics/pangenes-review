@@ -1,0 +1,436 @@
+# the function WriteFastaWithRefs is removed and merged with WriteFasta.  AR (April 2007)
+
+WriteExpStrucFile := proc(filename:string, expstruc:ExpStruc)
+
+if not assigned(ExpStruc) then ReadLibrary ('ExpStruc') fi:
+
+  OpenWriting(filename):
+
+   printf('%s\n','if not assigned(ExpStruc) then ReadLibrary (''ExpStruc'') fi:'):
+   printf('%s\n', 'es := ExpStruc ():'):
+   printf('\n'):
+
+   if es['Seq'] <> 0  then
+     printf('%s','es[''Seq''] := '):
+     printf('%s:', es['Seq']):
+     printf('\n\n'):
+   fi:
+
+   if es['SecStr'] <> 0  then
+     printf('%s','es[''SecStr''] := '):
+     printf('%a:', es['SecStr']):
+     printf('\n\n'):
+   fi:
+
+   if es['Target'] <> 0  then
+     printf('%s','es[''Target''] := '):
+     printf('%d', es['Target']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['SI'] <> 0  then
+     printf('%s','es[''SI''] := '):
+     printf('%s', es['SI']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['PDBnum'] <> 0  then
+     printf('%s','es[''PDBnum''] := '):
+     printf('%a', es['PDBnum']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['MV'] <> 0  then
+     printf('%s','es[''MV''] := '):
+     printf('%a', es['MV']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['Topo'] <> 0  then
+     printf('%s','es[''Topo''] := '):
+     printf('%a', es['Topo']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['SurfAcc'] <> 0  then
+     printf('%s','es[''SurfAcc''] := '):
+     printf('%a', es['SurfAcc']):
+     printf('%s\n\n',':'):
+   fi:
+
+   if es['Naomi'] <> 0  then
+     printf('%s','es[''Naomi''] := '):
+     printf('%a', es['Naomi']):
+     printf('%s\n\n',':'):
+   fi:
+
+ OpenWriting(terminal):
+
+end:
+
+WriteParseFile := proc (filename:string, hp:array(array(array(integer))), vp:array(array(integer)))
+
+OpenWriting(filename):
+
+   vlen_seq := length(vp[1]):
+
+    s := CreateString (vlen_seq, ' '):
+
+    for i to length (vp) do
+      for pos to vlen_seq do
+        for j to vp[i,pos] do
+          s[pos+j-1] := '*'
+        od
+      od
+    od:
+
+    printf ('%s\n','vpstring := '):
+    printf ('%s\n',s):
+    printf ('%s\n',':'):
+
+    num_seq := length(hp[1]):
+    len_seq := length(hp[1,1]):
+
+    hparse := CreateArray (1..num_seq,1..len_seq):
+
+    for i to length (hp) do 			# loop over hp rules
+      for seq to num_seq do 			# loop over sequences
+        for pos to len_seq do 			#loop over positions
+          if hp[i,seq,pos] <> 0 then
+            for j to hp[i,seq,pos] do
+             hparse[seq,pos + j -1] := 1:
+            od:
+          fi
+        od
+      od
+    od:
+
+    printf ('%s\n','hparse := '):
+    printf ('%a\n',hparse):
+    printf ('%s\n',':'):
+
+    printf ('%s\n','hp := '):
+    printf ('%a\n',hp):
+    printf ('%s\n',':'):
+
+    printf ('%s\n','vp := '):
+    printf ('%a\n',vp):
+    printf ('%s\n',':'):
+
+OpenWriting(terminal):
+
+end:
+
+ReadClustal := proc(fname:string)
+
+  ReadLibrary ('MBA_Toolkit');
+
+  # -- processing optional arguments --
+
+  compressed := false;
+
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if op(1, args[i]) = 'Compressed' and type (op (2, args[2]), boolean) then
+        compressed := op (2, args[i])
+      else
+        print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- initializations --
+
+  if compressed then
+    cmd := 'zcat'
+  else
+    cmd := 'cat'
+  fi;
+
+  OpenPipe (cmd . ' ' . fname);
+
+#main loop
+
+  body := false;
+  first := true;
+  second := false;
+  refs := [];
+  seqs := [];
+
+  do
+    t := ReadRawLine ();
+
+    if t = EOF then
+      break
+    fi;
+
+  if length(t) <> 0 then
+
+  if t[1] = ' ' then 
+   body := false ;
+   first := false;
+   second := true;
+   count := 1;
+  fi;
+   
+  if t[1] <> ' ' and SearchString('CLUSTAL',t) = -1 then
+   body := true;
+  fi;
+
+  if body then
+
+    end_of_ref := SearchString(' ',t);
+    beg_of_ref := 1;
+   
+    for k from end_of_ref + 1 to length(t) do
+     if t[k] <> ' ' then 
+      break;
+     fi;
+    od;
+
+    if first then
+      refs := append(refs,t[beg_of_ref..end_of_ref]);
+      seqs := append(seqs,t[k..length(t)]);
+      ne := length(refs);
+    fi;
+  
+    if second then
+      seqs[count] := seqs[count] . t[k ..length(t)];
+      count := count + 1;
+    fi;
+
+  fi;
+ 
+  fi; # if length(t) <> 0 
+
+  od;
+
+  for i to length (seqs) do
+    for j to length (seqs[i]) do
+     if seqs[i,j] = '-' then
+      seqs[i,j] := '_';
+     fi;
+    od;
+  od;
+
+  seq2 := GetRidOfGapsFromArray(seqs);
+
+refs,seqs,seq2;
+
+end:
+
+
+ReadPretty := proc(fname:string)
+
+  ReadLibrary ('MBA_Toolkit');
+
+  # -- processing optional arguments --
+
+  compressed := false;
+
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if op(1, args[i]) = 'Compressed' and type (op (2, args[2]), boolean) then
+        compressed := op (2, args[i])
+      else
+        print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  # -- initializations --
+
+  if compressed then
+    cmd := 'zcat'
+  else
+    cmd := 'cat'
+  fi;
+
+  OpenPipe (cmd . ' ' . fname);
+
+#main loop
+
+  body := false;
+  first := true;
+  second := false;
+  refs := [];
+  seqs := [];
+
+  do
+    t := ReadLine ();
+
+    if t = EOF then
+      break
+    fi;
+   
+  if SearchString('{',t) > 0 and SearchString('}',t) > 0 and SearchString('Pretty',t) = -1 then
+   body := true;
+  fi;
+
+  if SearchString('Consensus',t) >0 then 
+   body := false ;
+   first := false;
+   second := true;
+   count := 1;
+  fi;
+   
+  if body then
+
+    end_of_ref := SearchString('}',t) ;
+    beg_of_ref := SearchString('{',t) + 2;
+
+    if first then
+      refs := append(refs,t[beg_of_ref..end_of_ref]);
+      seqs := append(seqs,t[end_of_ref + 3..length(t)]);
+      ne := length(refs);
+    fi;
+  
+    if second then
+      seqs[count] := seqs[count] . t[end_of_ref + 4..length(t)];
+      count := count + 1;
+    fi;
+
+  fi;
+
+  od;
+ 
+  seq2 := CleanSeq(seqs);
+
+refs,seq2;
+
+end:
+
+
+GetRidOfGapsFromArray := proc(MA: array(string));
+ n := length(MA); 
+ Seq := CreateArray(1..n);
+ for i to n do
+   p := 0; 
+   l := length(MA[i]);
+   temp := '';
+   for j to l do
+     a := MA[i,j];
+    if a < 'Z' and a >= 'A' then
+     p := p + 1; 
+     temp := temp . MA[i,j];
+     fi;
+   od;
+   Seq[i]:=copy(temp[1..p]);
+ od;
+ Seq;
+end:
+
+
+CleanSeq := proc(MA: array(string));
+ n := length(MA); Seq := CreateArray(1..n);
+ for i to n do
+   p := 0; l := length(MA[i]);
+   temp := CreateString(l);
+   for j to l do
+     a := MA[i,j];
+     if a <> ' ' then p := p + 1; temp[p] := MA[i,j]
+#     else MA[i,j] := '_'; 
+     fi;
+   od;
+   Seq[i]:=copy(temp[1..p]);
+ od;
+ Seq;
+end:
+
+WriteNexus := proc(seqs:array(string),refs:array(string),outfile:string)
+  
+  OpenWriting(outfile);
+
+  ne := length(seqs);
+  nr := length(seqs[1]);
+  
+  printf('#NEXUS\n');
+  printf('BEGIN DATA;\n');
+  printf('DIMENSIONS NTAX=%d NCHAR=%d;\n',ne,nr);
+  printf('FORMAT MISSING=? GAP=_ DATATYPE=PROTEIN;\n');
+  printf('MATRIX\n');
+  
+  for i to ne do
+    printf('%s\n',refs[i]);
+    printf('%s\n',seqs[i]);
+  od;
+
+  printf(';\n');
+  printf('END;\n');
+
+  OpenWriting(terminal);
+  
+end:
+
+TranslatePretty := proc(infile:string,outfile:string)
+
+  #ReadLibrary('Cannaro/Tools/mike.tools'):
+  #TranslatePretty('/usr/people/cannaro/mike/MYG/PRETTY','/usr/people/cannaro/junk90');
+
+  a := ReadPretty(infile);
+  refs := a[1];
+  seqs := a[2];
+
+  WriteNexus(seqs,refs,outfile);
+
+end:
+
+CleanSeq := proc(MA: array(string));
+ n := length(MA); Seq := CreateArray(1..n);
+ for i to n do
+   p := 0; l := length(MA[i]);
+   temp := CreateString(l);
+   for j to l do
+     a := MA[i,j];
+     if a <> ' ' then p := p + 1; temp[p] := MA[i,j]
+#     else MA[i,j] := '_'; 
+     fi;
+   od;
+   Seq[i]:=copy(temp[1..p]);
+ od;
+ Seq;
+end:
+
+
+WriteNexus := proc(seqs:array(string),refs:array(string),outfile:string)
+  
+  description 'Write nexus format. Input seqs:array,refs:array,filename:string';
+  OpenWriting(outfile);
+
+  ne := length(seqs);
+  nr := length(seqs[1]);
+  
+  printf('#NEXUS\n');
+  printf('BEGIN DATA;\n');
+  printf('DIMENSIONS NTAX=%d NCHAR=%d;\n',ne,nr);
+  printf('FORMAT MISSING=? GAP=. DATATYPE=PROTEIN;\n');
+  printf('MATRIX\n');
+  
+  for i to ne do
+    printf('%s\n',refs[i]);
+    printf('%s\n',seqs[i]);
+  od;
+
+  printf(';\n');
+  printf('END;\n');
+
+  OpenWriting(terminal);
+  
+end:
+
+TranslatePretty := proc(infile:string,outfile:string)
+
+  #ReadLibrary('Cannaro/Tools/mike.tools'):
+  #TranslatePretty('/usr/people/cannaro/mike/MYG/PRETTY','/usr/people/cannaro/junk90');
+
+  a := ReadPretty(infile);
+  refs := a[1];
+  seqs := a[2];
+
+  WriteNexus(seqs,refs,outfile);
+
+end:

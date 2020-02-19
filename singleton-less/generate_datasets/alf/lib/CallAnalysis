@@ -1,0 +1,66 @@
+#
+#	Analyze the calling structure of Darwin to determine various properties:
+#
+#	- Who calls who
+#
+#	- Descripted heads (functions not called by anybody, but _Description'd)
+#
+#	- Undescripted heads (functions not called by anybody and not
+#	    _Description'd)
+#
+#					Gaston H. Gonnet (Dec 3, 2005)
+#
+module external WhoCalls, DescriptedHeads, UndescriptedHeads;
+local WhoCallst, all_Descriptions;
+WhoCallst := table({});
+
+
+SetUpCalls := proc()
+global WhoCallst, all_Descriptions;
+if length(WhoCallst[Tree]) > 0 then return() fi;
+
+# force the loading of each procedure and Description
+eval( names(structure(anything,ReadLibrary)) ):
+all_Descriptions := { seq( If(length(t)>13,t[1..-13],NULL),
+	t={names(Description)}) };
+
+for zz in [names(procedure)] do
+    t := disassemble(eval(zz));
+    if type(t,structure(anything,procedure)) then
+	t := indets(t[6],structure(anything,structure));
+	if t={} then next fi;
+	t := { seq(ww[1],ww=t) };
+	for ww in t do
+	    if type(ww,symbol) then
+	        WhoCallst[ww] := WhoCallst[ww] union {zz} fi
+	od;
+    fi;
+od;
+
+end:
+
+WhoCalls := proc( f:symbol )
+SetUpCalls();
+WhoCallst[f]
+end:
+
+DescriptedHeads := proc( )
+SetUpCalls();
+r := [];
+for zz in [names(procedure)] do
+    if member(zz,all_Descriptions) and WhoCallst[zz]={} then
+	r := append(r,zz) fi
+od;
+{op(r)}
+end:
+
+UndescriptedHeads := proc( )
+SetUpCalls();
+r := [];
+for zz in [names(procedure)] do
+    if not member(zz,all_Descriptions) and WhoCallst[zz]={} then
+	r := append(r,zz) fi
+od;
+{op(r)}
+end:
+end:  # end module

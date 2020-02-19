@@ -1,0 +1,73 @@
+BINARY_HARDCODED := 0;
+BINARY_IN_PATH := 1;
+BINARY_IN_WRAPPER_FOLDER := 2;
+BINARY_IN_WRAPPER_FOLDER_32 := 3;
+if not assigned(ETHMachines) then ReadLibrary('ETHMachines') fi:
+
+DeleteFiles := proc(fnL:list(string))
+    for fn in fnL do CallSystem('rm '.fn) od;
+end:
+
+GetTmpDir := proc()
+    tmpDir := '/tmp/';
+    host := hostname();
+    if getenv('TMPDIR') <> '' then
+        tmpDir := getenv('TMPDIR').'/';;
+    elif length(host)>=6 and host[1..6] = 'brutus' then
+        tmpDir := getenv('HOME').'/tmp/';
+    fi;
+    if length(FileStat(tmpDir)) = 0 then TimedCallSystem('mkdir '.tmpDir) fi;
+    return(tmpDir);
+end;
+
+GetWrapperDir := proc()
+## returns the directory containing the wrapper binaries
+    wrapperdir := getenv('WRAPPER_BINARY_ROOT'); ## if the environment variable is set then take this
+    if wrapperdir = '' then
+        wrapperdir := libname.'/../../../WrapperBinaries/';
+    fi;
+    if length(FileStat(wrapperdir)) = 0 then
+        wrapperdir := ''
+    elif wrapperdir[-1] <> '/' then
+        wrapperdir := wrapperdir.'/'
+    fi;
+    return(wrapperdir);
+end;
+
+GetWrapperChoice := proc(relPath:string, binaryname:string, binary:string; 
+                                            'relPath32'=((relPath32=''):string))
+# returns one of {BINARY_HARDCODED,BINARY_IN_PATH, BINARY_IN_WRAPPER_FOLDER, BINARY_IN_WRAPPER_FOLDER_32}
+    local filePath, wrapperdir, selection;
+    selection := -1:
+    filePath := '';
+    if binary <> '' then
+        filePath := binary;
+        if length(FileStat(binary)) = 0 then
+            error(sprintf('The hardcoded binary does not exist: %s',binary));
+        fi;
+        return(BINARY_HARDCODED);
+    else
+        wrapperdir := GetWrapperDir();
+        selection := BINARY_IN_WRAPPER_FOLDER;
+        if wrapperdir = '' then
+            if TimedCallSystem('which '.binaryname)[1] = 0 then
+                return(BINARY_IN_PATH);
+            else
+                error('The binary is not installed in the PATH nor does the dir '.wrapperdir.' exist.');
+            fi;
+        fi;
+    
+        filePath := wrapperdir.'/'.relPath; ## Default location
+        if type(ETHMachines[hostname()], structure) then
+            if ETHMachines[hostname()]['CpuBits']=32 and relPath32 <> '' then
+                filePath := wrapperdir.'/'.relPath32;
+                selection := BINARY_IN_WRAPPER_FOLDER_32;
+            fi;
+        fi;
+    fi;
+    
+    if length(FileStat(filePath)) = 0 then
+        error('The binary file was not found at '.filePath);
+    fi;
+    return(selection);
+end:

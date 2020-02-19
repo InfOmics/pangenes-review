@@ -1,0 +1,531 @@
+
+#
+#	EstimatePam in darwin
+#
+#	Same functionality as the kernel one, but now dealing
+#	with arbitrary DelCost functions and better numerical
+#	approximations for low pam.
+#
+#	Gaston H. Gonnet (June 30th, 2009)
+#
+
+# return the cost, first and second derivative of an indel
+IndelCostDeriv := proc( pam:positive, k:posint, DMS:list(DayMatrix) )
+n := length(DMS);
+
+if DMS[1,DelCost] <> NULL then
+     eps := scalb(1,ilogb(pam)-10):
+     f := DMS[1,DelCost]:
+     f1 := f(k,pam-2*eps):
+     f2 := f(k,pam-eps):
+     f3 := f(k,pam):
+     f4 := f(k,pam+eps):
+     f5 := f(k,pam+2*eps):
+     f42 := f4-f2;
+     f51 := f5-f1;
+     return( [f3, (8*f42-f51) / (12*eps),
+	(-f5-30*f3+16*f2+16*f4-f1) / (12*eps^2)] )
+fi;
+
+if n < 5 then error('not enough DayMatrices to estimate derivatives') fi;
+
+lo := 0;  hi := n+1;
+while hi-lo > 1 do
+    j := round((hi+lo)/2);
+    if DMS[j,PamDistance] <= pam then lo := j else hi := j fi
+od;
+if lo < 1 then lo := 1 fi;
+if hi > n then hi := n fi;
+j := If( |DMS[lo,PamDistance]-pam| < |DMS[hi,PamDistance]-pam|, lo, hi );
+j := max(3,min(n-2,j));
+
+x := CreateArray(1..5);
+f := CreateArray(1..5);
+for i to 5 do
+    dm := DMS[j-3+i];
+    x[i] := dm[PamDistance]-pam;
+    f[i] := dm[FixedDel] + (k-1)*dm[IncDel];
+od;
+
+# the order for gaussian elimination is a0, a3, a4, a2, a1
+# this is to (almost) eliminte the need for the backsolving
+# Also, the first row/column are resolved directly
+M := CreateArray(1..4,1..4);  r := CreateArray(1..4);
+for i to 4 do
+    M[i,1] := x[i+1]^3-x[1]^3;
+    M[i,2] := x[i+1]^4-x[1]^4;
+    M[i,3] := (x[i+1]-x[1])*(x[i+1]+x[1]);
+    M[i,4] := x[i+1]-x[1];
+    r[i] := f[i+1]-f[1];
+od;
+
+# Run gaussian elimination with partial pivoting
+for i to 3 do
+    jmax := i;
+    for j from i+1 to 4 do if |M[j,i]| > |M[jmax,i]| then jmax := j fi od;
+    if jmax <> i then
+	for j from i to 4 do
+	    t := M[i,j];  M[i,j] := M[jmax,j];  M[jmax,j] := t od;
+	t := r[i];  r[i] := r[jmax];  r[jmax] := t;
+    fi;
+    for i2 from i+1 to 4 do
+	piv := -M[i2,i]/M[i,i];
+	M[i2,i] := 0;
+	for j from i+1 to 4 do M[i2,j] := M[i2,j]+piv*M[i,j] od;
+	r[i2] := r[i2]+piv*r[i]
+    od;
+od;
+a1 := r[4]/M[4,4];
+a2 := (r[3]-M[3,4]*a1) / M[3,3];
+a4 := (r[2]-M[2,4]*a1-M[2,3]*a2) / M[2,2];
+a3 := (r[1]-M[1,4]*a1-M[1,3]*a2-M[1,2]*a4) / M[1,1];
+a0 := f[1]-x[1]*(a1+x[1]*(a2+x[1]*(a3+a4*x[1])));
+[a0,a1,2*a2]
+end:
+
+
+#
+#	Computing the estimated pam and its variance
+#	for very small pam values, in particular when
+#	there are no mutations (in which case the ML estimate fails)
+#
+#	This is done assuming a uniform prior distribution in the
+#	pam numbers and computing the expected value of the
+#	first and second moment of pam.  Since we are working
+#	with likelihoods we will have to normalize by the total
+#	density.  E.g. the expected value of pam is:
+#
+#                             infinity
+#                            /
+#                           |              (1/10 Score(p))
+#                           |          p 10                dp
+#                           |
+#                          /
+#                            0
+#                E[pam] := ----------------------------------
+#                              infinity
+#                             /
+#                            |            (1/10 Score(p))
+#                            |          10                dp
+#                            |
+#                           /
+#                             0
+#
+#	We will use scores based on ln() instead of 10*log10() and exp()
+#	instead of 10^(Score/10).
+#	For these cases of very short pam distances, where all the action
+#	happens around pam < 0.01, we will use a taylor series in pam
+#	The aligned amino acids or bases contribute to the score as
+#	follows:
+#
+#	p is the pam distance (small, will use series approximation in p)
+#	L1 = log(PAM1_mut_matrix), L2 = L1^2, L3 = L1^3, ...
+#	Mij := L1[i,j]*p + L2[i,j]*p^2/2 + L3[i,j]*p^3/6+L4[i,j]*p^4/24+O(p^5);
+#	Mii := 1 + L1[i,i]*p + L2[i,i]*p^2/2 + L3[i,i]*p^3/6 + O(p^4);
+#	Dij := ln( Mij/f[i] );
+#	Dii := ln( Mii/f[i] );
+#	Dij := map( factor, series(Dij,p));
+#	Dii := map( factor, series(Dii,p));
+#	lprint( C[i,j]*op(3,Dij), C[i,i]*op(3,Dii) );
+#	lprint( C[i,j]*op(5,Dij), C[i,i]*op(5,Dii) );
+#	lprint( C[i,j]*op(7,Dij), C[i,i]*op(7,Dii) );
+#
+#	From the alignment (using the above) and from the indels we collect
+#	an approximation of the Score(p) as
+#	sco := a0 + a1*p + a2*p^2 + a3*p^3 + b0*ln(p);
+#
+#	The term a0 will cancel out when we normalize so it is ignored
+#	and does not need to be collected.  The term in a1 is large and
+#	negative, and is the dominant term for convergence.  It has to be
+#	separated out and integrated as exp(a1*p) for the integral to
+#	converge.
+#	a0 := 0;
+#
+#	The moments of pam are:
+#	assume(b0>0,a1<0);
+#	rest := convert( series( exp(sco-a1*p-b0*ln(p)), p, 4), polynom );
+#	mu0 := int( p^b0 * exp(a1*p) * rest, p=0..infinity );
+#	mu1 := int( p^(b0+1) * exp(a1*p)*rest, p=0..infinity);
+#	mu2 := int( p^(b0+2) * exp(a1*p)*rest, p=0..infinity);
+#	ave := factor( expand(mu1/mu0) );
+#	secm := factor( expand(mu2/mu0) );
+#	cod := codegen[optimize]( [ 'ave'=ave, 'secm'=secm ], tryhard );
+#	ave := 'ave';  secm := 'secm';
+#	codegen[makeproc]( [cod] );
+#
+#
+
+
+################################################################################
+################################################################################
+################################################################################
+#
+# s1 and s2 are already aligned and same length
+# returns: [MaxScore, PamDist, PamVariance]
+#
+#		Gaston H. Gonnet (June 26th, 2009)
+#
+EstimatePam := proc( s1:string, s2:string, DMS:list(DayMatrix) ) ->
+	[ numeric, positive, positive ];
+global ExpectedPamDistance, MLPamDistance;
+lDMS := length(DMS);
+if length(s1) <> length(s2) then error('unequal sequence lenghts')
+elif type(s1,symbol) then return(procname(''.s1,s2,DMS))
+elif type(s2,symbol) then return(procname(s1,''.s2,DMS))
+elif length( {seq(DMS[Rand(1..lDMS),DelCost],20)} ) > 1 then
+     error('different DelCost in DMS cannot be handled for optimization') fi;
+
+  # compute the score for a given DayMatrix
+  JustScore := proc( dm:DayMatrix )
+  score := sum( sum( C[i,j]*dm[Sim,i,j], j=i..n), i=1..n );
+  if dm[DelCost] = NULL then
+       t := [ sum(z[1]*z[2], z=gaps), sum(z[2],z=gaps)];
+       score := score + dm[FixedDel]*t[2] + dm[IncDel]*(t[1]-t[2])
+  else f := dm[DelCost];
+       score := score + sum( z[2]*f(z[1],dm[PamDistance]), z=gaps )
+  fi;
+  score
+  end:
+
+  #
+  #  Compute the expected PAM and its variance assuming a
+  #  uniform prior for the range 0 .. 1 pam.  Use the above derivation
+  #	Gaston H. Gonnet (June 29th, 2009)
+  EstimateLowPam := proc( DMS:list(DayMatrix) ) -> [positive,positive];
+  L1 := DMS[1,'logPAM1'];  L2 := L1*L1;  L3 := L2*L1;  L4 := L3*L1;
+  a1 := sum( sum( C[i,j]*L2[i,j]/(2*L1[i,j]), j=i+1..n) +
+  	C[i,i]*L1[i,i], i=1..n );
+  a2 := sum( sum( C[i,j]*(4*L3[i,j]*L1[i,j]-3*L2[i,j]^2)/L1[i,j]^2/24,
+  	j=i+1..n) + C[i,i]*(L2[i,i]-L1[i,i]^2)/2, i=1..n );
+  a3 := sum( sum( 1/24*C[i,j]*(L4[i,j]*L1[i,j]^2-2*L2[i,j]*L3[i,j]*L1[i,j]+
+  	L2[i,j]^3)/L1[i,j]^3, j=i+1..n) +
+	C[i,i]*(1/6*L3[i,i]-1/2*L1[i,i]*L2[i,i]+1/3*L1[i,i]^3),  i=1..n );
+  b0 := sum( sum( C[i,j], j=i+1..n), i=1..n );
+
+  # if there are gaps, add the coefficients to a1, a2, a3 and b0
+  if gaps <> [] then
+	# approximate the indel costs in the interval 0..1
+	f := DMS[1,DelCost];
+	if f = NULL then
+	     t := [ sum(z[1]*z[2],z=gaps), sum(z[2],z=gaps)];
+	     pts := [];
+	     for dm in DMS do
+	         d := dm[PamDistance];
+	         if d > 1 then break fi;
+		 pts := append( pts, [dm[FixedDel]*t[2]+dm[IncDel]*(t[1]-t[2]),
+		     d, d^2, d^3, ln(d)] )
+	     od:
+	     if length(pts) < 5 then
+	         error('not enough small-PAM matrices in DMS (less than 5)') fi;
+	     pts := transpose(pts);
+	else pts := CreateArray(1..5,1..100);
+	     for i to 100 do
+	         pts[1,i] := sum( z[2]*f(z[1],i/100), z=gaps );
+		 pts[2,i] := i/100;
+		 pts[3,i] := (i/100)^2;
+		 pts[4,i] := (i/100)^3;
+		 pts[5,i] := ln(i/100);
+	     od;
+	fi;
+	lr := ln(10)/10*LinearRegression( op(pts) );
+	a1 := a1 + lr[2];
+	a2 := a2 + lr[3];
+	a3 := a3 + lr[4];
+	b0 := b0 + lr[5];
+  fi;
+  if a1 >= 0 or a2 > 0 and a1^2/(2*a2) < 10 or 2*a1+4*a2 > -10 then
+	return( EstimateLowPamII(DMS) ) fi;
+  t4 := b0^2;
+  t10 := a2*a1;
+  t6 := b0*t4;
+  t7 := a1^2;
+  t11 := a1*t7 + t4*t10;
+  t12 := (1 + b0)/((3*b0 + 2)*t10 + (-11*b0 - 6*t4 - 6 - t6)*a3 + t11);
+  ave := -((5*b0 + 6)*t10 + (-t6 - 26*b0 - 9*t4 - 24)*a3 + t11)*t12/a1;
+  secm := (b0 + 2)* ((7*b0 + 12)*t10 + (-t6 - 47*b0 - 60 - 12*t4)*a3 + t11)*t12/t7;
+
+  if ave <= 0 or ave >= 1 or secm-ave^2 < 0 then
+	return( EstimateLowPamII(DMS) ) fi;
+  [ave,secm-ave^2]
+  end:
+
+
+  #
+  # Like the above, but using almost brute force integration due to
+  # the detection of problems with the better approximations
+  #  Gaston H Gonnet (July 27th, 2009)
+  EstimateLowPamII := proc( DMS:list(DayMatrix) ) -> [positive,positive];
+  #
+  #  integrate p^k * 10^(Score(p)/10), p=p1..p2
+  # using the values of Score(p0), Score(p1), Score(p2), Score(p3),
+  # p0 < p1 < p2 < p3 and k=0,1,2
+  # Represent Score(p) as a taylor series around p1,
+  # Score(p) = Score(p1) + (p-p1)*Score'(p0)+...
+  #
+  # Maple code:
+  # Score := Sp1 + (p-p1)*s1 + (p-p1)^2*s2 + (p-p1)^3*s3;
+  # eqns := { Sp0=subs(p=p0,Score), Sp2=subs(p=p2,Score),
+  #	Sp3=subs(p=p3,Score) };
+  # eqns := subs(p0-p1=h0, p2-p1=h2, p3-p1=h3, eqns );
+  # sol := solve(eqns,{s1,s2,s3});
+  # pr := convert( series( 10^( subs(p-p1=t,Score-Sp1)/10 ), t ), polynom);
+  # comp := [ op(sol), pr0 = int( pr, t=0..h2 ),
+  #	pr1 = int( (t+p1)*pr, t=0..h2 ), pr2 = int( (t+p1)^2*pr, t=0..h2 )];
+  # cod := codegen[optimize]( comp, tryhard );
+  # codegen[makeproc]( [cod] );
+  # 
+
+  # Interpolating directly over the likelihoods (10^(Score/10)) gives 30
+  # times bigger integration error.
+
+  # integrate for all quartets of points in the DMS array
+  mu0 := mu1 := mu2 := 0;
+  Sp0 := JustScore(DMS[1]);
+  base := Sp1 := JustScore(DMS[2]);
+  Sp2 := JustScore(DMS[3]);
+  for i from 4 to lDMS do
+	Sp3 := JustScore(DMS[i]);
+	if Sp1 < base-100 then Sp0 := Sp1;  Sp1 := Sp2;  Sp2 := Sp3;  next fi;
+	p1 := DMS[i-2,PamDistance];
+	h0 := DMS[i-3,PamDistance] - p1;
+	h2 := DMS[i-1,PamDistance] - p1;
+	h3 := DMS[i,PamDistance] - p1;
+
+    # code from Maple
+    t76 := h0*h3;
+    t22 := ln(10);
+    t18 := t22^2;
+    t56 := 1/100*t18;
+    t17 := t22*t18;
+    t54 := 1/2000*t17;
+    t59 := 1/(h2*t76);
+    t33 := h0^2;
+    t36 := h3^2;
+    t63 := -t36 + t33;
+    t34 := h2^2;
+    t62 := -t34 + t36;
+    t64 := t34 - t33;
+    t51 := - t64*h3 - t62*h0 - t63*h2;
+    t55 := t59/t51;
+    s3 := - ((t33*h2 - h0*t34)*Sp3 + (h0*t36 - t33*h3)*Sp2 +
+	(- h2*t36 + t34*h3)*Sp0 + t51*Sp1)*t55;
+    t31 := h0*t33;
+    t35 := h3*t36;
+    t37 := h2*t34;
+    s2 := ((- t37*h0 + h2*t31)*Sp3 + (- t31*h3 + h0*t35)*Sp2 +
+	(t37*h3 - t35*h2)*Sp0 + ((t31 - t37)*h3 + (t37 - t35)*h0 +
+	(-t31 + t35)*h2)*Sp1)*t59/((-h3 + h2)*(-t33 + t76 + (-h3 + h0)*h2));
+    s1 := - ((- t33*t37 + t31*t34)*Sp3 + (- t31*t36 + t33*t35)*Sp2 +
+	(t37*t36 - t35*t34)*Sp0 + (t64*t35 + t62*t31 + t63*t37)*Sp1)*t55;
+    t19 := s2^2;
+    t21 := s1^2;
+    t20 := s1*t21;
+    t60 := s1*t22;
+    t49 := t18^2;
+    t61 := t21^2*t49;
+    t53 := t21*t54;
+    t1 := 1/12000000*t60*t61 + t19*s1*t54 + 1/60000*s2*t49*t20 +
+	(t53 + s2*t56)*s3;
+    t52 := s1*t56;
+    t57 := 1/200*t18;
+    t2 := s3*t52 + t19*t57 + s2*t53 + 1/240000*t61;
+    t58 := 1/10*t22;
+    t3 := s3*t58 + s2*t52 + 1/6000*t20*t17;
+    t5 := s2*t58 + t21*t57;
+    t38 := t34^2;
+    t67 := 1/5*h2*t38;
+    t68 := 1/3*t37;
+    t40 := t37^2;
+    t69 := 1/6*t40;
+    t70 := 1/4*t38;
+    t75 := h2 + 1/20*t60*t34 + t5*t68 + t3*t70 + t2*t67 + t1*t69;
+    t74 := p1*t2;
+    t73 := p1*t3;
+    t72 := p1*t1;
+    t71 := p1*t5;
+    t66 := 1/7*h2*t40;
+    t13 := s1*t58;
+    pr0 := t75;
+    pr1 := t1*t66 + (t72 + t2)*t69 + (t74 + t3)*t67 + (t73 + t5)*t70 +
+	(t13 + t71)*t68 + 1/2*(p1*t13 + 1)*t34 + p1*h2;
+    pr2 := 1/8*t1*t38^2 + (2*t72 + t2)*t66 + (2*t74 + t3)*t69 + (2*t73 +
+	t5)*t67 + (t13 + 2*t71)*t70 + t68 + (t34 + 1/15*t37*t60 + t75*p1)*p1;
+
+	if base > Sp1 then f := 10^((Sp1-base)/10)
+	else f := 10^((base-Sp1)/10);
+	     mu0 := mu0*f;  mu1 := mu1*f;  mu2 := mu2*f;
+	     base := Sp1;
+	     f := 1;
+	fi;
+	mu0 := mu0 + f*pr0;
+	mu1 := mu1 + f*pr1;
+	mu2 := mu2 + f*pr2;
+	Sp0 := Sp1;  Sp1 := Sp2;  Sp2 := Sp3;
+    od;
+  [mu1/mu0, mu2/mu0 - (mu1/mu0)^2]
+  end:
+
+
+n := DMS[1,Dimension];
+map := DMS[1,Mapping];
+
+C := CreateArray(1..n,1..n):
+for i to length(s1) do
+    i1 := map(s1[i]);  i2 := map(s2[i]);
+    if i1 > i2 then t := i1;  i1 := i2;  i2 := t fi;
+    if i1 >= 1 and i2 <= n then C[i1,i2] := C[i1,i2]+1 fi
+od:
+
+gaps := [];
+for s in [s1,s2] do
+    i1 := 0;
+    for i2 to length(s) do
+        if s[i2] <> '_' then
+             if i1 < i2-1 then gaps := append(gaps,i2-i1-1) fi;
+             i1 := i2
+        fi
+    od;
+    if s[-1] = '_' then gaps := append(gaps,i2-i1-1) fi
+od;
+if length(gaps) > 0 then
+    gaps := sort(gaps);
+    gaps2 := [[gaps[1],1]];
+    for i from 2 to length(gaps) do
+	if gaps[i] = gaps2[-1,1] then gaps2[-1,2] := gaps2[-1,2]+1
+	else gaps2 := append(gaps2,[gaps[i],1]) fi
+    od;
+    gaps := gaps2
+fi;
+
+# crude pam approximation (underestimate)
+pi := sum(C[i,i],i=1..n) / max(1,sum(sum(C)));
+pam := If( pi < 0.082, 250, -100 * ln(pi));
+
+# the purpose of the following code is to
+# analyze maxima which occur at zero or extremely close to 0
+if pam <= 0 then # this means no mutations, all identities
+    pam := DMS[1,PamDistance];
+    # series(L1*t+(1/2*L2-1/2*L1^2)*t^2+(1/6*L3+(-1/2*L2+1/3*L1^2)*L1)*t^3+(1/24*L4-1/8*L2^2+(-1/6*L3+(1/2*L2-1/4*L1^2)*L1)*L1)*t^4+(1/120*L5-1/12*L3*L2+(-1/24*L4+1/4*L2^2+(1/6*L3+(-1/2*L2+1/5*L1^2)*L1)*L1)*L1)*t^5
+
+    f := DMS[1,DelCost];
+    gaps0 := traperror( sum( f(z[1],0)*z[2], z=gaps ));
+    if gaps0=lasterror then
+	gaps1e7 := sum( f(z[1],1e-7)*z[2], z=gaps );
+	gaps1e8 := sum( f(z[1],1e-8)*z[2], z=gaps );
+	if |gaps1e8-gaps1e7| < 1e-5 then
+	    error(f,'the DelCost function, appears to have a limit when pam->0, but fails to compute at pam=0.  This makes it impossible to find the ML estimate of the distance') fi;
+	# else assume it has a singularity and the max is for pam>0
+    else
+	# calculate derivative of score at pam=0
+	h := scalb(1,-17);
+	gapsh := sum( f(z[1],h)*z[2], z=gaps );
+	gaps2h := sum( f(z[1],2*h)*z[2], z=gaps );
+	Q := DMS[1,'logPAM1'];
+	score1 := sum( C[i,i]*Q[i,i], i=1..n) +
+	    (3*(gapsh-gaps0)+(gapsh-gaps2h)) / (2*h);
+	if score1 <= 0 then # maximum is at 0
+	     score := sum( C[i,i]*DMS[1,Sim,i,i], i=1..n ) +
+		sum( f(z[1],pam)*z[2], z=gaps );
+	     elp := EstimateLowPam(DMS);
+	     if elp[1] > DMS[2,PamDistance] then
+		  scomax := [score,DMS[1,PamDistance]];
+		  # there are several maxima, search sequentially
+		  for i from 2 to lDMS do
+		      t := JustScore(DMS[i]);
+		      if t > scomax[1] then scomax := [t,DMS[i,PamDistance]]
+		      elif DMS[i,PamDistance] > elp[1]+5 then break fi
+		  od;
+		  if scomax[2] > DMS[1,PamDistance] then pam := scomax[2]
+		  else	ExpectedPamDistance := elp[1];
+			MLPamDistance := 0;
+			return( [score,pam,elp[2]] )
+		  fi
+	     fi
+	fi
+    fi;
+fi;
+
+
+  D0D1D2 := proc( pam:nonnegative, Q:matrix )
+  if pam < 0.2 then
+        MmI := Q*pam/5;
+        for i from 4 by -1 to 1 do MmI := (MmI*Q+Q)*pam/i od;
+  else MmI := exp(pam*Q);
+       for i to n do MmI[i,i] := MmI[i,i]-1 od;
+  fi;
+  QM := Q * MmI + Q;
+  Q2M := Q * QM;
+  D := CreateArray(1..n,1..n,1..3);
+  for i to n do
+	Di := D[i];  MmIi := MmI[i];  QMi := QM[i];  Q2Mi := Q2M[i];
+        Di[i,1] := ln1x(MmIi[i]);
+        Di[i,2] := QMi[i]/(1+MmIi[i]);
+        Di[i,3] := Q2Mi[i]/(1+MmIi[i])-(QMi[i]/(1+MmIi[i]))^2;
+        for j from i+1 to n do
+	    Dij := Di[j];  MmIij := MmIi[j];
+            Dij[1] := ln(MmIij);
+            Dij[2] := QMi[j]/MmIij;
+            Dij[3] := Q2Mi[j]/MmIij-(QMi[j]/MmIij)^2;
+        od;
+  od;
+  D
+  end:
+
+  ScoreDeriv := proc( pam:numeric, DMS:list(DayMatrix) )
+  D := remember( D0D1D2(pam,DMS[1,'logPAM1']) );
+  If( gaps=[], [0,0,0], sum( z[2]*remember(IndelCostDeriv(pam,z[1],DMS)),
+	z=gaps)) + 10/ln(10)*sum( C[i]*D[i], i=1..n )
+  end:
+
+
+pam := SearchDayMatrix(pam,DMS)[PamDistance];  # done to improve remembering
+sd := ScoreDeriv( pam, DMS );
+if sd[2] <= 0 then pamlo := 0;  pamhi := pam
+else sd1 := sd;
+     pamlo := pam;
+     do pamhi := 2*pamlo;
+	sd := ScoreDeriv( pamhi, DMS );
+	if sd[2] <= 0 or sd[1] < sd1[1] then break fi;
+	sd1 := sd;  pamlo := pamhi;
+	# unbounded
+	if pamlo >= DMS[-1,PamDistance] then
+	    return( [JustScore(DMS[-1]),DMS[-1,PamDistance],-10/ln(10)/sd[3]] )
+	fi;
+     od;
+fi;
+
+# invariant: max in pamlo...pamhi, sd is derivative at pam, pam is an end
+pam := pamhi;
+to 55 do # protect from ill-conditioned sd computations which may not achieve accuracy
+    pam := pam - sd[2]/sd[3];
+    if pam <= pamlo or pam >= pamhi then pam := (pamlo+pamhi)/2 fi;
+    sd := ScoreDeriv( pam, DMS );
+    if sd[2] > 0 then pamlo := pam else pamhi := pam fi;
+    if |sd[2]| < 1e-5*|sd[3]|*pamhi then break fi;
+od;
+MLPamDistance := pam;
+
+# search the closest DayMatrix
+lo := 0;  hi := lDMS+1;
+while hi-lo > 1 do
+    j := round((hi+lo)/2);
+    if DMS[j,PamDistance] <= pam then lo := j else hi := j fi;
+od;
+if lo < 1 then j := 1;
+elif hi > lDMS then j := lDMS;
+elif |DMS[lo,PamDistance]-pam| < |DMS[hi,PamDistance]-pam|/2 then j := lo
+elif |DMS[hi,PamDistance]-pam| < |DMS[lo,PamDistance]-pam|/2 then j := hi
+else sdlo := ScoreDeriv( DMS[lo,PamDistance], DMS );
+     sdhi := ScoreDeriv( DMS[hi,PamDistance], DMS );
+     j := If( sdlo[1]>sdhi[1], lo, hi)
+fi;
+dm := DMS[j];
+score := JustScore( dm );
+
+if pam < 0.1 then
+     elp := EstimateLowPam(DMS);
+     ExpectedPamDistance := elp[1];
+     [ score, dm[PamDistance], max( -10/ln(10)/sd[3], elp[2]) ]
+else [ score, dm[PamDistance], -10/ln(10)/sd[3]] fi;
+
+end:

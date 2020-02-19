@@ -1,0 +1,171 @@
+#
+#	ProbBallsBoxes(k,n,eps)
+#	  Probability that n balls thrown randomly over the interval [0,1]
+#	  end up leaving none of the k boxes (of width eps) empty
+#
+#	This is the basic tool to compute scores for Mass Profiles
+#	  and other similar problems.
+
+
+#
+#				Gaston H. Gonnet (Dec 6, 2004)
+#
+lnProbBallsBoxes := proc( k:{0,posint}, n:nonnegative, eps:positive )
+if eps > 1 then error(eps,'epsilon cannot be > 1')
+elif k=0 then 0
+elif eps >= 1/k then error(eps,k,'epsilon cannot be >= 1/k')
+elif n<k then -DBL_MAX
+elif k=n then LnGamma(k+1) + k*ln(eps)
+elif k=1 then ln(-expx1(ln1x(-eps)*n))
+elif k=2 then ln(-2*expx1(ln1x(-eps)*n) + expx1(ln1x(-2*eps)*n))
+elif k=3 then ln(-3*expx1(ln1x(-eps)*n) + 3*expx1(ln1x(-2*eps)*n) -
+	expx1(ln1x(-3*eps)*n))
+elif k=n-1 then LnGamma(n+1) + (n-1)*ln(eps) + ln(1-(n-1)*eps/2)
+elif k=n-2 then LnGamma(n+1) + (n-2)*ln(eps) +
+	ln((1-(n-2)*eps+(3*n-5)*(n-2)/12*eps^2)/2)
+elif k<11 then
+	r := 0;  bin := 1;
+	for i to k do
+	    bin := -bin*(k-i+1)/i;
+	    r := r + bin*expx1(ln1x(-i*eps)*n)
+	    od;
+	ln(r)
+else P8ne := procname(8,n*8/k,eps*k/8);
+     P7ne := procname(7,n*7/k,eps*k/7);
+     P6ne := procname(6,n*6/k,eps*k/6);
+     P5ne := procname(5,n*5/k,eps*k/5);
+     (-20237/1066*P7ne+13696/1599*P8ne+7074/533*P6ne-9125/3198*P5ne)*k-
+	5632/41*P8ne+26411/82*P7ne-9720/41*P6ne+4375/82*P5ne+
+	(624294/533*P6ne-802963/533*P7ne+981632/1599*P8ne-445625/1599*P5ne)/k
+     fi
+end:
+
+ProbBallsBoxes := proc( k:{0,posint}, n:{0,posint}, eps:positive )
+if eps > 1 then error(eps,'epsilon cannot be > 1')
+elif k=0 then 1
+elif eps >= 1/k then error(eps,k,'epsilon cannot be >= 1/k')
+elif n<k then 0
+elif k=n then exp(LnGamma(k+1) + k*ln(eps))
+elif k=1 then -expx1(ln1x(-eps)*n)
+elif k=2 then -2*expx1(ln1x(-eps)*n) + expx1(ln1x(-2*eps)*n)
+elif k=3 then -3*expx1(ln1x(-eps)*n) + 3*expx1(ln1x(-2*eps)*n) -
+	expx1(ln1x(-3*eps)*n)
+elif k=n-1 then exp(LnGamma(n+1) + (n-1)*ln(eps)) * (1-(n-1)*eps/2)
+elif k=n-2 then exp(LnGamma(n+1) + (n-2)*ln(eps)) *
+	((1-(n-2)*eps+(3*n-5)*(n-2)/12*eps^2)/2)
+else (1-k*eps)*remember(ProbBallsBoxes(k,n-1,eps)) +
+	k*eps*remember(ProbBallsBoxes(k-1,n-1,eps))
+     fi
+end:
+
+
+ProbCloseMatches := proc( k:integer, n1:integer, n2:integer, eps:nonnegative )
+if n1<0 or n2<0 or eps <= 0 then 0
+elif k <= 0 then 1
+elif n1=0 or n2=0 then 0
+else t := (1-eps)^(2*n1);
+     t*remember(procname(k,n1,n2-1,eps)) +
+     (1-t)*remember(procname(k-1,n1-1,n2-1,eps))
+fi end:
+
+##	Maple commands
+#ProbCloseMatches := proc( k::integer, n1::integer, n2::integer, eps )
+#option remember;
+#if n1<0 or n2<0 then 0
+#elif k <= 0 then 1
+#elif n1=0 or n2=0 then 0
+#else t := (1-eps)^(2*n1);
+#     t*procname(k,n1,n2-1,eps) + (1-t)*procname(k-1,n1-1,n2-1,eps)
+#fi end:
+#Pkne := sum( binomial(k,i) * (-1)^i * (1-i*e)^n, i=0..k );
+#App := (1-exp(-n*e))^k;
+#P := proc(k0,n0,e0) option remember; eval(Pkne,[k=k0,n=n0,e=e0]) end:
+#
+#Pkke := k!*e^k;
+#for p to 10 do normal(P(p,p,e)/subs(k=p,Pkke)) od;
+#
+#Pn1ne := n!*e^(n-1)*(1-(n-1)*e/2);
+#for p from 2 to 10 do normal(eval(Pkne/Pn1ne,[k=p-1,n=p])) od;
+#
+#Pn2ne := n!*e^(n-2)*(1-(n-2)*e+(3*n-5)*(n-2)/12*e^2)/2;
+#for p from 3 to 10 do p, factor(eval(Pkne/Pn2ne,[k=p-2,n=p])) od;
+#
+#expx1 := x -> exp(x)-1;
+#ln1x := x -> ln(1+x);
+#P2ne := -2*expx1(ln1x(-e)*n) + expx1(ln1x(-2*e)*n);
+#expand( P2ne-eval(Pkne,k=2) );
+#
+#P3ne := -3*expx1(ln1x(-e)*n) + 3*expx1(ln1x(-2*e)*n) - expx1(ln1x(-3*e)*n);
+#expand( P3ne-eval(Pkne,k=3) );
+#
+#for p in [5,10,20,40,80] do
+#    eqns := {};
+#    to 3 do
+#        t := evalf(ln(P(p,2*p,1/(6*p))));
+#        eqns := eqns union {t=a0+a1*p+b1/p};
+#        p := 2*p;
+#        od:
+#    sol := solve( eqns, {a0,a1,b1} );
+#    ne := -ln(1-exp(subs(sol,a1)));
+#    lprint( evalf(sol,12), evalf(ne,12) )
+#    od:
+#
+## 3-point interpolation
+#eqns := { seq( P.i.ne = a1*i + a0 + b1/i, i=[5,6,8] )};
+#solve( eqns, {a0,a1,b1} );
+#
+## 4-point interpolation
+#eqns := { seq( P.i.ne = a1*i + a0 + b1/i + b3/i^3, i=[5,6,7,8] )};
+#solve( eqns, {a0,a1,b1,b3} );
+#
+## Test recurrence on Pnke (given by looking at what happens with
+##  the first ball)
+#Equal := proc( k, n, e )
+#    (1-k*e)*P(k,n-1,e) + k*e*P(k-1,n-1,e) - P(k,n,e) end:
+#
+#P := proc(k,n,e)
+#if k < 2 then Pe(k,n,e)
+#elif k>n then 0
+#else (1-k*e)*P(k,n-1,e) + k*e*P(k-1,n-1,e) fi
+#end:
+#
+## Testing (in darwin, producing commands for maple)
+#to 12 do
+#    n := Rand(1..100);
+#    k := Rand(1..n);
+#    ieps := (k+1)*Rand(1..50);
+#    t := ProbBallsBoxes(k,n,1/ieps);
+#    printf( '(evalf(P(%d,%d,1/%d)) - (%.18g))/(%.18g);\n',
+#	k, n, ieps, t, t );
+#    od:
+
+## Darwin simulation of ProbCloseMatches
+#SimProbCloseMatches := proc( n1:posint, n2:posint )
+#sts := [seq( Stat('eps for k='.i), i=1..min(n1,n2) )];
+#to 100000 do
+#    a1 := Rand(array(numeric,n1));
+#    a2 := Rand(array(numeric,n2));
+#    for k to min(n1,n2) do
+#	best := [10];
+#	for i1 to n1 do for i2 to n2 do if |a1[i1]-a2[i2]| < best[1] then
+#	    best := [|a1[i1]-a2[i2]|,i1,i2] fi od od;
+#	sts[k]+best[1];
+#	#a1[best[2]] := Rand(1e6..1e7);
+#	a2[best[3]] := Rand(2e7..1e8);
+#	od;
+#    od:
+#sts
+#end:
+#SimProbCloseMatches := proc( n1:posint, n2:posint )
+#sts := [seq( Stat('eps for k='.i), i=1..min(n1,n2) )];
+#to 10000 do
+#    a1 := Rand(array(numeric,n1));
+#    md := [];
+#    to n2 do
+#	t := Rand();
+#	md := append( md, seq( |t-i|, i=a1 )) od;
+#    md := sort(md);
+#    for k to min(n1,n2) do sts[k]+md[k] od;
+#    od:
+#sts
+#end:

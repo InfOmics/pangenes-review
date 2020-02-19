@@ -1,0 +1,816 @@
+#  MBA_Toolkit -- Molecular Biology Applications Toolkit
+#  Author          : Marcel TURCOTTE
+#  Created On      : Sat Aug 24 10:31:35 1996
+
+# Molecular Biology Applications Toolkit is a collection of procedure
+# which gives access to external programs such as Naomi, STRIDE,
+# Rasmol, Alignment programs, etc.
+
+module external
+    ReadSTRIDE,
+    ReadStructureInfo,
+    ReadFastaWithNames,
+    Clustal,
+    ReadPIR,
+    FormatMA,
+    MapVector,
+    WriteBlock,
+    PDB_IdToFileName,
+    PDB_Seq,
+    PdbSelect,
+    Rasmol,
+    WriteDarwinDb,
+    FastaToDarwinDb,
+    regexp,
+    islower,
+    isupper,
+    SaveEntries,
+    APC_Turcotte,
+    APC2,
+    ReadTable,
+    ExpandFileName,
+    TempName,
+    ReadPhylip;    
+
+ReadSTRIDE := proc (fname)  
+    # -- processing optional arguments --
+    # prog == stride | cat | zcat ...
+    prog := 'stride';
+    hbonds := false;
+    
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Prog' and type (op (2, args[i]), string) then
+                prog := op (2, args[i])
+            elif op(1, args[i]) = 'HBonds' and 
+                type (op (2, args[i]), boolean) then
+                hbonds := op (2, args[i]);
+                hbonds_list := []
+            elif op(1, args[i]) = 'R' and type (op (2, args[i]), string) then
+                r := op (2, args[i])
+            else
+                print ('proc(' . procname . ') WARNING -- uncaught argument:',
+                       args[i])
+            fi
+        else
+            print ('proc(' . procname . ') WARNING -- uncaught argument:',
+                   args[i])
+        fi
+    od;
+    
+    if prog = 'stride' and hbonds then
+        prog := 'stride -h'
+    fi;
+    if assigned (r) then
+        prog := prog . ' -r' . r
+    fi;
+    
+    # -- initializations --
+    xs := [];
+    OpenPipe (prog . ' ' . fname);
+    
+    # -- main loop --
+    do
+        t := ReadLine ();
+        if t = EOF then
+            break
+        fi; 
+        if t[1..3] = 'ASG' then
+            c := traperror (IntToA (AAAToInt (t[6] . lowercase (t[7..8]))));
+            if length (c) > 1 then
+                c := 'X'
+            fi;
+            xs := append (xs, AList ('RESIDUE' = atoi (t[11..15]), 
+                                     'CHAIN' = t[10], 
+                                     'AA' = c,
+                                     'STRUCTURE' = t[25], 
+                                     'ACC' = sscanf (t[62..69],'%f')[1]))
+        elif hbonds and (t[1..3] = 'ACC' or t[1..3] = 'DNR') then
+            aa_a := traperror (IntToA (AAAToInt (t[6] . lowercase (t[7..8]))));
+            if length (aa_a) > 1 then
+                aa_a := 'X'
+            fi;
+            aa_b := traperror (IntToA (
+                      AAAToInt (t[26] . lowercase (t[27..28]))));
+            if length (aa_b) > 1 then
+                aa_b := 'X'
+            fi;
+            hbonds_list := append (hbonds_list, 
+                                   AList (TYPE = t[1..3],
+                                          RES_A = atoi (t[11..15]),
+                                          N_A = atoi (t[16..20]) + 1,
+                                          CHAIN_A = t[10],
+                                          AA_A = aa_a,
+                                          RES_B = atoi (t[31..35]),
+                                          N_B = atoi (t[36..40]) + 1,
+                                          CHAIN_B = t[30],
+                                          AA_B = aa_b))
+        fi
+    od;
+    
+    if hbonds then
+        xs, hbonds_list
+    else
+        xs
+    fi
+end:
+
+# Naomi
+# Simon M. Brocklehurst & Richard N. Perham (1993) Protein Science 2, 626-639
+ReadStructureInfo := proc (temp:string)
+    t := ReadRawFile (temp);
+    xs := [];  offs := 0;
+    do
+        i := CaseSearchString ('\nresidue', offs + t);
+        if i < 0 then break fi;
+        offs := offs + i;
+        n := atoi (offs + 8 + t);
+        i := CaseSearchString ('chain', offs + t);
+        offs := offs + i;
+        chain := t[offs+7];
+        i := CaseSearchString ('type', offs + t);
+        offs := offs + i;
+        res := t[offs+6];
+        i := CaseSearchString ('pdb residue id', offs + t);
+        offs := offs + i;
+        id := atoi (offs + 14 + t);
+        i := CaseSearchString ('sec_struc', offs + t);
+        offs := offs + i;
+        sec_struct := sscanf (offs + 10 + t, '%s')[1];
+        if sec_struct = 'helix' then
+            sec_struct := 'H'
+        elif sec_struct = 'strand' then
+            sec_struct := 'E'
+        else
+            sec_struct := ' '
+        fi;
+        i := CaseSearchString ('access', offs + t);
+        offs := offs + i;
+        access := sscanf (offs + 6 + t, '%s')[1];
+        if access = 'exposed' then
+            access := 'S'
+        else
+            access := 'I'
+        fi;        
+        xs := append (xs, AList (N = n, CHAIN = chain, AA = res, 
+                      RESIDUE = id, STRUCTURE = sec_struct, ACC = access))
+    od;
+    xs;
+end:
+
+# reimplemented without use of ReadRawLine because of 
+# problem with long lines.     Sep 2013 AA
+ReadFastaWithNames := proc (infile:string)
+    s := ReadRawFile(infile):
+    refs := seqs := curSeq := [];
+    for line in Lines(s) do
+        if line[1] = '>' then
+            if curSeq<>[] then
+                seqs := append(seqs,ConcatStrings(curSeq,''));
+                curSeq := []:
+            fi:
+            refs := append(refs, trim(line[2..-1]));
+        else
+            curSeq := append(curSeq,RemoveSpaces(trim(line)));
+        fi;
+    od;
+    if curSeq<>[] then 
+        seqs := append(seqs,ConcatStrings(curSeq,'')); 
+    fi;
+    assert( length(seqs)=length(refs) ):
+
+    for i to length(seqs) do
+        # convert all amino acids B (Asx) to D (Asp)
+        p := SearchString('B', seqs[i]);
+        while p >= 0 do
+            seqs[i][p+1] := 'D';
+            p := SearchString('B', seqs[i]);
+        od;
+        # convert all amino acids Z (Glx) to E (Glu)
+        p := SearchString('Z', seqs[i]);
+        while p >= 0 do
+            seqs[i][p+1] := 'E';
+            p := SearchString('Z', seqs[i]);
+        od;   
+    od;
+    [seqs,refs];
+end:
+
+RemoveSpaces := proc (s1:string)
+s2 := CreateString(length(s1));
+unwanted := ['^M',' ',':',';','\n',IntToAscii(13)];
+l2 := 0:
+for i to length(s1) do
+    if member(s1[i],unwanted) then next fi;
+    l2 := l2+1;
+    s2[l2] := s1[i];
+od:
+s2[1..l2];
+end:
+
+unwanted := c -> c<=' ' or c='' or c=':' or c=';' or c='\n' :
+
+Clustal := proc (ma:array(string))
+    description 'Use clustal program to align sequences.';
+    # -- processing optional arguments --
+    clean := true;
+    name := TempName (Dir = '');
+    cmd := 'clustalw';
+    
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Clean' and type (op(2, args[i]), boolean) then
+                clean := op(2, args[i])
+            elif op(1, args[i]) = 'Name' and type (op(2, args[i]), string) then
+                name := op(2, args[i])
+            elif op(1, args[i]) = 'Command' 
+                and type (op(2, args[i]), string) then
+                cmd := op(2, args[i])
+            fi
+        fi
+    od;
+    
+    # -- writing sequences to a file --
+    gcstate := Set (printgc=false);
+    state := Set (quiet=false);
+    OpenWriting (name);
+    
+    for i to length (ma) do
+        printf ('> %d\n', i);
+        for j to length (ma[i]) do
+            if AToInt(ma[i,j]) <> 0 then
+                printf ('%c', ma[i,j])
+            fi
+        od;
+        printf ('\n')
+    od;
+
+    OpenWriting (terminal);
+    Set (quiet=state);
+    Set (printgc=gcstate);
+    
+    # -- system call to clustal --
+    CallSystem (cmd . ' /align /infile=' . name . ' /output=PIR > ' . name . 
+                '.log');
+    
+    # -- retrieve the resulting alignment --
+    ma_out := ReadPIR (name . '.pir');
+    
+    # -- clean up --
+    if clean then
+        CallSystem ('rm -f ' . name . '*')
+    fi;
+    
+    # -- return the result --
+    ma_out
+end:
+
+ReadPIR := proc (name:string)
+    ma := [];
+    t := ReadRawFile (name);
+    offs := 0;
+    
+    do
+        i := CaseSearchString ('>P1;', offs + t);
+        if i < 0 then
+            break
+        fi;
+        j := CaseSearchString ('\n\n', offs + i + t);
+        offs := offs + i + j + 3;
+        
+        k := offs;
+        seqlen := 0;
+        while t[k] <> '*' do
+            if AToInt(t[k]) > 0 or t[k] = '-' or t[k] = '_' or t[k] = ' ' then
+                seqlen := seqlen + 1
+            fi;
+            
+            k:= k+1
+        od;
+
+        seq := CreateString (seqlen);
+
+        k := 1;
+        while t[offs] <> '*' do
+            if AToInt(t[offs]) > 0 or t[offs] = '-'  
+                or t[k] = '_'  or t[k] = ' ' then
+                seq[k] := t[offs];
+                k:= k+1
+            fi;
+            offs := offs + 1;
+        od;
+
+        ma := append (ma, seq);
+    od;
+
+    ma;
+end:
+
+FormatMA := proc (ma:array(string))
+    for seq to length (ma) do
+        for pos to length (ma[seq]) 
+        while ma[seq,pos] = '-' or ma[seq,pos] = '_' or ma[seq,pos] = ' ' do
+            ma[seq,pos] := ' '
+        od;
+        for pos from length (ma[seq]) to 1 by -1 
+        while ma[seq,pos] = '-' or ma[seq,pos] = '_' or ma[seq,pos] = ' ' do
+            ma[seq,pos] := ' '
+        od;
+        for pos to length (ma[seq]) do
+            if ma[seq,pos] = '-' then
+                ma[seq,pos] := '_'
+            fi
+        od;
+    od;
+    NULL
+end:
+
+MapVector := proc (a:string, c:string)
+    # -- strip gaps --
+    b := CreateString (length (c));
+    map_bc := CreateArray (1..length (c));
+    i := 0;
+    for j to length (c) do
+        if AToInt(c[j]) > 0 then
+            i := i + 1;
+            b[i] := c[j];
+            map_bc[i] := j;
+        fi
+    od;
+    b := b[1..i];
+    map_bc := map_bc[1..i];
+    
+    # -- find the maximum overlaping regions --
+    poslen := CreateArray (1..length (a));
+    
+    for i to length (a) do
+        pos := 1;
+        len := 0;
+        for j to length (b) do
+            for offs from 0 to min (length (a) - i, length (b) - j) 
+            while a[i+offs] = b[j+offs] do od;
+            if offs > len then
+                pos := j;
+                len := offs
+            fi
+        od;
+        poslen[i] := [pos,len]
+    od;
+
+    offs := 1;
+    for i from 2 to length (poslen) do
+        if poslen[i,2] > poslen[offs,2] then
+            offs := i
+        fi
+    od;
+
+    # -- creating map_ac --
+    map_ac := CreateArray (1..length (a), (-1));
+    
+    for j from 0 to poslen[offs,2] -1 do
+        map_ac[offs+j] := map_bc[poslen[offs,1] + j]
+    od;
+
+    map_ac;
+end:
+
+# -- Geoff Barton's Block Format
+WriteBlock := proc (ali:array(string))
+    description 'Write a sequence alignment in Block format. 
+    Used namely by Geoff Barton''s program alscript.';
+    
+    # -- processing optional arguments --
+    fname := 'temp.blc';
+    names := [];
+
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Names' and 
+                type (op (2, args[i]), array (string)) then
+                names := op (2, args[i])
+            elif op(1, args[i]) = 'FileName' and 
+                type (op (2, args[i]), string) then
+                fname := op (2, args[i])
+            else
+                print ('proc(' . procname . ') WARNING -- uncaught argument:',
+                       args[i])
+            fi
+        else
+            print ('proc(' . procname . ') WARNING -- uncaught argument:', 
+                   args[i])
+        fi
+    od;
+    
+    gcstate := Set (printgc=false); state := Set (quiet=false); 
+    OpenWriting (fname);
+
+    if names <> [] then
+        for i to length (ali) do
+            printf ('>%s\n', names[i])
+        od
+    else
+        for i to length (ali) do
+            printf ('>%d\n', i)
+        od
+    fi;
+    
+    printf ('*\n');
+    for pos to length (ali[1]) do
+        for seq to length (ali) do
+            printf ('%s', ali[seq,pos])
+        od;
+        printf ('\n')
+    od;
+    printf ('*\n');
+
+    OpenWriting (terminal); Set (quiet=state); Set (printgc=gcstate);
+    NULL
+end:
+
+# -- PDB --
+PDB_DB := '/usr/data/darwin/PDB';
+PDB_HOME := '/usr/data/pdb':
+
+PDB_IdToFileName := proc (id:string)
+    len := length (id);
+    if len < 4 then
+        error ('PDB ids have length 4')
+    elif len > 4 and printlevel > 1 then
+        printf ('(%s) WARNING -- only the first four characters will be considered: %s\n', 
+                procname, id)
+    fi;
+    ExpandFileName (PDB_HOME, id[2..3] . '/pdb' . id[1..4] . '.ent')
+end:
+
+PDB_Seq := proc (id:string)
+    if nargs > 1 and type (args[2], string) then
+        chain := args[2]
+    fi;
+    
+    len := length (id);
+    if len < 4 then
+        error ('PDB ids have length 4')
+    elif len > 4 then
+        chain := id[5]
+    fi;
+    
+    fname := PDB_IdToFileName (id);
+    tmpname := TempName (Dir = './', Prefix = 'stride');
+    cmd := 'stride -q';
+    if assigned (chain) then
+        cmd := cmd.' -r'.chain
+    fi;
+    
+    CallSystem (cmd.' '.fname.'>'.tmpname);
+    seq := ReadFasta (tmpname)[1];
+    CallSystem ('rm '.tmpname);
+    seq
+end:
+
+PdbSelect := proc (threshold:integer)  
+    xs := [];   
+    OpenPipe ('/usr/local/lib/darwin/Local/pdb_select.csh '.threshold);
+    do
+        t := ReadLine ();
+        if t = EOF then
+            break
+        fi;
+        xs := append (xs, [t[1..4], t[6]]);
+    od;
+    xs 
+end:
+
+Rasmol := proc (id:string)
+    fname := PDB_IdToFileName (id);
+    CallSystem ('rasmol ' . fname);
+    NULL
+end:
+
+WriteDarwinDb := proc (filename:string)
+    # usage WriteDarwinDb('junk2', ['ID', [cat, dog, mouse]],
+    #                              ['SEQ',[[aaa, ccc, ggg]);
+    Server := false;
+    
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Server' and 
+                type (op (2, args[i]), boolean) then
+                Server := op (2, args[i])
+            else
+            fi
+        fi
+    od;
+    
+    oldquiet := Set(quiet=true);
+    OpenWriting(filename);
+    for i to length(args[2,2]) do
+        if Server then printf ('&lt;E&gt;') else printf ('<E>'); fi;
+        for j from 2 to nargs do
+            if type(args[j]) <> list then next fi;
+            tag := args[j,1];
+            if tag = 'SEQ' or tag = 'DNA' or tag = 'DALI' or tag = 'ALI' then
+                if Server then
+                    printf('&lt;%s&gt;%s&lt;/%s&gt;',
+                           tag,uppercase(args[j,2,i]),tag);
+                else
+                    printf('<%s>%s</%s>',tag,uppercase(args[j,2,i]),tag);
+                fi;
+            else
+                if Server then
+                    printf('&lt;%s&gt;%s&lt;/%s&gt;',tag,args[j,2,i],tag);
+                else
+                    printf('<%s>%s</%s>',tag,args[j,2,i],tag);
+                fi;
+            fi;
+        od;
+        if i <> length(args[2,2]) then
+          if Server then  printf ('&lt;/E&gt;,\n') else printf ('</E>,\n') fi;
+        else
+          if Server then  printf ('&lt;/E&gt;,\n') else printf ('</E>.\n') fi;
+        fi;
+    od;
+    OpenWriting(terminal);
+    Set(quiet=oldquiet);
+    NULL;
+end:
+
+FastaToDarwinDb := proc(infile:string)
+    # usage FastaToDarwinDb(infile)
+    Server := false;
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Server' and 
+                type (op (2, args[i]), boolean) then
+                Server := op (2, args[i])
+            elif op(1, args[i]) = 'Outfile' and 
+                type (op (2, args[i]), string) then
+                outfile := op (2, args[i])
+            else
+            fi
+        fi;
+    od;
+    
+    aa := CaseSearchString('.fasta',infile);
+    
+    if not assigned(outfile) then 
+        if aa = -1 then outfile := infile.'.db'; 
+        else outfile := infile[1..aa] . '.db'; fi;
+    fi;
+    
+    fasta := ReadFastaWithNames(infile);
+    if Server then
+        WriteDarwinDb(outfile,['ID',fasta[2]],['SEQ',fasta[1]],'Server'=true);
+    else
+        WriteDarwinDb(outfile,['ID',fasta[2]],['SEQ',fasta[1]]);
+    fi;
+    NULL;
+end:
+
+
+# moved here by Alexander R.
+# Prelude - Additions to the basic language
+# Author          : Marcel TURCOTTE
+# Created On      : 9 Oct 1995
+
+# -- Text --
+regexp := proc (r:string, s:string)
+    global ExternalDir;
+    description 'Returns the positions and lengths of regexp r in string s.';
+    CallExternal (ExternalDir.'regexp', r, s)
+end:
+
+islower := proc (c:string)
+    description 'Returns true if c is lower case, else returns false';
+    if length (c) <> 1 then
+        error ('argument (%s) not a char', c)
+    fi;
+    c >= 'a' and c <= 'z'
+end:
+
+isupper := proc (c:string)
+    description 'Returns true if c is upper case, else returns false';
+    if length (c) <> 1 then
+        error ('argument (%s) not a char', c)
+    fi;
+    c >= 'A' and c <= 'Z'
+end:
+
+# -- List --
+
+# Association Lists (AList) Data Type
+
+# Data structure for association list.
+AList := proc ()
+    option polymorphic;
+    if nargs > 0 and type ([args], list(string=anything)) then
+        return (noeval (AList (args)))
+    fi;
+    error ('Invalid AList format')
+end:
+
+AList_select := proc (p, sel, val)
+    for i to length (p) while op (1,p[i]) <> sel do od;
+    if i > length (p) then
+        error ('Invalid selector', sel)
+    fi;
+    if nargs = 3 then
+        p[i] := sel = val;
+        val
+    else
+        op (2, p[i])
+    fi
+end:
+
+AList_type := noeval(specfunc(anything, AList)):
+
+# -- Molecular Sequences --
+
+SaveEntries := proc (xs, descr:string)
+    description 'Save all sequences from entries xs to files descr.';
+    OpenWriting(descr);
+    printf ('<DBDESCR> Family %s </DBDESCR>\n', descr);
+    for i in xs do
+        print (Entry (i))
+    od;
+    OpenWriting(terminal)
+end:
+
+# -- I/O --
+
+ReadTable := proc (file:string)
+    description 'Read utility similar to Splus read.table () function.
+    Optional arguments: Sep = string, Skip = integer, Format = string, 
+    Prog = string and Format2 = [string].  
+    Nota: Format bypass the sep=string mechanism.  E.g.
+    ReadTable (somefile.gz, Skip = 1, Format = ''%s%d%d'', Prog = gzcat).';
+    
+    prog := 'cat';
+    sep := '\t';
+    skip := 0;
+    format := NULL;
+    format2 := NULL;
+    
+    for i from 2 to nargs do
+        if type (args[i], string = anything) then
+            if op(1, args[i]) = 'Sep' and 
+                type (op (2, args[i]), string) then
+                sep := op (2, args[i])
+            elif op(1, args[i]) = 'Skip' and 
+                type (op (2, args[i]), integer) then
+                skip := op (2, args[i])
+            elif op(1, args[i]) = 'Format' and
+                type (op (2, args[i]), string) then
+                format := op (2, args[i])
+            elif op(1, args[i]) = 'Format2' and
+                type (op (2, args[i]), array(string)) then
+                format2 := op (2, args[i])
+            elif op(1, args[i]) = 'Prog' and
+                type (op (2, args[i]), string) then
+                prog := op (2, args[i])
+            else
+                print ('proc(' . procname . ') WARNING -- uncaught argument:',
+                       args[i])
+            fi
+        else
+            print ('proc(' . procname . ') WARNING -- uncaught argument:',
+                   args[i])
+        fi
+    od;
+    
+    OpenPipe (prog . ' ' . file);
+    
+    lines := [];
+    
+    do
+        t := ReadLine ();
+        if t = EOF then break fi;
+        
+        if skip > 0 then
+            skip := skip - 1
+        else
+            if format <> NULL then
+                line := sscanf (t, format)
+            else
+                n := 0;
+                for i to length (t) do if t[i] = sep then n := n + 1; fi od;
+                line := CreateArray (1..n+1);
+                i := 1;
+                a := 0;
+                do
+                    if a > length (t) then break fi;
+                    for b from a + 1 to length (t) while t[b] <> sep do od;
+                    if format2 <> NULL and i <= length (format2) then
+                        line[i] := sscanf (t[a+1..b-1], format2[i])[1]
+                    else
+                        line[i] := copy (t[a+1..b-1])
+                    fi;
+                    i := i + 1;
+                    a := b
+                od
+            fi;
+            lines := append (lines, line)
+        fi
+    od;
+    lines
+end:
+
+ExpandFileName := proc (dir:string, name:string)
+    description 'Generate file name from directory and name.';
+    if length (dir) = 0 then
+        name
+    elif dir[-1..-1] <> '/' then
+        dir . '/' . name
+    else
+        dir . name
+    fi
+end:
+
+TempName := proc ()
+    description 'Generate file names that can safely be used for a
+    temporary file.  Optional arguments are: Dir = string and Prefix = string 
+    which allow the user to control the choice of a directory and prefix.';
+    
+    # -- default values --
+    if CallSystem ('test -d /var/tmp') = 0 then
+        tmp := '/var/tmp'
+    else
+        tmp := '/usr/tmp'
+    fi;
+    
+    prefix := '_darwin';
+    
+    # -- processing optional arguments --
+    for i to nargs do
+        if type (args[i], string = anything) then
+            if op (1, args[i]) = 'Dir' and 
+                type (op (2, args[i]), string) then
+                tmp := op (2, args[i])
+            elif op (1, args[i]) = 'Prefix' and 
+                type (op (2, args[i]), string) then
+                prefix := op (2, args[i])
+            fi
+        fi
+    od;
+    
+    # -- searching for a unique name --
+    do
+        suffixe := TimedCallSystem ('/bin/echo -n $$')[2];
+        name := ExpandFileName (tmp, prefix . suffixe);
+        if CallSystem ('test -f ' . name) <> 0 then break fi
+    od;
+    name
+end:
+
+
+# -- Read PHYLIP file
+# Stefan Zoller, Aug 2011
+
+ReadPhylip := proc (infile:string; 'getAl'=((getAl=false):boolean))
+
+    labels := seqs := alseqs := [];
+
+    OpenReading(infile):
+    
+    t := ReadRawLine():
+    nrofseqs := atoi(SearchDelim(' ', t)[1]):
+    seqlen := atoi(SearchDelim(' ', t)[2]):
+
+    do
+        t := ReadRawLine ();
+        if t = EOF then
+            break
+        fi; 
+        delim := ' ';
+        if SearchString(delim, t) < 0 then
+            delim := '\t';
+            if SearchString(delim, t) < 0 then
+                error('could not separate labels from sequences');
+            fi:
+        fi:
+        line := SearchDelim(delim, t):
+        labels := append(labels, line[1]):
+        alseq := line[-1][1..-2];
+        seq := [];
+        for site to length(alseq) do
+            if alseq[site] <> '-' then
+                seq := append(seq, alseq[site]):
+            fi:
+        od:
+        seq := ConcatStrings(seq, ''):
+        seqs := append(seqs, seq):
+        alseqs := append(alseqs, alseq):
+    od:
+
+    if nrofseqs <> length(labels) then
+        error('number of sequences does not match header information'):
+    fi:
+    if getAl then
+        msa := MAlignment(seqs, alseqs, labels):
+        return(msa):
+    else
+        return([alseqs, labels]):
+    fi:
+end:
+
+
+end: # end module

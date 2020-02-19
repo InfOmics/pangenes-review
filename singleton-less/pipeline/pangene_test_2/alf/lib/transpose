@@ -1,0 +1,11 @@
+#
+# transpose: transpose a matrix
+#
+transpose := proc( A:array(array(numeric)) )
+  description 'Transpose a matrix.';
+
+B := NewArray(1..length(A[1]),1..length(A));
+for i to length(A[1]) do for j to length(A) do
+    B[i,j] := A[j,i] od od;
+B;
+end:

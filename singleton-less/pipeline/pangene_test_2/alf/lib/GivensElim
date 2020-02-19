@@ -1,0 +1,44 @@
+#
+#   Elimination by Givens rotations
+#   Also called QR-decomposition.
+#
+#   GivensElim( A ) returns a list with a pair of matrices, Q and R.
+#
+#   A is a matrix of dimension m x n
+#   Q is an orthonormal matrix ( Q*Q^t = I ) of dimension m x m,
+#   R is an upper triangular matrix of dimension m x n, and
+#   A = Q*R
+#
+#   If the matrix A is found to be singular, then R will have
+#    some zeros in the diagonal, but the descomposition is
+#    still correctly done.
+#
+#				Gaston H. Gonnet (July 1998)
+#
+GivensElim := proc( A:matrix(numeric) )
+m := length(A);  n := length(A[1]);
+
+R := copy(A);
+Q := CreateArray(1..m,1..m);
+for i to m do Q[i,i] := 1 od;
+
+for i to min(m,n) do
+    Ri := R[i];  Qi := Q[i];
+    for k from i+1 to m do
+	Rk := R[k];
+	if Rk[i] = 0 then next fi;
+	cot := Ri[i]/Rk[i];
+	si := 1/sqrt(1+cot^2);
+	co := si*cot;
+
+	Qk := Q[k];
+	Q[k] := -si*Qi + co*Qk;
+	Qi := co*Qi + si*Qk;
+
+	R[k] := -si*Ri + co*Rk;  R[k,i] := 0;
+	Ri := co*Ri + si*Rk;
+	od;
+    R[i] := Ri;  Q[i] := Qi;
+    od;
+[transpose(Q), R]
+end:

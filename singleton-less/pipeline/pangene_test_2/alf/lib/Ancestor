@@ -1,0 +1,478 @@
+##################################################
+# The Ancestor Darwin library                    #
+# ===========================                    #
+# Provides a class ProbSeq for storing probab.   #
+# sequences and functions to compute ancestral   #
+# sequences as well as aligning two probabilistic#
+# sequences.					 #
+#						 #
+#	Adrian Schneider, December 20, 2005	 #
+##################################################
+
+module external ProbSeq, ProbSeq_print, ProbSeq_type, ProbSeq_Sequence,
+	       ProbAncestor, LogLikelihoods, PSDynProg, 
+	       PASfromMSA, PASfromTree;
+
+##################################################
+# ProbSeq(ProbVec, CharMap) stores a list of     #
+# probability vectors and a mapping function     #
+# from numbers to characters.			 #
+# Possible ways to construct a ProbSeq:		 #
+#   - give both arguments			 #
+#   - give a prob. vector, it tries to find the  #
+#     mapping function.				 #
+#   - give a string and a mapping function, it   #
+#     will create a prob. vector		 #
+# A vector of all 0s corresponds to a gap.	 #
+##################################################
+ProbSeq := proc( ProbVec:{array(array(numeric)),string}, 
+		 CharMap:procedure)
+# automatically assign CharMap for the standard cases
+if nargs=1 and type(args[1],array(array(numeric))) then
+    nChars := length(args[1,1]);
+    if nChars=20 then chm := IntToA
+    elif nChars=4 then chm := IntToB
+    elif nChars=64 then chm := CIntToCodon
+    else error('please specify character map')
+    fi;
+    return(noeval(ProbSeq(ProbVec,chm)));
+elif nargs=1 and type(args[1],string) then
+    error('please specify character map');
+# convert a string to a ProbSeq if mapping is given
+elif nargs=2 and type(args[1],string) then
+    if CharMap=IntToA then nChars := 20
+    elif CharMap=IntToB then nChars := 4
+    elif CharMap=CIntToCodon then nChars := 64
+    else
+    	nChars := 0;
+	lastC := '';
+	do
+	    nextC := traperror(CharMap(nChars+1));
+	    if nextC=lasterror or nextC=lastC then break fi;
+	    lastC := nextC;
+	    nChars := nChars+1;
+	od:
+    fi;
+    chrLen := length(CharMap(1)); # assuming that all chars have same length
+    seqLen := length(args[1])/chrLen;
+    if seqLen<>floor(seqLen) then 
+	error('sequence length must be a multiple of '.chrLen);
+    fi;
+    invMap := table(-1);
+    for i to nChars do invMap[CharMap(i)] := i od:
+    pv := CreateArray(1..seqLen,1..nChars,0);
+    gap := CreateString(chrLen,'_');
+    for p to seqLen do
+	chr := args[1][(p-1)*chrLen+1..p*chrLen];
+	x := invMap[chr];
+	if x=-1 and chr=gap then next fi;
+	if x<1 or x>nChars then 
+	    error('invalid character in sequence:',
+		args[1][(p-1)*chrLen+1..p*chrLen]) 
+	fi;
+	pv[p,x] := 1;
+    od;
+    return(noeval(ProbSeq(pv,CharMap)));
+else
+    return(noeval(ProbSeq(args)));
+fi;
+end:
+
+ProbSeq_print := proc(ps) option internal;
+pv := ps['ProbVec'];
+chm := ps['CharMap'];
+nChars := length(pv[1]);
+printf(' pos   Most probable chars');
+for i to length(pv) do
+    printf('\n%4d', i);
+    if max(pv[i])=0 then
+	printf('   <gap>');
+    else
+	L:=[seq([j,pv[i,j]],j=1..nChars)];
+	L:=sort(L,x->-x[2]);
+	for j to min(5,nChars) do 
+	    if L[j,2]>0 then
+	    	printf('   %s %.2f', chm(L[j,1]),L[j,2])
+	    fi;
+	od;
+    fi;
+od;
+printf('\n')
+end:
+
+ProbSeq_type := noeval(ProbSeq(array(array(numeric)),procedure));
+
+# Construct a Sequence by taking the most probable character at each position
+ProbSeq_Sequence := proc(ps:ProbSeq) option internal;
+sq := '':
+mapf := ps['CharMap'];
+PV := ps['ProbVec'];
+if length(PV)=0 then return('') fi;
+L := length(PV[1]);
+gap := CreateString(length(mapf(1)),'_');
+for pv in PV do
+    if max(pv)=0 then 
+	sq := sq.gap;
+    else
+	maxp := max(pv);
+	mchars := {seq(If(pv[i]=maxp,i,NULL),i=1..L)};
+	if mchars={} then error('cannot determine most probable char',pv) fi;
+	sq := sq.mapf(Rand(mchars));
+    fi;
+od:
+return(sq);
+end:
+
+#######################################################################################
+
+##################################################
+# This is a simple and easy to use PAS function. #
+# It takes aligned two sequences - either Prob or#
+# not and computes the PAS.			 #
+##################################################
+ProbAncestor := proc(seq1:{ProbSeq,string},seq2:{ProbSeq,string},
+			d1:numeric, d2:numeric;
+			(lnM=NewLogPAM1):matrix,
+			(freq=AF):array(numeric))
+global LogLikelihoods;
+if lnM=NewLogPAM1 and not assigned(NewLogPAM1) then 
+	error('NewLogPAM1 not assigned. Use CreateDayMatrices() or specify other matrix.') 
+fi;
+if freq=AF and not assigned(AF) then
+        error('AF not assigned. Use CreateDayMatrices() or specify other frequencies.')
+fi;
+# fix for the codon matrices that have dimension 65
+if freq=CF and length(freq)=65 then
+    freq := freq[1..64];
+fi;
+if lnM=CodonLogPAM1 and length(lnM)=65 then
+    lnM := [seq(z[1..64],z=lnM[1..64])]:
+fi;
+if type(seq1,ProbSeq) then ps1 := seq1;
+else ps1 := ProbSeq(seq1,IntToA) fi;
+if type(seq2,ProbSeq) then ps2 := seq2;
+else ps2 := ProbSeq(seq2,IntToA) fi;
+pas := ComputePAS(ps1,ps2,d1,d2,lnM);
+pv := pas['ProbVec'];
+L := length(pv[1]);
+LogLikelihoods := CreateArray(1..length(pv),0):
+if L<> length(freq) then 
+	error('frequency vector has invalid length',length(freq)) 
+fi;
+for p to length(pv) do 
+    for i to L do pv[p,i] := pv[p,i]*freq[i] od;
+    if sum(pv[p])>0 then 
+	pv[p] := pv[p]/sum(pv[p]); 
+    	LogLikelihoods[p] := ln(max(pv[p]));
+    fi;
+od;
+return(pas);    
+end:
+
+
+####################################################
+# ComputePAS is the basic function used for most   #
+# PAS operations. It only computes the likelihoods #
+# of the PAS without normalizing and without using #
+# the frequency array.				   #
+####################################################
+ComputePAS := proc(ps1:ProbSeq, ps2:ProbSeq, d1:numeric, d2:numeric, lnM:matrix)
+option internal;
+pv1 := ps1['ProbVec'];
+pv2 := ps2['ProbVec'];
+len := length(pv1);
+dim := length(pv1[1]);
+if len<>length(pv2) then
+    error('prob. sequences must have the same length');
+fi;
+if dim<>length(lnM[1]) then
+    error('matrix dimension does not match number of possible characters');
+fi;
+if ps1['CharMap']<>ps2['CharMap'] then
+    error('prob. sequences must have the same character set');
+fi;
+M1 := exp(d1*lnM);
+M2 := exp(d2*lnM);
+pas := CreateArray(1..len,[]);
+for p to len do
+    sum1 := sum(pv1[p]);
+    sum2 := sum(pv2[p]);
+    if sum1=0 then S1 := CreateArray(1..dim,1) # gap case
+    else S1 := M1*pv1[p]; fi;
+    if sum2=0 then S2 := CreateArray(1..dim,1) # gap case
+    else S2 := M2*pv2[p]; fi;
+    if sum1=0 and sum2=0 then
+	pas[p] := CreateArray(1..dim,0);
+    else
+    	pas[p] := [seq(S1[i]*S2[i],i=1..dim)];
+    fi;
+od;
+return( ProbSeq(pas,ps1['CharMap']) );
+end:
+
+#######################################################
+# PASfromMSA computes the PAS at the root of a tree. #
+# It requires that all the leaf lables are integers   #
+# corresponding to the ProbSeq given in an array.     #
+#######################################################
+PASfromMSA := proc(msa:MAlignment; 
+		(lnM=NewLogPAM1):matrix,
+		(freq=AF):array(numeric))
+if lnM=NewLogPAM1 and not assigned(NewLogPAM1) then
+        error('NewLogPAM1 not assigned. Use CreateDayMatrices() or specify other matrix.')
+fi;
+if freq=AF and not assigned(AF) then
+        error('AF not assigned. Use CreateDayMatrices() or specify other frequencies.')
+fi;
+if lnM=CodonLogPAM1 then 
+    MapFun := CIntToCodon;
+else MapFun := IntToA fi;
+# fix for the codon matrices that have dimension 65
+if freq=CF and length(freq)=65 then
+    freq := freq[1..64];
+fi;
+if lnM=CodonLogPAM1 and length(lnM)=65 then
+    lnM := [seq(z[1..64],z=lnM[1..64])]:
+fi;
+pslist := [seq(ProbSeq(z,MapFun),z=msa['AlignedSeqs'])];
+t2 := copy(msa['tree']);
+for l in Leaves(t2) do
+    l['Label'] := pslist[l[3]];
+od:
+T1 := PASfromMSA_R(t2['Left'],lnM);
+T2 := PASfromMSA_R(t2['Right'],lnM);
+hr := t2['Height'];
+h1 := t2['Left','Height'];
+h2 := t2['Right','Height'];
+return( ProbAncestor(T1,T2,abs(h1-hr),abs(h2-hr),lnM,freq) );
+end:
+
+PASfromMSA_R := proc(tree:Tree,lnM:matrix) option internal;
+if type(tree,Leaf) then return(tree['Label']) fi;
+T1 := PASfromMSA_R(tree['Left'],lnM);
+T2 := PASfromMSA_R(tree['Right'],lnM);
+hr := tree['Height'];
+h1 := tree['Left','Height'];
+h2 := tree['Right','Height'];
+pas := ComputePAS(T1,T2,abs(h1-hr),abs(h2-hr),lnM);
+end:
+
+############################################################################
+
+#########################################################
+# PSDynProg does dynamic programming over probabilistic #
+# sequences. v* and w* are precomputed as described in  #
+# the chapter to make it efficient. This method works   #
+# over all possible character sets and allows for       #
+# local and Global alignments.				#
+#########################################################
+PSDynProg := proc(ps1:ProbSeq, ps2:ProbSeq,  	# the prob. sequences
+		  dist:numeric;			# distance between the seqs.
+		  (lnM=NewLogPAM1):matrix,    	# the mutation matrix
+		  (freq=AF):array,		# the natural frequencies
+		  (gapcosts=NULL):procedure,	# gapcost as a function of gap length
+		  (meth='Local'):{'Local','Global'} )
+global DBGTMP;
+if not assigned(NewLogPAM1) or not assigned(DMS) then
+    error('NewLogPAM1 or DMS not assigned. Use CreateDayMatrices()')
+fi;
+if gapcosts=NULL then
+    dm := SearchDayMatrix(dist,DMS);
+    gapcosts := k->dm[FixedDel]+(k-1)*dm[IncDel];
+fi:
+
+DBGTMP := [ps1,ps2,dist];
+
+pv1 := ps1['ProbVec'];
+pv2 := ps2['ProbVec'];
+chm := ps1['CharMap'];
+dim := length(pv1[1]);
+len1 := length(pv1);
+len2 := length(pv2);
+FD := gapcosts(1);
+ID := gapcosts(2)-gapcosts(1);
+
+# fix for the codon matrices that have dimension 65
+if freq=CF and length(freq)=65 then
+    freq := freq[1..64];
+fi;
+if lnM=CodonLogPAM1 and length(lnM)=65 then
+    lnM := [seq(z[1..64],z=lnM[1..64])]:
+fi;
+
+# check for obvious errors
+if dim<>length(pv2[1]) then
+    error('prob. sequences do not have equal dimensions');
+fi;
+if dim<>length(lnM[1]) then
+    error('matrix dimension does not match number of possible characters');
+fi;
+if chm<>ps2['CharMap'] then
+    error('prob. sequences must have the same character set');
+fi;
+
+# precompute v* and w*
+v := [seq(pv1[i]/(freq*pv1[i]),i=1..len1)];
+M := exp(dist*lnM);
+F := Identity(dim);
+for i to dim do F[i,i]:=freq[i] od;
+MF := M*F;
+w := [seq(pv2[i]*MF/(freq*pv2[i]),i=1..len2)];
+
+dim1 := len1+1;
+dim2 := len2+1;
+
+Mid:=CreateArray(1..dim1,1..dim2,0):
+Hdel:=CreateArray(1..dim1,1..dim2,0):
+Vdel:=CreateArray(1..dim1,1..dim2,0):
+
+# Setting up the borders of the matrix
+if meth='Global' then
+    Hdel[1]:=[-DBL_MAX,seq(gapcosts(i),i=1..len2)];
+    Mid[1]:=[0,seq(gapcosts(i),i=1..len2)];
+    Vdel[1]:=[seq(-DBL_MAX,i=1..dim2)];
+    for i from 2 to dim1 do
+        Vdel[i,1]:=Mid[i,1]:=gapcosts(i-1);
+        Hdel[i,1]:=-DBL_MAX;
+    od;
+    minval := -DBL_MAX;
+else # Local
+    Hdel[1]:=[-DBL_MAX,seq(0,i=1..len2)];
+    Mid[1]:=[seq(0,i=1..dim2)];
+    Vdel[1]:=[seq(-DBL_MAX,i=1..dim2)];
+    for i from 2 to dim1 do
+	Vdel[i,1]:=Mid[i,1]:=0;
+	Hdel[i,1]:=-DBL_MAX;
+    od;
+    minval := 0;
+fi;
+
+# record the max. value for local alignments
+maxv:=-DBL_MAX;
+maxi:=maxj:=0;
+
+# The DynProg body
+for i from 2 to dim1 do
+    Vdel[i]:=zip(max(Vdel[i-1]+ID,Mid[i-1]+FD));
+    Hdeli := Hdel[i];
+    Vdeli := Vdel[i];
+    Midi := Mid[i];
+    Midi1 := Mid[i-1];
+    for j from 2 to dim2 do
+    	Hdeli[j]:=max(Hdeli[j-1]+ID,Midi[j-1]+FD);
+	# the minval in the max makes the diff. between local and global
+	tmplog := v[i-1]*w[j-1];
+	tmplog := If(tmplog>0,log10(tmplog),-100);
+    	Midi[j]:=max(Vdeli[j],Hdeli[j],Midi1[j-1]+10*tmplog,minval);
+	if Midi[j]>maxv then maxv:=Midi[j]; maxi:=i; maxj:=j; fi;
+    od;
+od:
+
+if meth='Global' then
+    maxi := dim1;
+    maxj := dim2;
+fi;
+
+# The backtracking
+p1:=maxi;
+p2:=maxj;
+gap := CreateArray(1..dim,0);
+s1:=[]; s2:=[];
+while p1>1 or p2>1 do
+    if meth='Local' and Mid[p1,p2]<=0 then break fi;
+    if Mid[p1,p2]=Vdel[p1,p2] then  # UP
+	s1 := [pv1[p1-1],op(s1)]; 
+	s2 := [gap,op(s2)];
+        p1:=p1-1;
+        # follow continued deletion
+        while Vdel[p1+1,p2]=Vdel[p1,p2]+ID and p1>1 do
+	    s1 := [pv1[p1-1],op(s1)]; 
+	    p1 := p1-1;
+	    s2 := [gap,op(s2)];
+        od;
+    elif Mid[p1,p2]=Hdel[p1,p2] then  # LEFT
+	s1 := [gap,op(s1)];
+	s2 := [pv2[p2-1],op(s2)];
+	p2 := p2-1;
+        # follow continued deletion
+        while Hdel[p1,p2+1]=Hdel[p1,p2]+ID and p2>1 do
+	    s1 := [gap,op(s1)];
+	    s2 := [pv2[p2-1],op(s2)];
+	    p2 := p2-1;
+	od;
+    else # MATCH
+	s1 := [pv1[p1-1],op(s1)];
+	s2 := [pv2[p2-1],op(s2)];
+	p1 := p1-1;
+	p2 := p2-1;
+    fi;
+od;
+aps1 := ProbSeq(s1,chm);
+aps2 := ProbSeq(s2,chm);
+return(Mid[maxi,maxj],aps1,aps2);
+end:
+
+##########################################################
+# PASfromTree reconstructs the PAS at the root of a      #
+# tree given the sequences at the leaves. The difference #
+# to PASfromMSA is that this function now aligns the     #
+# the internal nodes.					 #
+##########################################################
+PASfromTree := proc(seqs:{array(ProbSeq),array(string)}, 	
+						# (Prob)Seqs at the leaves
+		    tree:Tree;		   	# leaves with integers as X-ref
+		    (lnM=NewLogPAM1):matrix,	# 1-PAM mutation matrix
+		    (freq=AF):array,		# natural freq. of the characters
+		    (gapcosts=NULL):procedure)	# as a function of PAM and length
+if lnM=NewLogPAM1 and not assigned(NewLogPAM1) then
+    error('NewLogPAM1 not assigned. Use CreateDayMatrices()')
+fi;
+# fix for the codon matrices that have dimension 65
+if freq=CF and length(freq)=65 then
+    freq := freq[1..64];
+fi;
+if lnM=CodonLogPAM1 and length(lnM)=65 then
+    lnM := [seq(z[1..64],z=lnM[1..64])]:
+fi;
+if gapcosts=NULL then 
+    gapcosts := (t,k)->-37.64+7.434*log10(t)-(k-1)*1.3961 
+fi:
+if type(seqs,array(string)) then
+    pslist := [seq(ProbSeq(z,IntToA),z=seqs)];
+else
+    pslist := seqs;
+fi;
+
+t2 := copy(tree);
+for l in Leaves(t2) do
+    l['Label'] := pslist[l[3]];
+od:
+T1 := PASfromTree_R(t2['Left'],lnM,freq,gapcosts);
+T2 := PASfromTree_R(t2['Right'],lnM,freq,gapcosts);
+hr := t2['Height'];
+d1 := abs(hr-t2['Left','Height']);
+d2 := abs(hr-t2['Right','Height']);
+FD := gapcosts(d1+d2,1);
+ID := gapcosts(d1+d2,2)-gapcosts(d1+d2,1);
+gapcostsD := k->FD+(k-1)*ID;
+aps := PSDynProg(T1,T2,d1+d2,lnM,freq,gapcostsD,'Global');
+return( ProbAncestor(aps[2],aps[3],d1,d2,lnM,freq) );
+end:
+
+PASfromTree_R := proc(tree:Tree, lnM:matrix, freq:array, gapcosts:procedure)
+option internal;
+if type(tree,Leaf) then return(tree['Label']) fi;
+T1 := PASfromTree_R(tree['Left'],lnM,freq,gapcosts);
+T2 := PASfromTree_R(tree['Right'],lnM,freq,gapcosts);
+hr := tree['Height'];
+d1 := abs(hr-tree['Left','Height']);
+d2 := abs(hr-tree['Right','Height']);
+FD := gapcosts(d1+d2,1);
+ID := gapcosts(d1+d2,2)-gapcosts(d1+d2,1);
+gapcostsD := k->FD+(k-1)*ID;
+aps := PSDynProg(T1,T2,d1+d2,lnM,freq,gapcostsD,'Global');
+pas := ComputePAS(aps[2],aps[3],d1,d2,lnM);
+end:
+
+
+end: # module

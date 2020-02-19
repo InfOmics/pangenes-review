@@ -1,0 +1,50 @@
+# function to convert darwin structure into json format.
+# Note: This function is not fully reversable.
+
+module external json, ParseJson;
+
+quotedString := proc(val)
+    str := string(val);
+    if SearchString('"',str)>-1 then
+        str := ReplaceString('"','\\"', str);
+    fi;
+    return ('"'.str.'"');
+end:
+
+json := proc(val)
+    if nargs>1 then
+        r := procname( [args] );
+    elif type(val, string) then
+        r := quotedString(val);
+    elif type(val,{numeric,boolean}) then 
+        r := string(val);
+    elif type(val,{list,set}) then
+        el := [seq(procname(z),z=val)];
+        r := '['.ConcatStrings(el,',').']';
+    elif type(val,table) then
+        el := []:
+        for z in Indices(val) do
+            el := append(el, quotedString(z).':'.procname(val[z]));
+        od:
+        r := '{'.ConcatStrings(el,',').'}';
+    elif type(val, structure) then
+        el := []:
+        for z in val do
+            el := append(el, procname(z));
+        od:
+        typ := '"_darwinType":'.quotedString(op(0,val));
+        r := '{'.typ.',"data":['.ConcatStrings(el,',').']}';
+    else 
+        typ := '"_darwinType":'.quotedString(type(val));
+        dat := sprintf('"%A"',val);
+        r := '{'.typ.',"data":'.dat.'}';
+    fi:
+    return(r);
+end:
+
+
+ParseJson := proc(str)
+    error('not yet implemented');
+end:
+
+end: #module

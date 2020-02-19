@@ -1,0 +1,122 @@
+#
+#	Example implementation of LargeArray, a data structure which
+#	allows to create arrays without the limitation of 2^17-2
+#	on 32-bit hardware.
+#
+#	Usage:
+#
+#	Create new object: (handled by LargeArray)
+#		a := LargeArray(1..500000):
+#
+#	Default printing: (handled by LargeArray_lprint)
+#		a;
+#
+#	Assign entries: (handled by LargeArray_select)
+#		a[1] := 13;
+#		a[500000] := 14;
+#
+#	Selection of entries: (handled by LargeArray_select)
+#		sum( a[i], i=1...500000 );
+#
+#	Selection of ranges of entries: (handled by LargeArray_select)
+#		print( a[1..10] );
+#
+#	Multiplication by constants: (handled by LargeArray_times)
+#		b := 3*a;
+#
+#	Cross products: (handled by LargeArray_times)
+#		b*b;
+#
+#	Addition of vectors: (handled by LargeArray_plus)
+#		c := b-a;
+#
+#	etc.
+#
+#	This version is sparse, that is it will only allocate storage
+#	as entries are assigned.  This means that users can create a
+#	much-larger than needed array without significant extra cost
+#	until the entries are assigned.  (The default values do not
+#	count as assignment).
+#
+#					Gaston H. Gonnet (June 26, 2003)
+
+LargeArray := proc( Range:posint..posint, DefValue:anything,
+	Size:posint, Base:posint, Data:list )
+option polymorphic, NoIndexing;
+if nargs=2 then
+     if Range[1] <> 1 then error(Range,'range must start at 1')
+     elif Range[2] < 2^17-2 then return( CreateArray(args) )
+     else bas := round(sqrt(Range[2]));
+          noeval( procname( Range, DefValue, Range[2], bas,
+		CreateArray( 1.. ceil(Range[2]/bas) ))) fi
+elif nargs=1 then procname(Range,0)
+else noeval(procname(args)) fi
+end:
+
+
+LargeArray_type := noeval(LargeArray(range,anything,posint,posint,list)):
+
+
+LargeArray_select := proc( a:LargeArray, sel:{posint,integer..integer}, val )
+if type(sel,range) then
+     if sel[1] < 1 or sel[2] > a[Size] or sel[1] > sel[2]+1 then
+	  error(sel,'invalid range selector')
+     elif sel[2]-sel[1] > 2^17-3 then error(sel,'selection too large') fi;
+     return( [ seq( a[t], t=sel ) ] )
+     fi;
+
+if sel > a[Size] then error(sel,'index too large') fi;
+i1 := floor( (sel-1)/a[Base] );
+t := a[Data,i1+1];
+if nargs=2 then
+     if t=0 then a[DefValue] else t[sel - i1*a[Base]] fi
+elif nargs=3 then
+     if t=0 then
+	 t := a[Data,i1+1] := CreateArray(1..a[Base],a[DefValue]) fi;
+     t[sel - i1*a[Base]] := val
+else error(args,'should not happen') fi
+end:
+
+
+LargeArray_times := proc( a, b )
+if type(a,LargeArray) then
+     if type(b,LargeArray) then
+	  if a[Size] <> b[Size] then
+	       error('different dimensions in inner product') fi;
+	  sum( a[i]*b[i], i=1..a[Size] )
+     elif type(b,numeric) then procname(b,a)
+     else error(b,'is an invalid argument') fi
+elif type(a,numeric) then
+     r := copy(b);
+     r[DefValue] := a*r[DefValue];
+     t := r[Data];
+     for i to length(t) do if t[i] <> 0 then t[i] := a*t[i] fi od;
+     r
+else error(a,'is an invalid argument') fi
+end:
+
+
+LargeArray_plus := proc( a:LargeArray, b:LargeArray )
+if a[Size] <> b[Size] then 
+     error('different dimensions in LargeArray sum') fi;
+r := copy(b);
+r[DefValue] := a[DefValue]+b[DefValue];
+t := r[Data];
+for i to length(t) do
+    if a[Data,i] = 0 then next
+    elif t[i] = 0 then t[i] := copy(a[Data,i])
+    else t[i] := t[i] + a[Data,i] fi
+    od;
+r
+end:
+
+
+LargeArray_lprint := proc( a:LargeArray )
+n := a[Size];
+printf( '[%a,%a,%a, ...(%d)... %a,%a,%a]',
+    a[1], a[2], a[3], n, a[n-2], a[n-1], a[n] )
+end:
+
+CompleteClass( LargeArray );
+# prevent users tinkering with values and breaking code
+Protect( LargeArray );

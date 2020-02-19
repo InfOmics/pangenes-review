@@ -1,0 +1,108 @@
+# Purpose: Conversion of plot data sets to fig format
+# Author:  Lukas Knecht
+# Created:  3 Apr 1998
+#
+FigPlot := proc(objs: list(structure), dim: [real, real])
+  description
+  'Convert a plot data set to fig format on stdout. dim is the dimension of
+  the output rectangle in inches and defaults to portrait A4 (7.77" x 11.19")';
+  printf('#FIG 3.1\nPortrait\nCenter\nMetric\n1200 2\n');
+  
+  FindColor := proc(colors: [list], color: [real, real, real])
+    for i to length(colors[1]) while
+    colors[1,i] = 0 or (colors[1,i] - color) * (colors[1,i] - color) > 0.01 do
+    od;
+    if i > length(colors[1]) then
+      colors[1] := append(colors[1], color)
+    fi;
+    i - 1
+  end:
+  
+  # Determine extent of all objects and construct color pseudo objects
+  colors := CreateArray(1..32); # predefined colors
+  i := 0;
+  for r from 0 to 1 do for g from 0 to 1 do for b from 0 to 1 do
+    i := i + 1; colors[i] := [r, g, b]
+  od od od;
+  colors := [colors]; # to pass by reference
+  minx := miny := DBL_MAX; maxx := maxy := -DBL_MAX;
+  for o in objs do
+    for i to length(o) by 2 while type(o[i], real) and type(o[i+1], real) do
+      minx := min(minx, o[i]); maxx := max(maxx, o[i]);
+      miny := min(miny, o[i+1]); maxy := max(maxy, o[i+1])
+    od;
+    for i from i to length(o) do
+      if type(o[i], equation) and op(1,o[i]) = 'color' then
+	FindColor(colors, op(2,o[i]))
+      fi
+    od
+  od;
+  # Output color objects
+  for i from 33 to length(colors[1]) do
+    printf('0 %d #%02x%02x%02x\n', i - 1,
+	   255*colors[1,i,1], 255*colors[1,i,2], 255*colors[1,i,3])
+  od;
+  # Compute the scale such that the entire figure fits into the output rectangle
+  if nargs > 1 then size := dim else size := [7.77, 11.19] fi;
+  scale := 1200 * min(size[1] / (maxx - minx), size[2] / (maxy - miny));
+  # Output the graphical objects
+  for o in objs do
+    # Get the options
+    color := 0; fill := -1; pts := 10; width := 2; angle := 0;
+    for i to length(o) do
+      if type(o[i], equation) then
+	if op(1,o[i]) = 'color' then color := FindColor(colors, op(2,o[i]))
+	elif op(1,o[i]) = 'fill' then fill := 40 - 20 * op(2,o[i])
+	elif op(1,o[i]) = 'points' then pts := op(2,o[i])
+	elif op(1,o[i]) = 'width' then width := 1200 / 72 * op(2,o[i])
+	elif op(1,o[i]) = 'angle' then angle := Pi / 180 * op(2,o[i])
+	fi
+      fi
+    od;
+    if op(0,o) = 'LINE' then
+      printf('2 1 0 %d %d %d 0 0 -1 0.000 0 0 -1 0 0 2\n\t',
+	     width, color, color);
+      printf('%d %d %d %d\n',
+	     scale * (o[1] - minx), scale * (maxy - o[2]),
+	     scale * (o[3] - minx), scale * (maxy - o[4]))
+    elif op(0,o) = 'POLYGON' then
+      for n to length(o) by 2 while type(o[n], real) and type(o[n+1], real) do
+      od;
+      n := (n - 1) / 2;
+      printf('2 3 0 %d %d %d 0 0 %d 0.000 0 0 -1 0 0 %d\n\t',
+	     width, color, color, fill, n + 1);
+      for i to n do
+	printf('%d %d ', scale * (o[2*i-1] - minx), scale * (maxy - o[2*i]))
+      od;
+      printf('%d %d\n', scale * (o[1] - minx), scale * (maxy - o[2]))
+    elif op(0,o) = 'CIRCLE' then
+      x := scale * (o[1] - minx); y := scale * (maxy - o[2]);
+      r := 1200 / 72 * o[3];
+      printf('1 3 0 %d %d %d 0 0 %d 0.000 1 0.000 %d %d %d %d %d %d %d %d\n',
+	     width, color, color, fill, x, y, r, r, x, y, x + r, y)
+    elif op(0,o) = 'LTEXT' or op(0,o) = 'CTEXT' or op(0,o) = 'RTEXT' then
+      printf('4 ');
+      if op(0,o) = 'LTEXT' then printf('0')
+      elif op(0,o) = 'CTEXT' then printf('1')
+      else printf('2') fi;
+      printf(' %d 0 -1 16 %d %.3f 4 %d %d %d %d %s\\001\n',
+	     color, pts, angle,
+	     pts * 1200 / 72, length(o[3]) * 0.5 * pts * 1200 / 72,
+	     scale * (o[1] - minx), scale * (maxy - o[2]), o[3]);
+    else error('Cannot convert', o) fi
+  od
+end:
+
+GifPlot := proc(objs: list(structure), giffile: string, dim: [posint, posint])
+  description
+  'Convert a plot data set to a gif file. dim is the dimension of the
+  resulting pixmap.';
+  tmpfile := '/tmp/'.getpid();
+  Set(plotoutput=tmpfile.'.ps');
+  Set(plotdevice=psportrait);
+  DrawPlot(objs, proportional);
+  CallSystem(sprintf('sed ''s/36 36 translate/0 0 translate/'' %s.ps | gs -q -dBATCH -dNOPAUSE -dSAFER -sDEVICE=ppmraw -r%d -g%dx%d -sOutputFile=%s.ppm - && ppmquant 256 %s.ppm 2> /dev/null | ppmtogif > %s 2> /dev/null; rm %s.*',
+		     tmpfile, max(dim[1] / 7, dim[2] / 10.5), dim[1], dim[2],
+		     tmpfile, tmpfile, giffile, tmpfile));
+  NULL
+end:

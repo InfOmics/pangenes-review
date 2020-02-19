@@ -1,0 +1,54 @@
+# performs the inversion of a gene group
+groupInvert := proc(org: posint, target: posint, iSize: posint)
+   global geneR;
+   j := target + iSize -1;
+   i := target;
+   while j >= i do
+       if j = i then
+           geneR[org, i] := -geneR[org, i];
+       else
+           t := geneR[org, i];
+           geneR[org, i] := -geneR[org, j];
+           geneR[org, j] := -t;
+       fi;
+       i := i + 1;
+       j := j - 1;
+   od;
+end:
+
+
+# performs the translocation of a single gene or a gene group
+transLoc := proc(org: posint, place: integer, target: posint, tSize: posint, evolTime:nonnegative; (printmsg=true):boolean)
+    global geneR;
+    if place >= target then
+        thePlace := place + tSize:
+        geneR[org] := [op(geneR[org, 1..target-1]),
+            op(geneR[org, target+tSize..thePlace]),
+            op(geneR[org, target..(target+tSize-1)]),
+            op(geneR[org, thePlace+1..-1])];
+    elif place < target then
+        geneR[org] := [op(geneR[org, 1..place]),
+            op(geneR[org, target..(target+tSize-1)]),
+            op(geneR[org, place+1..target-1]),
+            op(geneR[org, target+tSize..-1])];
+    fi;
+    if printmsg then
+        printf('time %g: translocation of size %d in organism %d. source: %d, destination: %d\n', evolTime, tSize, org, target, place):
+    fi:
+end:
+
+
+# deletes an item in the gene rearrangement array after gene loss
+deleteItem := proc(org: posint, target: posint)
+    global geneR;
+    if target = 1 then
+        geneR[org] := geneR[org, 2..-1];
+    elif target = length(geneR[org]) then
+        geneR[org] := geneR[org, 1..-2];
+    else
+        geneR[org] := [op(geneR[org, 1..(target-1)]),
+        op(geneR[org, (target+1)..-1])];
+    fi;
+end:
+
+lprint('Procedures for Genome Rearrangement sucessfully loaded');

@@ -1,0 +1,21 @@
+#                                                            #
+# ########################################################## #
+#                                                            #
+#  modified:                                                 #
+#                                                            #
+#  ==> Mon Jun 24 09:32:30 MET DST 2002                      #
+#   -- extended baseVec from 4 DNA bases to the vector that  #
+#      is also used in IntToB, see ?IntToB
+
+BaseCount := proc ( seq:string )
+
+    baseCnt := CreateArray(1..6):
+
+    # loop through the seq and count
+    for i to length(seq) do
+        j := BToInt(seq[i]);
+        if j > 0 then baseCnt[j] := baseCnt[j] + 1 fi:
+    od:
+ 
+    return(baseCnt):
+end:

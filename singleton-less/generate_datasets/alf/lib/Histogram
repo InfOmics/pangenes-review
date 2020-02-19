@@ -1,0 +1,515 @@
+# Purpose: Various plot routines and PlotArguments structure
+# Author:  Lukas Knecht
+# Created: 22 Feb 1994
+#
+PlotArguments := proc( Title, TitleX, TitleY, TitlePts, Lines, Grid,
+		LabelFormat, GridFormat, Colors, Axis )
+
+  if type([args], [string, numeric, numeric, numeric, boolean, boolean, string,
+	    boolean]) then return (noeval (PlotArguments (args)))
+  elif nargs = 0 then
+       return (noeval (PlotArguments ('', DBL_MAX, DBL_MAX, 12,
+				 false, false, '%a', '%a', 0, false)))
+  fi;
+  opt := PlotArguments ();
+  for a in [args] do
+    if type (a, 'Title'=string) then opt['Title'] := op(2,a)
+    elif type (a, 'TitleX'=numeric) then opt['TitleX'] := op(2,a)
+    elif type (a, 'TitleY'=numeric) then opt['TitleY'] := op(2,a)
+    elif type (a, {'Points','TitlePts'}=numeric) then opt['TitlePts'] := op(2,a)
+    elif type (a, 'Lines'=boolean) then opt['Lines'] := op(2,a)
+    elif type (a, 'Grid'=boolean) then opt['Grid'] := op(2,a)
+    elif type (a, 'LabelFormat'=string) then opt['LabelFormat'] := op(2,a)
+    elif type (a, 'GridFormat'=string) then opt['GridFormat'] := op(2,a)
+    elif type (a, 'Colors'=list) then opt['Colors'] := GetColorMap (op(2,a))
+    elif type (a, 'Axis'=boolean) then opt['Axis'] := op(2,a)
+    elif type (a, name=anything) then error ('Invalid plot option', a)
+    fi
+  od;
+  opt
+end:
+
+PlotArguments_type := noeval(structure(anything,PlotArguments)):
+
+Plot_TitleXY := proc (opt: PlotArguments, x: numeric, y: numeric)
+  if opt[TitleX] = DBL_MAX then opt[TitleX] := x fi;
+  if opt[TitleY] = DBL_MAX then opt[TitleY] := y fi
+end:
+
+PlotArguments_Title := proc (opt: PlotArguments, x: numeric,
+	y: numeric, dy: numeric) option internal;
+  res := [];
+  if opt[Title] <> '' then
+    p := 0; Plot_TitleXY (opt, x, y);
+    while p < length (opt[Title]) do
+      opt[TitleY] := opt[TitleY] + dy;
+      e := CaseSearchString ('\n', p+opt[Title]);
+      if e < 0 then break fi;
+      p := p + e + 1
+    od;
+    p := 0;
+    while p < length (opt[Title]) do
+      e := CaseSearchString ('\n', p+opt[Title]);
+      if e < 0 then e := length (opt[Title]) - p fi;
+      res := append (res, LTEXT(opt[TitleX], opt[TitleY],
+				copy (opt[Title][p+1..p+e]), opt[TitlePts]));
+      opt[TitleY] := opt[TitleY] - dy;
+      p := p + e + 1
+    od
+  fi;
+  res
+end:
+
+
+#
+#	Convert the PlotArguments data structure to all
+#	the necessary commands for DrawPlot.
+#
+#	Usually this command is used as:
+#	DrawPlot( ....<all my stuff>..., PlotArguments_draw(opt) );
+#
+#					Gaston H Gonnet (June 26, 2003)
+#
+PlotArguments_draw := proc( opt:PlotArguments ) option internal;
+res := PlotArguments_Title(opt);
+if opt['Axis'] then res := append(res,'axis') fi;
+if opt['Grid'] then res := append(res,'grid') fi;
+op(res)
+end:
+
+grey_fill := (i, n) -> fill = i / n * 0.1 - mod (n - i, 2) * 0.2 + 0.9:
+
+DrawHistogram := proc (data: {array (numeric), matrix(numeric)}, 
+		   labels, legend)
+
+  opt := PlotArguments (args);
+  if type (data, array(numeric)) then
+       len := length (data);
+       points := [data]
+  else
+       len := length (data[1]);
+       points := data
+  fi;
+  if opt[Colors] <> 0 and length (opt[Colors]) < length (points) then
+    error ('Too few colors')
+  fi;
+  miny := min (data, 0);
+  maxy := max (data, 0);
+  haslabels := evalb (nargs > 1 and type(labels, array(anything,len)));
+  haslegend := evalb (nargs > 2 and
+	type(legend, array(anything,length(points))));
+
+  maxnrlen := 0;
+  for pt in points do
+	maxnrlen := max( maxnrlen, seq(
+	   length( sprintf( opt[LabelFormat],pt[i])), i=1..len )) / 2
+	od;
+
+  maxlbllen := maxnrlen;
+  if haslabels then
+	labels2 := [ seq( sprintf('%a',labels[i]), i=1..len )];
+	maxlbllen := max( maxnrlen, seq( length (labels2[i]), i=1..len )) fi;
+
+  fontsize := max (6, min (10, 1000 / (length (points) * len) / maxnrlen,
+			   1000 / len / maxlbllen));
+  if opt[TitlePts] <> 12 then fontsize := opt[TitlePts] fi;
+
+  bars := [];
+  dx := 0.7;  # 70 % bar, 30 % gap between bars
+  dy := (maxy - miny) / 40;  # about 40 lines per page
+  for i to length (points) do
+    dx1 := (i-1) / length (points) * dx;
+    dx2 := i / length (points) * dx;
+    for j to len do
+      x1 := j + dx1; x2 := j + dx2;
+      bars := append( bars,
+		POLYGON(x1, 0, x1, points[i,j],
+		    x2, points[i,j], x2, 0, 
+		    If(opt[Colors] = 0, grey_fill (i, length(points)),
+		    color=opt[Colors,i])),
+		CTEXT((x1+x2)/2, points[i,j]+dy/2,
+		    sprintf (opt[LabelFormat], points[i,j]), fontsize) );
+    od
+  od;
+  if haslabels then
+    for i to len do
+      dy2 := If (fontsize > 7 or mod (i, 2) = 0, dy, dy / 2);
+      bars := append( bars, CTEXT(i+dx/2, - dy2, labels2[i], fontsize))
+    od
+  fi;
+  if haslegend then
+    dx2 := dx / length (points);
+    for i to length (points) do
+      x := len * (i - 1) / length (points) + len * 0.02 + 1;
+      y := miny - 4*dy;
+      bars := append( bars,
+	    POLYGON(x, y, x+dx2, y, x+dx2, y+dy, x, y+dy, 
+		If(opt[Colors] = 0, grey_fill (i, length(points)),
+		color=opt[Colors,i])),
+	    LTEXT(x + 1.2 * dx2, y, sprintf('%a',legend[i]), fontsize) );
+    od    
+  fi;
+  for t in PlotArguments_Title (opt, 1, maxy + dy, dy) do
+      bars := append(bars,t) od;
+  if opt[Lines] then
+    dy := maxy - miny;
+    step := 10^floor(log10(dy));
+    ratio := dy / step;
+    if ratio <= 1.5 then step := step / 10
+    elif ratio <= 2.5 then step := step / 5
+    elif ratio <= 5 then step := step / 2 fi;
+    for y from step * (floor (miny / step) + 1) by step to maxy + step / 1024 do
+      bars := append( bars, LINE (0.5, y, len + 1, y),
+		RTEXT(0.4, y+step/20, sprintf (opt[GridFormat],y), fontsize) )
+    od
+  fi;
+  if opt[Axis] then DrawPlot (bars, axis) else DrawPlot (bars) fi
+end:
+
+DrawStackedBar := proc (data0: matrix(numeric), labels, legend)
+
+  opt := PlotArguments (args);
+  data := transpose(data0);
+  len := length (data);
+  items := length (data[1]);
+  haslabels := evalb (nargs > 1 and type (labels, array(string,len)));
+  haslegend := evalb (nargs > 2 and type (legend, array(string,items)));
+  if min(data) < 0 then error ('All values must be nonnegative') fi;
+
+  maxnrlen := 0;
+  for d in data do
+    for x in d do
+      maxnrlen := max (maxnrlen, length (sprintf (opt[LabelFormat],x)) / 2)
+    od
+  od;
+
+  maxlbllen := maxnrlen;
+  if haslabels then
+    for l in labels do maxlbllen := max (maxlbllen, length (l)) od
+  fi;
+  if opt[Colors] <> 0 and length (opt[Colors]) < items then
+    error ('Too few colors')
+  fi;
+
+  fontsize := max (6, min (10, 1000 / len / maxnrlen, 1000 / len / maxlbllen));
+  if opt[TitlePts] <> 12 then fontsize := opt[TitlePts] fi;
+  maxbars := 2 * items * len;
+  if haslabels then maxbars := maxbars + len fi;
+  if haslegend then maxbars := maxbars + 2 * items fi;
+
+  bars := CreateArray (1..maxbars + 100);
+  nrbars := 0;
+  dx := 0.7;  # 70 % bar, 30 % gap between bars
+  maxy := max (zip (sum (data)));
+  dy := maxy / 40;  # about 40 lines per page
+  for i to len do
+    y := 0;
+    for j to items do
+      nrbars := nrbars + 1; 
+      bars[nrbars] := POLYGON(i, y, i, y+data[i,j], i+dx, y+data[i,j], i+dx, y, 
+			      If (opt[Colors] = 0, grey_fill (j, items),
+				  color = opt[Colors,j]));
+      nrbars := nrbars + 1; 
+      bars[nrbars] := CTEXT(i + dx/2, y+data[i,j]/2-dy/2,
+			    sprintf (opt[LabelFormat], data[i,j]), fontsize);
+      y := y + data[i,j]
+    od
+  od;
+  if haslabels then
+    for i to len do
+      dy2 := If (fontsize > 7 or mod (i, 2) = 0, dy, dy / 2);
+      nrbars := nrbars + 1; 
+      bars[nrbars] := CTEXT(i+dx/2, - dy2, labels[i], fontsize)
+    od
+  fi;
+  if haslegend then
+    dx2 := len / 50;
+    for j to items do
+      x := len * (j - 1) / items + len * 0.02 + 1;
+      y := -4*dy;
+      nrbars := nrbars + 1; 
+      bars[nrbars] := POLYGON(x, y, x+dx2, y, x+dx2, y+dy, x, y+dy,
+			      If (opt[Colors] = 0, grey_fill (j, items),
+				  color = opt[Colors,j]));
+      nrbars := nrbars + 1; 
+      bars[nrbars] := LTEXT(x + 1.2 * dx2, y, legend[j], fontsize)
+    od
+  fi;
+  for t in PlotArguments_Title (opt, 1, maxy + dy, dy) do
+    nrbars := nrbars + 1; bars[nrbars] := t
+  od;
+  if opt[Grid] then
+    step := 10^floor(log10(maxy));
+    ratio := maxy / step;
+    if ratio <= 1.5 then step := step / 10
+    elif ratio <= 2.5 then step := step / 5
+    elif ratio <= 5 then step := step / 2 fi;
+    for y from 0 by step to maxy + step / 1024 do
+      nrbars := nrbars + 1;
+      bars[nrbars] := LINE (0.5, y, len + 2 * dx, y);
+      nrbars := nrbars + 1;
+      bars[nrbars] := LTEXT(0.5, y+step/20, sprintf (opt[GridFormat],y), 
+			    fontsize)
+    od
+  fi;
+  pd := bars[1..nrbars];
+  if opt[Axis] then DrawPlot (pd, axis) else DrawPlot (pd) fi
+end:
+
+DrawDotplot := proc (data: {array([numeric,numeric]),
+			list(array([numeric,numeric]))}, legend)
+
+  sym := [(x,y,sx,sy,c) -> (CIRCLE(x,y,2,c)),
+	  (x,y,sx,sy,c) -> (LINE(x-sx,y+sy,x+sx,y-sy,c),
+			    LINE(x-sx,y-sy,x+sx,y+sy,c)),
+	  (x,y,sx,sy,c) -> (LINE(x-sx,y-sy,x-sx,y+sy,c),
+			    LINE(x-sx,y+sy,x+sx,y+sy,c),
+			    LINE(x+sx,y+sy,x+sx,y-sy,c),
+			    LINE(x+sx,y-sy,x-sx,y-sy,c)),
+	  (x,y,sx,sy,c) -> (LINE(x-sx,y-sy,x+sx,y-sy,c),
+			    LINE(x+sx,y-sy,x,   y+sy,c),
+			    LINE(x,   y+sy,x-sx,y-sy,c))];
+  opt := PlotArguments (args);
+  d := If (type (data, array([numeric,numeric])), [data], data);
+  t := NULL;
+  if nargs > 1 then
+    if type (legend, string) then t := [legend]
+    elif type (legend, array(string)) then t := legend fi
+  fi;
+  if t <> NULL and length (d) <> length (t) then
+    error ('Number of legends different from number of data sets')
+  fi;
+  if length (d) > length (sym) then
+    error ('More data sets than symbols')
+  fi;
+  minx := miny := DBL_MAX; maxx := maxy := -DBL_MAX;
+  for s in d do
+    for p in s do
+      minx := min (minx, p[1]); maxx := max (maxx, p[1]);
+      miny := min (miny, p[2]); maxy := max (maxy, p[2])
+    od
+  od;
+  scalex := (maxx - minx) / 360;
+  scaley := (maxy - miny) / 360 * sqrt (2);
+  pd := [];
+  col := CreateArray (1..length (d), fill=0);
+  if opt[Colors] <> 0 then
+    if length (opt[Colors]) < length (d) then error ('Too few colors') fi;
+    for i to length (d) do col[i] := color=opt[Colors,i] od
+  fi;
+  for i to length (d) do
+    for j to length (d[i]) do
+      p := d[i,j];
+      pd := append (pd, sym[i](p[1],p[2],scalex,scaley,col[i]));
+      if opt[Lines] and j > 1 then
+	pd := append (pd, LINE(d[i,j-1,1],d[i,j-1,2],p[1],p[2],col[i]))
+      fi
+    od
+  od;
+  if t <> NULL then
+    Plot_TitleXY (opt, minx, miny - (maxy - miny) / 8);
+    for i to length (t) do
+      x := opt[TitleX] + (maxx - minx) * (i - 1) / length (t);
+      pd := append (pd, sym[i](x,opt[TitleY]+scaley,scalex,scaley,col[i]),
+		    LTEXT (x + scalex * 4, opt[TitleY], t[i],
+			   points=opt[TitlePts]))
+    od
+  fi;
+  for t in PlotArguments_Title (opt, minx, maxy, 9 * scaley) do
+    pd := append (pd, t)
+  od;
+  if opt[Grid] then
+    if opt[Axis] then DrawPlot (pd, axis, grid) else DrawPlot (pd, grid) fi
+  else
+    if opt[Axis] then DrawPlot (pd, axis) else DrawPlot (pd) fi
+  fi
+end:
+
+DrawDistribution := proc (sample: array ([numeric,numeric]))
+
+  opt := PlotArguments (args);
+  n := length (sample);
+  fromx := CreateArray (1..n);
+  tox := CreateArray (1..n);
+  eps := 0.001;
+  for i to n do
+    dx := sqrt (- sample[i,2] * ln (eps * sqrt (Pi * sample[i,2])));
+    fromx[i] := sample[i,1] - dx;
+    tox[i] := sample[i,1] + dx
+  od;
+  minx := min (fromx);
+  maxx := max (tox);
+  pd := CreateArray (1..500);
+  dx := (maxx - minx) / (length (pd) - 1);
+  for j to length (pd) do
+    pd[j] := [minx + (j - 1) * dx, 0]
+  od;
+  maxD := 0;
+  for i to n do
+    s := sample[i];
+    j := round ((fromx[i] - minx) / dx + 0.999);
+    x := minx + (j - 1) * dx;
+    for j from j to length (pd) while x <= tox[i] do
+      pd[j,2] := pd[j,2] + exp (-(x-s[1])^2/s[2]) / sqrt (s[2] * Pi) / n;
+      x := x + dx
+    od
+  od;
+  maxx := max (zip ((x->x[2])(pd)));
+  tit := PlotArguments_Title (opt, minx, maxx, (maxx - minx) / 40);
+  if length (tit) > 0 then
+    pd := {pd, tit}
+  fi;
+  DrawPlot( pd, If(opt[Axis],'axis',NULL), If(opt[Grid],'grid',NULL) )
+end:
+
+SmoothData := proc (data: {array([numeric,numeric]),
+		       array([numeric,numeric,numeric])},
+		sdev: numeric, nr: posint)
+
+  n := If (nargs > 2, nr, length (data));
+  if n <= 1 then error ('Must have at least two data points') fi;
+  x := zip ((x->x[1])(data));
+  x0 := min (x) - sdev;
+  xn := max (x) + sdev;
+  h := (xn - x0) / (n - 1);
+  ehs := exp (-(h/sdev)^2);
+  ehk := CreateArray (1..n);
+  num := CreateArray (1..n);
+  denom := CreateArray (1..n);
+  ehk[1] := exp (-2*h*x0/sdev^2);
+  ehs2 := ehs^2;
+  for k from 2 to n do
+    ehk[k] := ehk[k-1] * ehs2
+  od;
+  for d in data do
+    d3 := If (length (d) = 2, 1, d[3]);
+    k0 := round ((d[1] - x0) / h + 1);
+    w0 := exp (-((d[1] - x0 - (k0 - 1) * h) / sdev)^2);
+    ehx := exp (2*h*d[1]/sdev^2) * ehs;
+    w := w0;
+    for k from k0 to n while w >= 0.01 do
+      num[k] := num[k] + w * d[2];
+      denom[k] := denom[k] + w * d3;
+      w := w * ehx * ehk[k]
+    od;
+    w := w0;
+    for k from k0 - 1 by -1 to 1 do
+      w := w / ehx / ehk[k];
+      if w < 0.01 then break fi;
+      num[k] := num[k] + w * d[2];
+      denom[k] := denom[k] + w * d3
+    od
+  od;
+  res := CreateArray (1..n, 1..2);
+  for k to n do
+    res[k,1] := x0 + (k - 1) * h;
+    res[k,2] := If (denom[k] = 0, 0, num[k] / denom[k])
+  od;
+  res
+end:
+
+ViewPlot := proc ()
+
+  out := Set (plotoutput='temp.ps');
+  Set (plotoutput=out);
+  SystemCommand( 'postscript', out );
+  NULL
+end:
+
+StartOverlayPlot := proc ()
+  global DrawPlot, OP_oldplot, OP_data, OP_opt, OP_range;
+
+  OP_oldplot := eval (DrawPlot);
+  DrawPlot := proc ()
+    global OP_data, OP_opt, OP_range;
+    for arg in args do
+      if type (arg, numeric..numeric) then
+	OP_range[1] := min (OP_range[1], arg[1]);
+	OP_range[2] := max (OP_range[2], arg[2])
+      elif type (eval (arg), string) then
+	OP_opt := append (OP_opt, arg)
+      else
+	OP_data := append (OP_data, eval (arg))
+      fi
+    od;
+    length (OP_data)
+  end;
+  OP_data := OP_opt := [];
+  OP_range := DBL_MAX..-DBL_MAX;
+  NULL
+end:
+
+StopOverlayPlot := proc ()
+  global DrawPlot, OP_oldplot, OP_data, OP_opt, OP_range;
+ 
+  DrawPlot := eval (OP_oldplot);
+  if type (OP_data, list(list(structure))) then
+    s := [];
+    for d in OP_data do
+      s := append (s, op (d))
+    od
+  else
+    s := {op (OP_data)}
+  fi;
+  if OP_range[1] < OP_range[2] then
+    arg := [s, OP_range, op (OP_opt)]
+  else
+    arg := [s, op (OP_opt)]
+  fi;
+  if length (arg) = 1 then
+    DrawPlot (arg[1])
+  elif length (arg) = 2 then
+    DrawPlot (arg[1], arg[2])
+  elif length (arg) = 3 then
+    DrawPlot (arg[1], arg[2], arg[3])
+  elif length (arg) = 4 then
+    DrawPlot (arg[1], arg[2], arg[3], arg[4])
+  elif length (arg) = 5 then
+    DrawPlot (arg[1], arg[2], arg[3], arg[4], arg[5])
+  elif length (arg) = 6 then
+    DrawPlot (arg[1], arg[2], arg[3], arg[4], arg[5], arg[6])
+  fi
+end:
+
+GetColorMap := proc (color: {string,list(string),[numeric,numeric,numeric],
+			  list([numeric,numeric,numeric])})
+
+  if type (color, string) then string_RGB(color)
+  elif type (color, list(string)) then zip( string_RGB(color) )
+  else color fi
+end:
+
+
+DrawPointDistribution := proc( data:list(numeric), Bars )
+n := length(data);
+if n < 1 then error('too few values to draw point distribution') fi;
+
+sdata := sort(data);
+if nargs > 1 and type(Bars,posint) then nh := Bars
+else k := 1;
+     for i to n-1 do if sdata[i+1]-sdata[i] > 1e-10*|sdata[i]| then
+	 k := k+1 fi od;
+     nh := min( 30, k, max( 3, round(length(data)/10) ))
+fi;
+
+labels := CreateArray(1..nh,'');
+counts := CreateArray(1..nh);
+incr := ( sdata[n] - sdata[1] ) / nh;
+j := 0;
+for i to nh-1 do
+    low := sdata[1] + i*incr;
+    for k from j to n-1 while sdata[k+1] < low do od;
+    counts[i] := k-j;
+    if k>j then
+	if sdata[j+1]=sdata[k] then
+	     labels[i] := sprintf( '%.5g', sdata[j+1] )
+	else labels[i] := sprintf( '%.5g..', sdata[j+1] ) fi fi;
+    j := k;
+    od;
+counts[nh] := n-j;
+if n>j then
+    if sdata[j+1]=sdata[n] then
+         labels[nh] := sprintf( '%g', sdata[n] )
+    else labels[nh] := sprintf( '%g..%g', sdata[j+1], sdata[n] ) fi fi;
+DrawHistogram( counts, labels, args[2..nargs] )
+end:

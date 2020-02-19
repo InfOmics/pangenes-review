@@ -1,0 +1,45 @@
+# main program to start all necessary files for
+# synthetic evolution 
+#
+# change parameters in parameters.drw
+#
+# paramfile := 'parameters/XXX' : ReadProgram('evolstart.drw');
+#
+# Daniel Dalquen, Christophe Dessimoz; CBRG; 2011
+Set(printgc=false);
+starttime := UTCTime();
+Set(gc=2e8): SetRandSeed(); Set(quiet):
+SEbasedir :=libname.'/simulator/';
+if not assigned(paramfile) then
+	paramfile := 'alf-params.drw';
+	if length(FileStat(paramfile)) = 0 then
+    	error('Could not find parameter file!\n');
+    fi:
+fi:
+
+printf('\n'):
+if not assigned(libsLoaded) then
+    libsLoaded := true:
+#    ReadProgram(SEbasedir.'AAMutateGamma.drw'):
+    ReadProgram(SEbasedir.'KHG_Matrix.drw'):
+    ReadProgram(SEbasedir.'SubstitutionModel'):
+    ReadProgram(SEbasedir.'IndelModel'):
+    ReadProgram(SEbasedir.'RateVarModel'):
+    ReadProgram(SEbasedir.'SE_DataOutput.drw');
+    ReadProgram(SEbasedir.'SE_Rearrangement.drw');
+    ReadProgram(SEbasedir.'SE_procedures.drw');
+    ReadProgram(SEbasedir.'SE_AllAllTree.drw'):
+    ReadProgram(SEbasedir.'SE_RandomSubtree.drw'):
+    ReadProgram(SEbasedir.'SE_GCContent.drw'):
+    ReadProgram(SEbasedir.'SE_Evolutionary_Events.drw'):
+    ReadProgram(SEbasedir.'SE_Mutate'):
+    printf('\n'):
+fi:
+
+ReadProgram(paramfile);
+printf('\nparameter file read\n'):
+
+ReadProgram(SEbasedir.'synthevol.drw');
+CallSystem('cp ' . paramfile . ' ' . wdir . 'used_alf-params.drw'):
+endtime := (UTCTime() - starttime) / 60:
+printf('\n\nsynthetic evolution completed in %.2f minutes!\n\n', endtime):

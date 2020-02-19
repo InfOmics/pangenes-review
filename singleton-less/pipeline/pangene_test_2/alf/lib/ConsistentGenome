@@ -1,0 +1,257 @@
+#
+#	ConsistentGenome( <5lettername> )
+#
+#	Check for consistency of a DB file which contains
+#	proteins and their coding DNA.
+#
+#	It stops after finding 60 errors
+#					Gaston H. Gonnet (July 2004)
+
+#######################################################
+# function to check consistency of a genomic database #
+#######################################################
+ConsistentGenome := proc( name:string )
+
+if not type(DB,database) then error('no database loaded, use ReadDb()') fi;
+
+t := SearchTag('5LETTERNAME',DB[string]);
+if t <> name then error(t,name,'5 letter name does not coincide in DB') fi;
+
+t1 := SearchTag('SCINAME',DB[string]);
+if t1='' then error(name,'no scientific name in database') fi;
+
+t := SearchTag('KINGDOM',DB[string]);
+if not member(t,{'Bacteria','Archaea','Eukaryota'}) then
+	error(name,'does not have a valid KINGDOM entry:', t ) fi;
+
+t2 := SearchTag('OS',DB[string]);
+if t2='' then error(name,'does not have a lineage (OS) tag')
+elif t2[1..length(t)] <> t then
+     error(t,t2,'KINGDOM and first entry in OS do not coincide')
+elif t2[-length(t1)..-1] <> t1 then
+     error(t1,t2,'SCINAME and last entry in OS do not coincide') fi;
+
+gencode := SearchTag('ALTGENETICCODE',DB[string]);
+if gencode='' then gencode := 1 else gencode := atoi(gencode) fi;
+
+Bases := CreateArray(1..6);
+areas := [];
+seqs := dnas := ids := acs := [];
+toterr := 0;
+beginchr := table();
+chrn := 0;
+
+for ie to DB[TotEntries] do
+    e := Entry(ie);
+    seq := Sequence(e);
+    dna := SearchTag(DNA,e);
+    ide := SearchTag(ID,e);
+    ace := SearchTag(AC,e);
+    loc := SearchTag(LOC,e);
+    if ide='' then printf( 'Entry %d, AC=%s, has a null ID\n', ie, ace) fi;
+    if ace='' then printf( 'Entry %d, ID=%s, has a null AC\n', ie, ide) fi;
+    if loc='' then printf( 'Entry %d, ID=%s, has a null LOC\n', ie, ide) fi;
+
+    ploc := traperror(parse(loc));
+    if ploc=lasterror then
+	printf( 'Entry %d, ID=%s, has an incorrect LOC\n', ie, ide)
+    else pos := op( indets(ploc,posint) minus
+	     indets(indets(ploc,FromElsewhere(string,posint..posint)),posint) );
+	 chr := SearchTag(CHR,e);
+	 t := beginchr[chr];
+	 if t = unassigned then
+	      t := beginchr[chr] := 1e8*chrn;  chrn := chrn+1 fi;
+	 # if pos contains 1, assume that it is a circular genome and
+	 # do not check it
+	 if not member(1,{pos}) then
+	    areas := append(areas,[t+min(pos),t+max(pos),ie,ploc]) fi fi;
+
+    if 3*length(seq) + 3 <> length(dna) then
+	if 3*length(seq) = length(dna) and CodonToInt(dna[-3..-1]) < 21 then
+	     print( ID=ide, Entry=GetEntryNumber(e),
+		'it appears that the stop codon is missing' );
+	     printf( ':/<ID>%s<.ID>/s/<.DNA>/TAA&/\n', ide );
+	     toterr := toterr+1;
+	     next fi;
+	print( e );
+	printf( 'Entry=%d, %d x 3 + 3 = %d <> %d\n%s\n', GetEntryNumber(e),
+	    length(seq), 3*length(seq)+3, length(dna),
+	    'length of SEQ and length of DNA do not match (with stop codons)');
+	toterr := toterr+1;
+	#if toterr > 200 then error('too many errors') fi;
+	next fi;
+
+    if dna[-3..-1]<>'XXX' and not member( '$', AltGenCode(gencode,dna[-3..-1])) then
+	print( e, Entry=GetEntryNumber(e), length(seq), length(dna),
+	    dna[-3..-1], 'does not end with a stop codon' );
+	toterr := toterr+1;
+	next fi;
+
+    for i to length(dna) do
+	j := BToInt(dna[i]);
+	if j < 1 or j=5 then
+	    error(e,'DNA contains an invalid base in position', i ) fi;
+	Bases[j] := Bases[j]+1;
+	od;
+
+    for i to length(seq) do
+	p := If(gencode=1,NULL,i);
+	if member(seq[i], AltGenCode(gencode,dna[3*i-2..3*i],p)) or
+	   seq[i]='X' and member('$',AltGenCode(gencode,dna[3*i-2..3*i])) or
+	   dna[3*i-2]='X' or dna[3*i-1]='X' or dna[3*i]='X'
+		then next fi;
+
+	printf( '%s <> %s, amino acid and dna disagree at position %d,',
+		seq[i], dna[3*i-2..3*i], i );
+	printf( ' entry %d, %s\n', GetEntryNumber(e), ide );
+	toterr := toterr+1;
+	#if toterr > 200 then error('too many errors') fi;
+	od;
+    od:
+areas := sort(areas):
+if chrn > 1 then print('Chromosome base positions',beginchr) fi;
+
+# Chech that IDs are unique
+for ie to DB[TotEntries] do
+    e := Entry(ie);  ids := append(ids,[SearchTag(ID,e),ie]) od:
+ids := sort(ids);
+for i from 2 to length(ids) do if ids[i-1,1]=ids[i,1] then
+    printf( 'entry %d and %d have the same ID: %s\n',
+	ids[i-1,2], ids[i,2], ids[i,1] );
+    printf( 'DE: %s\nDE: %s\n\n', SearchTag('DE', Entry(ids[i-1,2])),
+        SearchTag('DE',Entry(ids[i,2])));
+    toterr := toterr+1;
+    fi od;
+
+# Check that ACs are unique
+for ie to DB[TotEntries] do
+    e := Entry(ie);  acs := append(acs,[SearchTag(AC,e),ie]) od:
+acs := sort(acs):
+for i from 2 to length(acs) do if acs[i-1,1]=acs[i,1] then
+    printf( 'entry %d and %d have the same AC: %s\n',
+	acs[i-1,2], acs[i,2], acs[i,1] );
+    printf( 'DE: %s\nDE: %s\n\n', SearchTag('DE', Entry(acs[i-1,2])),
+        SearchTag('DE',Entry(acs[i,2])));
+    toterr := toterr+1;
+    fi od;
+
+
+SizeOverlap := proc( t1, t2 )
+if not type(t2,posint..posint) and type(t1,posint..posint) then procname(t2,t1)
+elif type(t1,FromElsewhere(string,posint..posint)) then 0
+elif type(t1,posint..After(posint)) then procname(t1[1]..t1[2,1],t2)
+elif type(t1,Before(posint)..posint) then procname(t1[1,1]..t1[2],t2)
+elif type(t1,Before(posint)..After(posint)) then procname(t1[1,1]..t1[2,1],t2)
+elif type(t1,structure) then sum( procname(t1[i],t2), i=1..length(t1) )
+elif type(t1,posint..posint) and type(t2,posint..posint) then
+     max( 0, min(t1[2],t2[2]) - max(t1[1],t2[1]) + 1 )
+elif type(t1,posint) then procname(t1..t1,t2)
+else error(t1,t2,'are invalid arguments') fi
+end:
+
+# Remove overlapping DNA only in eukaryotas
+kingdom:=SearchTag(KINGDOM,DB[string]);
+if kingdom='Eukaryota' then 
+for i to length(areas)-1 do
+    a1 := areas[i]:  s1 := length(Sequence(Entry(a1[3]))):
+    for j from i+1 to length(areas) while areas[j,1] <= a1[2] do
+	a2 := areas[j];  s2 := length(Sequence(Entry(a2[3])));
+	if SizeOverlap(a1[4],a2[4]) > 0.90*(3*min(s1,s2)+3) then
+	     printf( '# entries %d and %d overlap %.2f%%\n', a1[3], a2[3],
+		100 * SizeOverlap(a1[4],a2[4]) / (3*min(s1,s2)+3) );
+	     toterr := toterr+1;
+	     if s1 < s2 then
+		  printf( ':/<ID>%s</d\n', SearchTag(ID,Entry(a1[3])) )
+	     else printf( ':/<ID>%s</d\n', SearchTag(ID,Entry(a2[3])) ) fi
+	     fi
+	od
+    od:
+fi; # kingdom='Eukaryota'
+
+# Check identical DNA sequences
+for ie to DB[TotEntries] do
+    e := Entry(ie);  dnas := append(dnas,[SearchTag(DNA,e),ie]) od:
+dnas := sort(dnas):
+repeats := {};
+for i from 2 to length(dnas) do if dnas[i-1,1]=dnas[i,1] then
+    printf( 'entry %d (%s) and %d /<ID>%s< have the same DNA sequence: %s\n',
+	dnas[i-1,2], SearchTag(ID,Entry(dnas[i-1,2])),
+	dnas[i,2], SearchTag(ID,Entry(dnas[i,2])), dnas[i,1] );
+    printf( 'DE: %s\nDE: %s\n\n', SearchTag('DE', Entry(dnas[i-1,2])),
+        SearchTag('DE',Entry(dnas[i,2])));
+    toterr := toterr+1;
+    repeats := repeats union {{dnas[i-1,2], dnas[i,2]}};
+    fi od;
+
+# Check identical peptide sequences
+for ie to DB[TotEntries] do
+    e := Entry(ie);  seqs := append(seqs,[Sequence(e),ie]) od:
+seqs := sort(seqs):
+for i from 2 to length(seqs) do if seqs[i-1,1]=seqs[i,1] then
+    if member( {seqs[i-1,2], seqs[i,2]}, repeats) then next fi;
+    printf( 'entry %d (%s) and %d /<ID>%s< have the same peptide sequence: %s\n',
+	seqs[i-1,2], SearchTag(ID,Entry(seqs[i-1,2])),
+	seqs[i,2], SearchTag(ID,Entry(seqs[i,2])), seqs[i,1] );
+    printf( 'DE: %s\nDE: %s\n\n', SearchTag('DE', Entry(seqs[i-1,2])),
+        SearchTag('DE',Entry(seqs[i,2])));
+    toterr := toterr+1;
+    repeats := repeats union {{seqs[i-1,2], seqs[i,2]}};
+    fi od;
+
+repet50 := [];
+MatchLen := 90;
+slen := length(DB[string]);
+for i from 2 to DB[TotAA] do
+    if DB[string,DB[Pat,i-1]+1..min(DB[Pat,i-1]+MatchLen,slen)] =
+	DB[string,DB[Pat,i]+1..min(DB[Pat,i]+MatchLen,slen)] then
+	if SearchString( '<', DB[string,DB[Pat,i]+1..DB[Pat,i]+MatchLen] ) >= 0
+	    then next fi;
+	repet50 := append( repet50,
+		{ GetEntryNumber(DB[Pat,i-1]), GetEntryNumber(DB[Pat,i])} );
+	if length(repet50) > 200000 then repet50 := [op( {op(repet50)} )] fi
+	fi
+    od;
+DM001 := DayMatrix(0.001);
+for z in {op(repet50)} minus repeats do
+    if length(z)=1 then
+	printf( 'Strange!!, entry %d (%s) has an exact repeat %d or longer\n',
+	    z[1], SearchTag(ID,Entry(z[1])), MatchLen );  next fi;
+    toterr := toterr+1;
+    s1 := Sequence(Entry(z[1]));
+    s2 := Sequence(Entry(z[2]));
+    if length(s1) < length(s2) and SearchString(s1,s2) >= 0 then
+	 printf( 'entry %d (%s) is completely included in entry %d (%s)\n',
+	     z[1], SearchTag(ID,Entry(z[1])), z[2], SearchTag(ID,Entry(z[2])) );
+	 printf( ':/<ID>%s<.ID>/d\n', SearchTag(ID,Entry(z[1])) );
+	 next
+    elif length(s2) < length(s1) and SearchString(s2,s1) >= 0 then
+	 printf( 'entry %d (%s) is completely included in entry %d (%s)\n',
+	     z[2], SearchTag(ID,Entry(z[2])), z[1], SearchTag(ID,Entry(z[1])) );
+	 printf( ':/<ID>%s<.ID>/d\n', SearchTag(ID,Entry(z[2])) );
+	 next
+	 fi;
+    al := Align(s1,s2,DM001);
+    dps := DynProgStrings(al);
+    nid := sum( If(dps[2,i]=dps[3,i],1,0), i=1..length(dps[2]) ) -
+	  sum( If(dps[2,i]='_',1,0), i=1..length(dps[2]) ) -
+	  sum( If(dps[3,i]='_',1,0), i=1..length(dps[2]) );
+    if nid > 0.99*length(s1) then
+	 printf( 'entry %d (%s) matches better than 99%% into %d (%s)\n',
+	     z[1], SearchTag(ID,Entry(z[1])), z[2], SearchTag(ID,Entry(z[2])) );
+	 printf( ':/<ID>%s<.ID>/d\n', SearchTag(ID,Entry(z[1])) );
+	 next
+    elif nid > 0.99*length(s2) then
+	 printf( 'entry %d (%s) matches better than 99%% into %d (%s)\n',
+	     z[2], SearchTag(ID,Entry(z[2])), z[1], SearchTag(ID,Entry(z[1])) );
+	 printf( ':/<ID>%s<.ID>/d\n', SearchTag(ID,Entry(z[2])) );
+	 next
+	 fi;
+    printf( 'entries %d (%s) and %d (%s) share %d out of %d/%d\n',
+	z[1], SearchTag(ID,Entry(z[1])), z[2], SearchTag(ID,Entry(z[2])),
+	length(al[Seq1]), length(s1), length(s2) );
+    if printlevel > 1 then printf('%a\n',al): fi:
+    od:
+
+printf( '%s: %d entries, %d bases, [ACGT]=%a, %d X''s, %d errors\n',
+	name, DB[TotEntries], sum(Bases), Bases[1..4], Bases[5], toterr );
+end:

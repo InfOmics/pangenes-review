@@ -1,0 +1,444 @@
+HTMLColor := proc(what, color)
+description 'Converts any text into html format with color information
+  what:  any text
+  color: color keyword, at least 2 (3 for blue and black) letters
+         e.g. "ye" (yellow), "light blue", "pink", "li gr" etc';
+  col := uppercase(color);
+  if not type(what, string) then return(''); fi;
+  if    SearchString('GRE',  col)> -1 and SearchString('LIG', col)> -1 then code := '#00FF00'
+  elif  SearchString('BLU', col)> -1 and SearchString('LIG', col)> -1 then code := '#00FFFF'
+  elif  SearchString('GRE',  col)> -1 and SearchString('OLI', col)> -1 then code := '#6B8E23'
+  elif  SearchString('GRE',  col)> -1 and SearchString('BLU', col)> -1 then code := '#48D1CC'
+  elif  SearchString('BLU', col)> -1 and SearchString('BLA', col)> -1 then code := '#000080'
+  elif  SearchString('RED',  col)> -1 then code := '#FF0000'
+  elif  SearchString('GRE',  col)> -1 then code := '#008000'
+  elif  SearchString('BLU', col)> -1 then code := '#0000FF'
+  elif  SearchString('ORA',  col)> -1 then code := '#CD853F'
+  elif  SearchString('YEL',  col)> -1 then code := '#FFD700'
+  elif  SearchString('PUR',  col)> -1 then code := '#9400D3'
+  elif  SearchString('GRA',  col)> -1 then code := '#404040'
+  elif  SearchString('BRO',  col)> -1 then code := '#800000'
+  elif  SearchString('PIN',  col)> -1 then code := '#FF00FF'
+  elif  SearchString('BLA', col)> -1 then code := '#000000'
+  elif  SearchString('WHI',  col)> -1 then code := '#FFFFFF'
+  else code := '#FFFFFF';
+  fi;
+
+  res := '<FONT COLOR="'.code.'">'.what.'</FONT>';
+  return(res);
+end:
+
+HTMLTitle := proc(what: string, how: string)
+description 'Converts any text into html headings, bold or italiic text
+  what:  any text
+  how:   keyword, at least 1 letter
+         e.g. "H1" (Heading 1), "Heading 4", "bold", "it" etc.';
+  h := uppercase(how);
+  if   SearchString('H', h) > -1 and SearchString('1', h) > -1 then code := 'H1'
+  elif SearchString('H', h) > -1 and SearchString('2', h) > -1 then code := 'H2'
+  elif SearchString('H', h) > -1 and SearchString('3', h) > -1 then code := 'H3'
+  elif SearchString('H', h) > -1 and SearchString('4', h) > -1 then code := 'H4'
+  elif SearchString('B', h) > -1 then code := 'B'
+  elif SearchString('I', h) > -1 then code := 'I'
+  else code := ''
+  fi;
+
+  if code <>'' then res := '<'.code.'>'.what.'</'.code.'>'
+  else res := what
+  fi;
+
+  return(res);
+end:
+
+HTMLCols := proc(what: array(string), border: integer)
+description 'Puts each element of the array into different columns.
+  border:  thickness of border (0 => invisible)';
+  
+  out := '<TABLE BORDER='.border.' CELLSPACING=0 CELLPADDING=0 ><TR>';
+  for i to length(what) do
+    out := out.'<TD><TT><FONT SIZE=-1>'.what[i].'</FONT></TT></TD>';
+  od;
+  out := out.'</TR></TABLE>';
+  
+  return(out);
+end:
+
+HTMLRows := proc(what: array(string), border: integer)
+description 'Puts each element of the array into different rows.
+  border:  thickness of border (0 => invisible)';  
+  out := '<TABLE BORDER='.border.' CELLSPACING=0 CELLPADDING=0 >';
+  for i to length(what) do
+    out := out.'<TR><TD><TT><FONT SIZE=-1>'.what[i].'</FONT></TT></TD></TR>';
+  od;
+  out := out.'</TABLE>';
+  return(out);
+end:
+
+HTMLprint := proc(what: anything, Directory: string, Filename: string)
+description 'Prints what either into a file (if specified) or just returns the string
+  in html format.
+    
+   what: MultiAlign        similar as print(), but creates a postscript file
+                           for the tree in the same directory, same filename
+			   with .ps extension
+   what: string              adds <HTML><BODY> to the text and prints it
+   Filename:               Use NO extension. ".html" is added automatically';
+   
+if nargs > 1 then
+  dir := Directory;
+  if dir[length(dir)] <> '/' then dir := dir.'/'; fi;
+fi;
+width := 80;
+if type(what, MultiAlign) then
+  msa := what;
+  Seq := msa['Seq'];
+  Align := msa['MSA'];
+  Title := msa['Title'];
+  Ref := msa[Reference];
+  order := msa['order']; 
+  out := '';
+  if Title <> 0 then out := out.HTMLTitle(Title, 'H3'); fi;
+  if Align <> 0 then
+    out := out.HTMLTitle('Multiple sequence alignment:\n', 'H4');
+    if Align[1] = Align[length(Align)] and length(Align)>length(msa['AllAll']) then Align := Align[1..length(Align)-1]; fi;
+    sc := msa['Score'];
+    AllAll := msa['AllAll']:
+    out := out.sprintf('Score of the alignment: %5.3f<BR>\nMaximum possible score: %5.3f<P>', sc[2], msa['max']); 
+    times:=round(length(Align[1])/width+0.5);
+    for i to times do   
+      r := '';
+      for j to length(Ref) do r := r.sprintf('%a <BR>\n', Ref[order[j]]); od;
+      r := r.'Score';
+      a := '';
+      for j to length(Align) do	
+	w := order[j];
+        a := a.sprintf('%s <BR>\n', Align[w,width*(i-1)+1 .. min(width*i,length(Align[w]))] );
+      od;
+      if msa[7] <> 0 then a := a.sprintf('%s <BR>\n',sc[1, width*(i-1)+1 .. min(width*i,length(sc[1]))] ); fi;
+      out := out.HTMLCols([r, a], 0).'<P>';
+    od:
+   else
+    out := out.'There is no alignment<BR>\n';
+  fi;
+  if msa['pos'] <> 0 then
+      tmp := 'Positions in original sequences: \n';
+      pos := msa['pos'];
+      for i to length(pos)-1 do
+        tmp := tmp.sprintf('%d (=%d): %d..%d, ',i,pos[i,1], pos[i, 2], pos[i,3]);
+      od;
+      tmp := tmp.sprintf('%d (=%d): %d..%d',i, pos[i,1],pos[i, 2], pos[i,3]);
+      out := out.tmp.'<BR>';
+  fi;
+  if msa[4] <> 0 and nargs > 1 then 
+    out := out.'<A HREF="'.Filename.'.ps'.'">'.HTMLTitle('Phylogenetic tree:\n', 'H4').'</A>';
+    Set(plotoutput = Filename.'.ps');
+    DrawTree(msa[4], 'Phylogenetic tree (MinSquare)');
+  fi;
+  if nargs > 1 then HTMLprint(out, dir, Filename); fi; 
+  return(out);
+
+elif type(what, string) then
+  if nargs > 1 then OpenAppending(dir.Filename.'.html'); fi;
+  print('<HTML><BODY>');
+  times:=round(length(what)/80+0.5);
+  for i to times do
+    printf('%s', what[width*(i-1)+1 .. min(width*i,length(what))] );
+  od;
+  print('</BODY></HTML>');
+  if nargs > 1 then OpenWriting(terminal); fi;
+fi;
+end:
+
+# *********************************
+
+
+HTMLColorprint := proc(what: anything, Directory: string, Filename: string, Positions: array, Colors: array(string), index: integer, DP0)
+description 'Prints what either into a file (if specified) or just returns the string
+  in html format.
+    
+   what: MultiAlign        similar as print(), but creates a postscript file
+                           for the tree in the same directory, same filename
+			   with .ps extension
+	 string              adds <HTML><BODY> to the text and prints it
+   Filename:               Use NO extension. ".html" is added automatically';
+   
+  Colors1 := ['blue', 'orange', 'pink', 'red', 'green', 'magenta','cyan',
+	'brown', 'yellow', 'black'];
+
+  dir := Directory;
+
+  if dir[length(dir)] <> '/' then dir := dir.'/'; fi;
+  width := 80;
+  msa := what:
+  Seq := msa['Seq']: 
+  sec := GetSecondary(msa);
+  Align := msa['MA']:
+  Title := msa['Title']:
+  if Title = 0 then Title := ''; fi;
+  Ref := msa[Reference]:
+  order := msa['order']: 
+  out := '';
+  if Title <> 0 then out := out.HTMLTitle(Title, 'H3'); fi;
+  if Align <> 0 then
+    out := out.HTMLTitle('Multiple sequence alignment:\n', 'H4'); 
+       
+    msa['all'];
+    if Align[1] = Align[length(Align)] and length(Align)>length(msa['AllAll']) then Align := Align[1..length(Align)-1]; fi;
+    out := out.sprintf('Score of the alignment: %5.3f<BR>\nMaximum possible score: %5.3f<P>', msa['score',2], msa['max']);
+    ot := OutTable(msa):
+    if nargs > 5 then  
+       if index = 0 then nr := length(Colors) else nr := mod(index, length(Colors))+1; fi;
+       for row from 1 to length(ot[2]) do
+	  for i to length(ot[2, row]) do
+            part := HTMLColor(ot[2, row, i], Colors[nr]);
+  	    ot[2, row, i] := part;
+	  od;
+	od;
+    else
+      for pos from 1 to length(Positions) do 
+	nr := mod(pos, length(Colors))+1;
+        if Positions[pos, 1] <> 0 then ot := ColorMSA(ot, msa, Positions[pos, 1], Colors[nr]); fi;
+      od:
+    fi;  
+    for i to length(ot[1]) do   
+       r := '';
+       for j to length(Ref) do r := r.sprintf('%s <BR>\n', ot[1, i, order[j]]); od;
+       for k from length(Ref)+1 to length(ot[2,i]) do
+          if ot[1, i, k] <> 0 then r := r.sprintf('%s <BR>\n', ot[1, i, k]); fi;
+       od;
+       a := '';
+       for j to length(Align) do a := a.sprintf('%s <BR>\n', ot[2, i, order[j]]); od;
+       for j from length(Align)+1 to length(ot[2,i]) do
+          if ot[1, i, j] <> 0  then a := a.sprintf('%s <BR>\n', ot[2, i, j]); fi; 
+       od;
+       out := out.HTMLCols([r, a], 0).'<P>';
+    od:
+    out := out.ShowRef(msa);
+  else
+    out := out.'There is no alignment<BR>\n';
+  fi;
+  if msa['pos'] <> 0 then
+      tmp := 'Positions in original sequences: \n';
+      pos := msa['pos']; 
+      for i to length(pos)-1 do
+        tmp := tmp.sprintf('%d (=%d): %d..%d, ',i,pos[i,1], pos[i, 2], pos[i,3]);
+      od;
+      tmp := tmp.sprintf('%d (=%d): %d..%d',i, pos[i,1],pos[i, 2], pos[i,3]);
+     out := out.tmp.'<BR>';
+  fi;
+  if msa['Info'] <> 0 then
+    tmp := sprintf('<BR>');
+    inf := msa['Info']; 
+    if type(inf, array) then
+      for i to length(inf) do
+        tmp := tmp.sprintf('%s<BR>',inf[i]);
+      od;
+      out := out.tmp.'<BR>';
+    fi;
+  fi;
+  if msa[4] <> 0 and nargs > 1 then 
+    if nargs > 5 then      
+      out := out.'<A HREF="'.Filename.index.'.ps'.'">'.HTMLTitle('Phylogenetic tree:\n', 'H4').'</A>';
+      Set(plotoutput = dir.Filename.index.'.ps');
+    else
+      out := out.'<A HREF="'.Filename.'.ps'.'">'.HTMLTitle('Phylogenetic tree:\n', 'H4').'</A>';
+      Set(plotoutput = dir.Filename.'.ps');
+    fi;
+    t := msa['tree'];
+    n := length(msa['align']); 
+    id := GetAnimals(msa['ref']);  
+    ancol := GetColor(Colors1, id);   
+    t1 := ChangeLeafLabels(t, msa['ref']);  
+    t1 := CT_Color(t1, ancol);
+    t1 := AddSpecies(t1, id); 
+    DrawTree(t1, Title, Colors1, id, ancol);
+  fi;
+  out := out.'<BR>**************************************************************<BR>';
+  if nargs > 1 then HTMLprint(out, dir, Filename); fi; 
+  return(out);
+end:
+
+GetColor := proc(ColorNames, Species);
+  spec := copy([]);
+  n := length(ColorNames);
+  colnr := 0;
+  collist := CreateArray(1..length(Species));
+  for which to length(Species) do
+    j := SearchArray(Species[which], spec);
+    if j = 0 then
+      spec := append(spec, Species[which]);
+      colnr := colnr + 1; 
+    else
+      colnr := j; 
+    fi;  
+    if colnr > n then colnr := mod(n, colnr); fi; 
+    collist[which] := colnr;
+  od; 
+  return(collist); 
+end:
+
+# **********************************
+
+
+
+ColorMSA := proc(ot: array, msa: MultiAlign, Pos: array(array(integer)), color: string);
+  Align := msa['ma'];
+  Seq := msa['seq'];
+  Aligncol := ot[2];
+  width := 80;
+  for i to length(Pos) do
+    seqnr := Pos[i,1];
+    gapseq := Align[seqnr];
+    left:= PosinMA(gapseq, Pos[i,2]);
+    right:= PosinMA(gapseq, Pos[i,3]);
+    if left >= right then return([ot[1], Aligncol]); fi;
+    
+   # if we are within the sequence
+    if left < length(gapseq) then
+      startrow := trunc(left/width) + 1;
+      startx := PosinHTML(Aligncol[startrow, seqnr], mod(left, width));
+      if startx = 0 then 
+	 startx := width; 
+      fi;
+      endrow := trunc(right/width) + 1;
+      endx := PosinHTML(Aligncol[endrow, seqnr], mod(right, width));  
+      if endx = 0 then 
+	endx := min(width, length(Aligncol[endrow, seqnr])); 
+      fi;
+      
+      if startrow < endrow then
+	part := HTMLColor(Aligncol[startrow, seqnr, startx..-1], color);
+	Aligncol[startrow, seqnr] := Aligncol[startrow, seqnr, 1..startx-1].part ; 
+	for row from startrow+1 to endrow-1 do
+	  part := HTMLColor(Aligncol[row, seqnr], color); 
+	  Aligncol[row, seqnr] := part; 
+	od;
+	part := HTMLColor(Aligncol[endrow, seqnr, 1..endx], color);
+	Aligncol[endrow, seqnr] := part.Aligncol[endrow, seqnr, endx+1..length(Aligncol[endrow, seqnr])]; 
+	
+      else
+	part := HTMLColor(Aligncol[startrow, seqnr, startx..endx], color);
+	Aligncol[startrow, seqnr] := Aligncol[startrow, seqnr, 1..startx-1].part.Aligncol[startrow, seqnr, endx+1..-1] ; 
+       fi;
+     
+    fi;
+  od;
+  return([ot[1], Aligncol]);
+end:
+
+
+
+#----------------------------
+OutTable := proc(msa: MultiAlign);
+    Align := msa['ma']:
+    Ref := msa['labels']:
+    sc := msa['Score']:
+    sec := GetSecondary(msa);
+    width := 80;
+    sup := msa['sup'];
+    times:=round(length(Align[1])/width+0.5);
+    outtab := CreateArray(1..2, 1..times, 1..length(Align)+length(sup)+1);
+    
+    for i to times do   
+      for j to length(Ref) do outtab[1, i, j] := sprintf('%d', j); od;
+      outtab[1, i, j] := 'Score';
+      for j to length(Align) do	
+	outtab[2, i, j] := sprintf('%s', Align[j,width*(i-1)+1 .. min(width*i,length(Align[j]))] );
+      od;
+      if msa[7] <> 0 then outtab[2, i, j] := sprintf('%s',sc[1, width*(i-1)+1 .. min(width*i,length(sc[1]))] ); fi;
+      m := 0;
+      for k to length(sup) do
+	su := sup[k];
+        if su  <> 0 and su[2] <> 0 then
+	  m := m + 1;
+	  outtab[1, i, j+m] := sprintf('%s',su[1]);
+	  outtab[2, i, j+m] := sprintf('%s\n', su[2, width*(i-1)+1 .. min(width*i,length(su[2]))] );
+	else
+	  outtab[1, i, j+m] := 0;  
+	  outtab[2, i, j+m] := 0;
+	fi;
+      od;	
+    od; 
+ return(outtab);
+end:
+
+ShowRef := proc(msa: MultiAlign);
+  ref := msa['Ref'];
+  n := length(ref);  
+  ent := 0;
+  f1 := '<FONT SIZE=-1>'; f2:= '</FONT>';
+  out := '<P><TABLE BORDER=1 CELLSPACING=0 CELLPADDING=0 ><TR>'; 
+  if type(ent, Entry) then 
+    out := out.'<TD>Nr</TD><TD> ID </TD><TD>Desc</TD><TD>OC</TD><TD>OS</TD>';
+  else
+    out := out.'<TD>Number</TD><TD>ID</TD>';
+  fi;
+  out := out.'</TR>';
+  for i to n do 
+    out := out.'<TR><TD>'; 
+    if type(ent, Entry) then 
+      e := Entry(ent[i]);
+      out := out.sprintf(' %4d </TD><TD> %s </TD><TD> %s</TD><TD> %s</TD><TD> %s',i, op(e['ID']), f1.e['DE'].f2, f1.GetEntryInfo(e, 'OC')[2].f2, f1.GetEntryInfo(e, 'OS')[2].f2); 
+    else
+      out := out.sprintf(' %4d </TD><TD> %s',i, ref[i]); 
+    fi;
+    out := out.'</TD></TR>';
+  od;
+  out := out.'</TABLE></TT><P>';   
+ print('Show Ref called');
+# for testing
+#  CallSystem('rm -f '.dir.file.'.html'); 
+#  HTMLprint(out, dir, file);
+    
+  return(out);
+end:
+
+
+PosinHTML := proc(gapseq: string, x: integer); 
+ i := 0; posx := 0; 
+ while posx < x and i < length(gapseq) do
+   i := i + 1; 
+   if gapseq[i] <>'<' then
+     posx := posx + 1;  
+   else
+     while gapseq[i]<>'>' do i := i + 1; od;
+   fi;
+ od; 
+ i;
+end:
+
+
+PrintMsaList := proc( msa: MultiAlign, DP: DomainParameter, dir: string, file: string, limit0:integer, Colors0: array);
+  if nargs < 6 then 
+    Colors := ['red', 'green', 'blue', 'orange', 'light green', 'brown',
+	'yellow', 'pink', 'light blue', 'olive green','white', 'blue green',
+	'gray', 'black blue'];
+    if nargs < 5 then
+      limit := 5;
+    else 
+      limit := limit0;
+    fi:
+  else
+    Colors := Colors1;
+  fi:
+ 
+  ML := msa['ML']:
+  msalist := ML['msalist']:
+  n := length(msalist);
+  Posscore := CreateArray(1..n, 1..2);
+  for i from 1 to n do if msalist[i] <> [] then 
+    sc := msalist[i, 'score'][2];
+    if sc > limit then
+      Posscore[i, 1] := msalist[i,'pos']; 
+      Posscore[i, 2] := sc;
+    fi;
+  fi; od;
+  CallSystem('rm -f '.dir.file.'.html');
+  
+  out := HTMLColorprint(msa, dir, file, Posscore, Colors);
+  for i from 1 to n  do if msalist[i, 'score'][2] > limit then
+     HTMLColorprint(msalist[i], dir, file, [], Colors, i); 
+  fi; od;
+end:
+
+

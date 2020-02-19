@@ -1,0 +1,31 @@
+# Performs romberg integration
+#     C. Dessimoz, Dec 2007
+
+Romberg := proc(f:procedure ; r:range, (eps=1e-8):numeric, (maxiter=20):posint)
+    if assigned(r) then
+        a := r[1];
+        b := r[2];    
+        g := (f,x) -> f(x);
+    else 
+        # implicitly, no range will compute from -inf to +inf
+        a := -Pi/2;
+        b := Pi/2;
+        g := (f,x) -> f(tan(x))*(1+tan(x)^2);
+    fi;
+    R := CreateArray(1..1,1..1, 0.5*(b-a)*(g(f,a)+g(f,b))); 
+    for n from 2 to maxiter do
+        tn := n-1;
+        h := (b-a)/2^tn;
+        R := append(R,CreateArray(1..n));
+        R[n,1] := 0.5*R[n-1,1] + h*sum(g(f,a+(2*k-1)*h),k=1..2^(tn-1));
+        for m from 2 to n do
+            R[n,m] := R[n,m-1] + (R[n,m-1] - R[n-1,m-1])/ (4**(m-1)-1);
+        od;
+        if abs(R[n,n-1] - R[n,n]) < eps then
+            if printlevel > 4 then print(R); fi;
+            return(R[n,n]);
+        fi;
+    od;
+    error('Did not converge');
+end:
+

@@ -1,0 +1,184 @@
+ #
+#	SetuptRNA - set up all the necessary functions
+#			to translate tRNAs
+#
+#	This function builds all the global functions
+#	which translate from tInt to A, AAA, Amino, Int, CInt and Codon
+#	and from Int and CInt to tRNA and tInt
+#
+#	Its input is either a string (which means a predefined name)
+#	or it is a list of 20 (one per amino acid) lists of tRNAs.
+#
+#	The format is best given by the example, see yeast_tRNA below.
+#
+#			Gaston H. Gonnet (April 22, 2003)
+#
+
+SetuptRNA := proc( d:{list(list),string} )
+global ntRNA,
+# working vectors
+	tIntToInt_list, tIntToCInt_list, CIntTotInt_list, IntTotInt_list,
+	tIntTotRNA_list;
+
+if type(d,string) then
+     t := symbol( d . '_tRNA' );
+     if type( eval(t), list(list)) then return( procname(eval(t)) )
+     else error( t, 'is not defined as a tRNA table' ) fi fi;
+
+if length(d) <> 20 then error('the tRNA table should have 20 entries' ) fi;
+
+tIntToInt_list := [];
+tIntToCInt_list := [];
+tIntTotRNA_list := [];
+CIntTotInt_list := CreateArray(1..64);
+IntTotInt_list := CreateArray(1..20,{});
+ntRNA := 0;
+
+for a to 20 do
+    row := d[a];
+    lrow := length(row);
+    if not type(row,list) or lrow < 2 or row[lrow] <> IntToAAA(a) then
+	error(row,'is an invalid row in the tRNA table') fi;
+
+    for i to lrow-1 do
+	# we are now in a tRNA
+	if not type(row[i],list(string)) then
+	     error(row[i],'is not a valid codon list for a tRNA table') fi;
+	ntRNA := ntRNA+1;
+	tIntToInt_list := append( tIntToInt_list, a );
+	tIntTotRNA_list := append( tIntTotRNA_list, IntToAAA(a) . i );
+	tIntToCInt_list := append( tIntToCInt_list, {} );
+	IntTotInt_list[a] := IntTotInt_list[a] union {ntRNA};
+	for cod in row[i] do
+	    j := CodonToCInt( cod );
+	    if j < 1 or j > 64 then
+		 error(cod, 'in', row[i], 'is an invalid codon')
+	    elif CIntToInt(j) <> a then
+		 error( cod, 'in', row[i], 'does not code for this amino acid' )
+		 fi;
+	    CIntTotInt_list[j] := ntRNA;
+	    tIntToCInt_list[ntRNA] := tIntToCInt_list[ntRNA] union {j}
+	    od;
+	od;
+    od;
+
+# checks
+for i to 64 do
+    if CIntToInt(i) = 22 then
+	 if CIntTotInt(i) <> 0 then
+		error(i,CIntTotRNA(i),'tRNA coding for this stop codon') fi
+    elif CIntTotInt(i) = 0 then
+	 error( i,'no tRNA coding for this codon') fi
+    od;
+
+
+
+end:
+
+tIntToInt := proc(tRNA:posint) option internal; tIntToInt_list[tRNA] end:
+tIntToA := proc(tRNA:posint) option internal;
+	 IntToA( tIntToInt_list[tRNA] ) end:
+tIntToAAA := proc(tRNA:posint) option internal;
+	 IntToAAA( tIntToInt_list[tRNA] ) end:
+tIntToAmino := proc(tRNA:posint) option internal;
+	 IntToAmino( tIntToInt_list[tRNA] ) end:
+
+tIntToCInt := proc(tRNA:posint) option internal; tIntToCInt_list[tRNA] end:
+tIntToCodon := proc(tRNA:posint) local i; option internal;
+	{ seq( CIntToCodon(i), i=tIntToCInt_list[tRNA] )} end:
+tIntTotRNA := proc(tRNA:posint) option internal; tIntTotRNA_list[tRNA] end:
+tRNATotInt := proc(n:string) option internal;
+	 SearchArray(n,tIntTotRNA_list) end:
+
+IntTotInt := proc(a:posint) option internal; IntTotInt_list[a] end:
+IntTotRNA := proc(a:posint) local i; option internal;
+	{seq( tIntTotRNA_list[i], i=IntTotInt_list[a])} end:
+
+CIntTotInt := proc(c:posint) option internal; CIntTotInt_list[c] end:
+CIntTotRNA := proc(c:posint) option internal;
+	i := CIntTotInt_list[c];
+	if i > 0 then tIntTotRNA_list[i] else Stop fi end:
+
+#
+# tRNA table for Saccharomyces cerevisiae (baker's yeast)
+#
+# from "Transfer RNA Gene Redundancy and Translational Selection in
+#  Saccharomyces cerevisiae" by R. Percudani, A. Pavesi and S Ottonello,
+#  J Mol Biol (1997) 268, 322-330
+yeast_tRNA := [
+        [[GCT,GCC],[GCA,GCG],Ala],
+        [[CGT,CGC,CGA],[CGG],[AGA],[AGG],Arg],
+        [[AAT,AAC],Asn],
+        [[GAT,GAC],Asp],
+        [[TGT,TGC],Cys],
+        [[CAA],[CAG],Gln],
+        [[GAA],[GAG],Glu],
+        [[GGT,GGC],[GGA],[GGG],Gly],
+        [[CAT,CAC],His],
+        [[ATT,ATC],[ATA],Ile],
+        [[TTA],[TTG],[CTT,CTC],[CTA,CTG],Leu],
+        [[AAA],[AAG],Lys],
+        [[ATG],Met],
+        [[TTT,TTC],Phe],
+        [[CCT,CCC],[CCA,CCG],Pro],
+        [[TCT,TCC],[TCA],[TCG],[AGT,AGC],Ser],
+        [[ACT,ACC],[ACA],[ACG],Thr],
+        [[TGG],Trp],
+        [[TAT,TAC],Tyr],
+        [[GTT,GTC],[GTA],[GTG],Val] ]:
+YEAST_tRNA := yeast_tRNA:
+
+
+# extended wobble rules for prokaryotes (checked with B.subtillus),
+# according to Crick 1968.  This is just an aproximation since the tRNA
+# recognision is in reality wider.  Codons that can be recognized by
+# several tRNAs is not considered 
+prokaryotes_tRNA := [
+  [[GCT,GCC],[GCA,GCG],Ala],
+  [[CGT,CGC,CGA],[CGG],[AGA],[AGG],Arg],
+  [[AAT,AAC],Asn],
+  [[GAT,GAC],Asp],
+  [[TGT,TGC],Cys],
+  [[CAA,CAG],Gln],
+  [[GAA,GAG],Glu],
+  [[GGT,GGC],[GGA,GGG],Gly],
+  [[CAT,CAC],His],
+  [[ATT,ATC],[ATA],Ile],
+  [[TTA,TTG],[CTT,CTC],[CTA,CTG],Leu],
+  [[AAA,AAG],Lys],
+  [[ATG],Met],
+  [[TTT,TTC],Phe],
+  [[CCT,CCC],[CCA,CCG],Pro],
+  [[TCT,TCC],[TCA,TCG],[AGT,AGC],Ser],
+  [[ACT,ACC],[ACA,ACG],Thr],
+  [[TGG],Trp],
+  [[TAT,TAC],Tyr],
+  [[GTT,GTC],[GTA,GTG],Val] ]:
+Bacteria_tRNA := prokaryotes_tRNA:
+Archaea_tRNA := prokaryotes_tRNA:
+
+# The wobble rules for eukaryotes, according Guthtie 1982, check with
+# tRNA genes for human not doable at this point scince we need a TPI
+# measure that can treat 5 kinds of tRNA
+eukaryotes_tRNA := [
+  [[GCT,GCC],[GCA],[GCG],Ala],
+  [[CGT,CGC],[CGA],[CGG],[AGA],[AGG],Arg],
+  [[AAT,AAC],Asn],
+  [[GAT,GAC],Asp],
+  [[TGT,TGC],Cys],
+  [[CAA],[CAG],Gln],
+  [[GAA],[GAG],Glu],
+  [[GGT,GGC],[GGA],[GGG],Gly],
+  [[CAT,CAC],His],
+  [[ATT,ATC],[ATA],Ile],
+  [[TTA],[TTG],[CTT,CTC],[CTA],[CTG],Leu],
+  [[AAA],[AAG],Lys],
+  [[ATG],Met],
+  [[TTT,TTC],Phe],
+  [[CCT,CCC],[CCA],[CCG],Pro],
+  [[TCT,TCC],[TCA],[TCG],[AGT,AGC],Ser],
+  [[ACT,ACC],[ACA],[ACG],Thr],
+  [[TGG],Trp],
+  [[TAT,TAC],Tyr],
+  [[GTT,GTC],[GTA],[GTG],Val] ]:
+Eukaryota_tRNA := eukaryotes_tRNA:

@@ -1,0 +1,103 @@
+# Execute a system command, like a viewer or some other system interaction
+#
+#	SystemCommand( operation, additional_arguments )
+#
+#	The table in this module allows extension for a particular
+#	system installation or a particular placement of executables
+#
+#				Gaston H. Gonnet (Dec 29, 2004)
+#
+module external SystemCommand;
+
+Command := table():
+
+
+
+#  HTML viewer -- one additional parameter, the name of the file which
+#		contains html source.  The process should be detached to
+#		allow stand-alone perusal.
+Command['HTML'] := 'netscape %s &':
+Command['HTMLlinux'] := 'netscape -no-session-management %s &':
+Command['HTMLmacintosh'] :=
+    'open %s &':
+Command['HTMLDarwin'] := Command['HTMLmacintosh']:
+
+
+
+#  postscript viewer -- one additional parameter, the name of the postscript
+#		file.  (Usually a file ending in ".ps")  The process should
+#		detach to allow stand-alone perusal This is the command
+#		that will show all the darwin plots.
+Command['postscript'] := 'gv %s &':
+Command['postscriptlinux'] := 'gv  --orientation=landscape %s &':
+Command['postscriptmacintosh'] :=
+    'open %s &':
+Command['postscriptDarwin'] := Command['postscriptmacintosh']:
+
+
+#  darwin -- two additional parameters, the name of a file with darwin
+#		input commands and the name of the file where the output will
+#		be placed.  The input file should end with a "quit" command,
+#		else the spawned darwin will attempt to read from the user
+#		once that all the commands are executed.
+Command['darwin'] := 'darwin <%s >%s':
+for z in [ 'solaris', 'irix', 'irix32', 'axp', 'linux',
+    'macintosh', 'macosx64' ] do
+    Command['darwin'.z] := '/home/darwin/v2/source/' . z .
+	'/darwin -l /home/darwin/v2/source/lib <%s >%s' od;
+
+
+
+#  date -- this is not needed as a system interface, date() is a
+#		command in darwin.
+
+
+
+#  hostname -- this is not needed as a system command, hostname() is a
+#		command in darwin.
+
+
+
+#  gimp, picture processing software (could be gimp, photoshop or
+#		something equivalent) -- one additional parameter,
+#		the name of the file (typically a jpg, gif, ps or pdf)
+Command['gimp'] := 'gimp %s':
+Command['gimplinux'] := 'gimp %s':
+Command['gimpmacintosh'] := '/Volumes/Gimp/Gimp.app/Contents/MacOS/Gimp %s':
+
+
+
+#  rm, remove file(s) -- one additional argument with the name(s) of the
+#		file(s) to be removed.  The removing is forced and without
+#		questions asked.
+Command['rm'] := '/bin/rm -f %s':
+
+
+
+
+#  maple, the computer algebra system -- two additional parameters, the
+#		name of a file with maple input commands and the name of
+#		the file where the output will be placed.  Maple is run
+#		with option quiet to avoid unnecessary/confusing output.
+Command['maple'] := maplepath.' -q <%s >%s':
+
+
+
+Command['whoami'] := 'whoami >%s':
+Command['latex'] := 'latex %s':
+
+ThisSystem := version()[2];
+
+SystemCommand := proc( operation:string )
+comm := Command[operation.ThisSystem];
+if comm='unassigned' then comm := Command[operation] fi;
+if comm='unassigned' then
+     error(operation,'is an unknown operation, please see ?SystemCommand') fi;
+
+comm := traperror( sprintf( comm, args[2..nargs] ));
+if comm=lasterror then
+     error(args,'mismatched number of additional arguments') fi;
+CallSystem( comm );
+end:
+
+end:

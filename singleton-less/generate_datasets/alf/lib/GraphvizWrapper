@@ -1,0 +1,20 @@
+# Wrapper for graphviz package (http://www.graphviz.org)
+# Created 1 Apr 2010
+# Author Daniel Dalquen
+GraphViz_PartialOrder := proc(po:PartialOrder, fn:string; (t='ps'):string)
+    # plots a partial order in a file of type t, using the graphviz package (http://graphviz.org)
+    OpenWriting('temp.gv'):
+    printf('digraph PartialOrderGraph {\n\trankdir=LR;\n\tsize="10,7"\n\trotate=90\n\tnode [shape = circle];\n'):
+    for e in po do
+        printf('%a -> %a [ label = %d ];\n', e[1], e[3], e[2]):
+    od:
+    printf('}\n'):
+    OpenWriting(previous):
+    r := CallSystem('dot -T'.t.' -o'.fn.'.'.t.' temp.gv'):
+    if r <> 0 then
+        printf('could not generate postscript file. graphviz package not installed\n'):
+    else
+        CallSystem('rm -f temp.gv'):
+    fi:
+end:
+

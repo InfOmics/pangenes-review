@@ -1,0 +1,54 @@
+#
+#	FileStat - interface to the unix stat command
+#
+#       This  function return information about the specified file.  You
+#       do not need any access rights to the file to get this  information
+#       but  you  need  search rights to all directories named in the path
+#       leading to the file.
+#
+#					Gaston H Gonnet (May 27, 2005)
+#
+FileStat := proc( path:string,
+	   st_dev:posint,       # device
+           st_ino:integer,      # inode
+           st_mode:posint,      # protection
+           st_nlink:integer,    # number of hard links
+           st_uid:integer,      # user ID of owner
+           st_gid:integer,      # group ID of owner
+           st_rdev:integer,     # device type (if inode device)
+           st_size:integer,     # total size, in bytes
+           st_blksize:posint,   # blocksize for filesystem I/O
+           st_blocks:integer,   # number of blocks allocated
+           st_atime:integer,    # time of last access
+           st_mtime:integer,    # time of last modification
+           st_ctime:integer)    # time of last change
+
+if nargs=1 then proc(path:string) option builtin; 304 end(If(path[1]='~',getenv('HOME').path[2..-1], path))
+elif nargs=14 then noeval(procname(args))
+else error('invalid arguments') fi
+end:
+
+NormalizePath := proc(path)
+    if path='' then return('.') fi:
+    for i to length(path) while path[i]='/' do od:
+    # possix allows at most two slashes, if more, treat as one
+    initSlash := If(i>3, 1, min(2,i-1));
+    comps := SearchDelim('/', path);
+    new_comps := [];
+    for comp in comps do
+        if member(comp, {'','.'}) then next;
+        elif comp<>'..' or (initSlash=0 and length(new_comps)=0) or
+                (length(new_comps)>0 and new_comps[-1]='..') then
+            new_comps := append(new_comps, comp);
+        elif length(new_comps)>0 then
+            new_comps := new_comps[1..-2];
+        fi:
+    od:
+    new_path := ConcatStrings(new_comps,'/');
+    if initSlash>0 then 
+        new_path := CreateString(initSlash,'/') . new_path;
+    fi:
+    return( If(new_path='','.',new_path) )
+end:
+
+

@@ -1,0 +1,10 @@
+#
+# atoi: convert a number (in ascii format) to an integer
+#
+#     The atoi function recognizes (in order), an optional string of
+#     spaces, an optional sign, then a string of digits.
+#
+atoi := proc( s:string )
+  res := sscanf(s,'%f');
+  if length(res)=0 then 0 else trunc(res[1]) fi
+end:

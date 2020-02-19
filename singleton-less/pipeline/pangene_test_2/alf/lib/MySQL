@@ -1,0 +1,101 @@
+
+# checklist is the optional list of columns that must be parsed (e.g. are numbers)
+
+MySqlResult := proc(ColumnLabels:list(string), Data:matrix)
+    noeval(procname(args)):
+end:
+
+MySqlResult_select := proc(x,sel,val)
+    if nargs>2 then error('can not modify MySqlResult') fi:
+    k := SearchArray(sel, x['ColumnLabels']):
+	if k<=0 then error('unknown column selector') fi:
+	return( [seq(z[k], z=x['Data'])] );
+end:
+
+MySqlResult_print := proc(x)
+    tab := Table(center,border,gutter=3, Row( op(x['ColumnLabels']) ),
+	             Rule, seq( Row(op(z)), z=x['Data']) ):
+    print(tab):
+end:
+CompleteClass(MySqlResult):
+
+MySql := proc(query; setParseColumns:{list(posint),set(posint)}, 
+                       'database'=((mysqlDB=''):string),
+					   'user'=((user='darwin'):string),
+					   'password'=((password=''):string),
+					   'port'=((portnr=-1):integer),
+					   'host'=((host='linneus54.inf.ethz.ch'):string))
+
+     SearchDelim := proc( delim:string, txt:string ) -> list(string);
+         if length(delim) < 1 then error(delim,'delimiter cannot be empty') fi;
+         r := [];
+         if type(txt,'name') then s := ''.txt else s := txt fi;
+         do   i := CaseSearchString( delim, s );
+              if i < 0 then return( append(r,s) ) fi;
+              r := append(r,s[1..i]);
+              s := i+length(delim) + s;
+         od
+     end:
+
+     tmpfile := '/tmp/tmpsql.'.string(getpid());
+	 db   := If(mysqlDB<>'', '-D '.mysqlDB, 
+	         If(host='linneus54.inf.ethz.ch','-D vpeikert', ''));
+     pass := If(password<>'', '-p'.password, '');
+	 port := If(portnr>0, '-P'.portnr,'');
+     command := sprintf('mysql -u %s -h %s %s %s -B -C %s', 
+	                    user, host, pass, port, db);
+     #fetch raw output list
+     if length(query) > 1000 then
+         command := command . ' < ' . tmpfile:
+         OpenWriting(tmpfile);
+         prints(query);
+         OpenWriting(previous);
+     else
+	     command := command . ' -e "'.query.';" 2>&1'
+     fi;
+         
+     if printlevel > 2 then lprint(command) fi:
+     raw := [];
+
+     OpenPipe(command):
+     s := ReadRawLine():
+     if s <> EOF then
+         if s[-1] = '\n' then s := s[1..-2]; fi;
+		 if s[1..5] = 'ERROR' then error(s) fi:
+         if SearchString('sh: mysql: command not found', s)>=0 then
+			 error('Mysql client not found'); fi:
+         raw := append(raw, SearchDelim('\t', s)):
+         ncols := length(raw[1]);
+         s := ReadRawLine():
+         while s <> EOF do
+             if s[-1] = '\n' then s := s[1..-2]; fi;
+             tmp := SearchDelim('\t',s);
+             if length(tmp) < ncols then
+                 #maybe the rest is in the next line (this happens if the line 
+                 #is too long...) or it was already stored 
+                 if length(tmp) = 1 then 
+                     raw[-1,-1] := raw[-1,-1].tmp[1]; 
+                 else
+                     error('too many columns in mysql output (carry over?)');
+                 fi;
+             elif length(tmp) = ncols then
+                 raw := append(raw, tmp):
+             else
+                 error('too many columns in mysql output');
+             fi;
+             s := ReadRawLine():
+         od:
+     fi:
+     if length(raw) = 0 then return( MySqlResult([],[[]]) ); fi;
+
+     #parse darwin types
+     if assigned(setParseColumns) then 
+         for i from 2 to length(raw) do
+             for j in setParseColumns do
+                   raw[i,j] := parse(raw[i,j]):
+             od:
+         od:
+     fi;
+     return( MySqlResult(raw[1],If(length(raw)>1,raw[2..-1],[[]])) );
+end:
+

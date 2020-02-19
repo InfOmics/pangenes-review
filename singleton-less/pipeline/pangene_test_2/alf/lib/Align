@@ -1,0 +1,341 @@
+#
+#        New Align function and Alignment class
+#
+#        (will be implemented internally eventually)
+#
+#                                Gaston H Gonnet (Nov 23rd, 2001)
+#
+Align := proc( seq1, seq2 ;
+        (method='Local') : { 'Local', 'Global', 'CFE', 'Shake',
+                             MinLength(posint), Shake(posint) },
+        (modif=NULL) : { 'NoSelf', 'LogDel' },
+        'ApproxPAM' = (dm1:positive),
+        dm : { DayMatrix, list(DayMatrix) },
+	'PamList' = ((PamList=[35, 49, 71, 98, 115, 133, 152, 174, 200, 229,
+		262, 300]) : list(numeric))
+) -> Alignment;
+
+if not assigned(dm) then
+     if type(DM,DayMatrix) then dm := DM
+     elif type(NewLogPAM1,array(numeric,20,20)) then
+          dm := CreateDayMatrix(NewLogPAM1,250)
+     else error(args,'Dayhoff matrix not specified') fi
+     fi;
+Arbitrary := type(dm,DayMatrix) and dm['Mapping'] <> AToInt or
+	     type(dm,list) and dm[1,'Mapping'] <> AToInt;
+
+if Arbitrary then
+     seqs := [ If( type(seq1,Entry), Sequence(seq1), string(seq1) ),
+	       If( type(seq2,Entry), Sequence(seq2), string(seq2) ) ]
+else seqs := [Sequence(seq1),Sequence(seq2)] fi;
+modif := {modif,method};
+
+if type(dm,DayMatrix) then
+     dps := DynProgScore(op(seqs),dm,modif);
+     Alignment( seqs[1,dps[2]], seqs[2,dps[3]], dps[1], dm, 0, 0, modif )
+
+elif type(dm,list(DayMatrix)) then
+     if not member(NoSelf,modif) and sequal(seqs[1],seqs[2]) and
+	length(seqs[1]) > 1 then
+         al := Align( seqs[1], copy(seqs[1]), dm, op(modif) );
+         al[Seq2] := al[Seq1];
+         return( al ) fi;
+
+     
+     tol := 1e-10;
+     mep := [-1e10];
+     for z in If( type(dm1,positive), dm1, PamList) do
+         dm2 := SearchDayMatrix(z,dm);
+         dps2 := DynProgScore(op(seqs),dm2,modif);
+	 # it is important to choose the maximum local maximum
+         dpst := DynProgStrings( Alignment( seqs[1,dps2[2]], seqs[2,dps2[3]],
+		dps2[1], dm2, 0, 0, modif ));
+         mep2 := EstimatePam(dpst[2],dpst[3],dm);
+         if mep2[1]-dpst[1] < -tol*abs(mep2[1]) or
+            dpst[1]-dps2[1] < -tol*abs(dpst[1]) then
+             error(dm2,dps2,dpst,mep2,'Score decreased: should not happen') fi;
+         if mep2[1] > mep[1] then dps := dps2;  dm1 := dm2;  mep := mep2 fi;
+     od;
+
+     do  dm2 := SearchDayMatrix( mep[2], dm );
+         if dm2 = dm1 then 
+	     # the best matrix is already one of the starting points.
+     	     # but we have to make sure MLPamDistance is correct
+     	     dpst := DynProgStrings(Alignment( seqs[1,dps[2]], seqs[2,dps[3]], 
+		     dps[1], dm1, mep[2], mep[3], modif ));
+      	     EstimatePam(dpst[2],dpst[3],dm);
+	     break 
+	 fi;
+
+	 dps2 := dps;
+         dps := DynProgScore(op(seqs),dm2,modif);
+         if dps[1] < mep[1]-1e-6*|dps[1]| then
+              # if it is Shake or MinLength, the good match found so far
+              # may not be found again, so try again as close as possible
+	      of1 := dps2[2,1]-1;
+	      of2 := dps2[3,1]-1;
+	      dps := DynProgScore( of1+seqs[1], of2+seqs[2], dm2, modif );
+	      if dps[1] < mep[1]-1e-6*|dps[1]| then
+		   error('unable to optimize PAM distance') fi;
+              dps := [ dps[1], dps[2,1]+of1 .. dps[2,2]+of1,
+                               dps[3,1]+of2 .. dps[3,2]+of2 ]
+         fi;
+
+         dm1 := dm2;
+
+         dpst := DynProgStrings( Alignment( seqs[1,dps[2]], seqs[2,dps[3]],
+		dps[1], dm1, 0, 0, modif ));
+         mep := EstimatePam(dpst[2],dpst[3],dm);
+
+         if mep[1]-dps[1] < -tol*abs(mep[1]) then
+	     error(dps,dpst,mep,dm1,dps[1]-mep[1],
+	           'Score did not improve, should not happen')
+         fi;
+     od;
+
+     Alignment( seqs[1,dps[2]], seqs[2,dps[3]], dps[1], dm1,
+	 mep[2], mep[3], modif );
+
+else error('should not happen') fi;
+
+end:
+
+
+
+
+
+Alignment := proc( Seq1:string, Seq2:string, Score:numeric,
+        DayMatrix:DayMatrix, PamDistance:nonnegative, PamVariance:nonnegative,
+        modes:set({string,structure}) ) option polymorphic;
+if nargs<6 then error(args,'not enough arguments in Alignment') fi;
+noeval(Alignment(args))
+end:
+
+
+Alignment_type := {
+  noeval(Alignment(string,string,numeric,DayMatrix,numeric,numeric)),
+  noeval(Alignment(string,string,numeric,DayMatrix,numeric,numeric,
+        set({string,structure})))}:
+
+
+
+Alignment_select := proc( al, sel, val )
+local i;
+if nargs=3 then error('cannot modify an Alignment, create a new one')
+elif sel=Length1 then length(al[Seq1])
+elif sel=Length2 then length(al[Seq2])
+elif sel=Offset1 then GetOffset(al[Seq1])
+elif sel=Offset2 then GetOffset(al[Seq2])
+elif sel=PamNumber then al[PamDistance]
+elif sel=Sim then al[Score]
+elif sel=Identity then
+     dps := DynProgStrings(al);
+     s1 := dps[2];  s2 := dps[3];
+     sum( If(s1[i]=s2[i],1,0), i=1..length(s1) ) / max(1,length(s1))
+elif sel='Evalue' then exp( EstimateLogEvalue(al) );
+else error(sel,'is an invalid selector for an Alignment') fi
+end: 
+
+
+Alignment_Match := proc( al:Alignment )
+if al[PamDistance]=0 then
+     Match( al[Score], GetOffset(al[Seq1]), GetOffset(al[Seq2]),
+        length(al[Seq1]), length(al[Seq2]), al[DayMatrix,PamNumber] )
+else Match( al[Score], GetOffset(al[Seq1]), GetOffset(al[Seq2]),
+        length(al[Seq1]), length(al[Seq2]), al[PamDistance],
+        al[PamVariance] ) fi
+end:
+
+
+Match_Alignment := proc( m:Match )
+if m[PamNumber]=0 then
+     dm := If( type(DM,DayMatrix), DM, CreateDayMatrix(logPAM1,250) )
+elif type(DMS,list(DayMatrix)) then dm := SearchDayMatrix(m[PamNumber],DMS)
+else dm := CreateDayMatrix(logPAM1,m[PamNumber]) fi;
+
+s1 := m[Offset1]+DB[string];
+s2 := m[Offset2]+DB[string];
+if m[Length1]=0 and m[Length2]=0 then
+     Align( s1, s2, dm, Shake )
+else s1 := s1[1..m[Length1]];
+     s2 := s2[1..m[Length2]];
+     Alignment( s1, s2, m[Sim], dm, m[PamNumber], m[PamVariance] )
+     fi
+end:
+
+
+Alignment_print := proc( al ) option internal;
+
+  if al[DayMatrix,type]='Codon' then 
+	PrintCodonAlignment(al);
+	return();
+  elif al[DayMatrix,type] = 'Nucleotide' and
+       al[DayMatrix,Mapping] = CodonToCInt then
+	m := Match(al);
+	print_NMatch( m, al[DayMatrix], DynProgStrings(m,al[DayMatrix]) );
+	return()
+  fi;
+  spm := DynProgStrings(al);
+  dm := al[DayMatrix];
+  ls := length(spm[2]);
+  iden := 0;
+  mid := CreateString(ls);
+  map := dm['Mapping'];
+  for i to ls do 
+      c2i := map(spm[2,i]);
+      c3i := map(spm[3,i]);
+
+      # transform non-printable characters to spaces, otherwise
+      # the alignment is broken (tabs, newlines, etc.)
+      k := AsciiToInt(spm[2,i]);
+      if k < 32 or k > 126 then spm[2,i] := ' ' fi;
+      k := AsciiToInt(spm[3,i]);
+      if k < 32 or k > 126 then spm[3,i] := ' ' fi;
+      if   c2i = c3i then iden := iden+1;  mid[i] := '|'
+      elif spm[2,i]='_' or spm[3,i]='_' then next
+      elif map <> AToInt or c2i <= 20 and c2i >= 1 and
+                            c3i <= 20 and c3i >= 1 then
+           c := dm[Sim,c2i,c3i];
+           if   c >= 0 then
+                mid[i] := If(dm[MaxOffDiag]*0.5 < c,'!',':')
+           elif dm[MinSim]*0.5 < c then mid[i] := '.' fi
+      fi
+  od;
+  evalue := traperror(If(member('Local',al['modes']),sprintf(', Evalue=%.2g',al['Evalue']),''));
+  if evalue=lasterror then evalue := '' fi:
+  printf( 'lengths=%d,%d simil=%3.1f, PAM_dist=%g, identity=%3.1f%%%s\n',
+        al[Length1], al[Length2], spm[1], al[DayMatrix,PamNumber],
+        100*iden/max(1,ls), evalue);
+  PrintHeader(al[Seq1]);
+  PrintHeader(al[Seq2]);
+  if ls=0 then return() fi;
+  width := Set(screenwidth = 80);
+  Set(screenwidth = width);
+  for i by width to ls do
+      printf( '%s\n%s\n%s\n', spm[2,i..min(i+width-1,ls)],
+	  mid[i..min(i+width-1,ls)], spm[3,i..min(i+width-1,ls)] );
+      if i+width <= ls then lprint() fi
+  od
+end:
+
+Alignment_string := proc( al ) option internal;
+# emergency version
+OpenWriting( '.tempAlign.out' );
+print( al );
+OpenWriting( 'terminal' );
+ReadRawFile( '.tempAlign.out' )
+end:
+
+
+
+Alignment_lprint := proc( al ) option internal;
+printf( 'Alignment(%' .
+    (If(length(al[Seq1]) < 10000, 'A,%', 'a,%')) .
+    (If(length(al[Seq2]) < 10000, 'A', 'a')), al[Seq1], al[Seq2] );
+if not type(al,Alignment) then
+    # lprint may be called with some symbolic forms of Alignment
+    for i from 3 to length(al) do printf( ',%A', al[i] ) od;
+    printf( ')' );
+    return()
+    fi;
+printf( ',%A,%A', al[Score], al[DayMatrix] );
+printf( ',%A,%A', al[PamDistance], al[PamVariance] );
+if length(al)=7 then printf( ',%a)', al['modes'] ) else printf( ')' ) fi
+end:
+
+
+Alignment_Sequence := proc( al ) option internal;
+al[Seq1], al[Seq2]
+end:
+
+
+Alignment_Rand := proc() option internal;
+s1 := Rand(Protein(Rand( 100..400 )));
+s2 := Mutate(s1,Rand(20..100),ZipfGaps);
+if not type(DM,DayMatrix) then CreateDayMatrices() fi;
+Align(s1,s2,DM,If(Rand()<2/3,Local,Global))
+end:
+
+CompleteClass(Alignment);
+
+LoadEvalueParams := proc() option internal;
+    s := ReadRawFile(libname.'/altschul.gbc.fitted');
+    data := [seq([seq(parse(xx),xx=SearchDelim('\t',trim(z)))], z=SplitLines(s))];
+    labels := data[1];
+    if not labels = ['PAM','lambda','K','H'] then
+        error('stored parameters do not correspond to expected ones');
+    fi:
+    data := data[2..-1];
+    while length(data)>0 and not type(data,matrix(numeric)) do 
+        data := data[1..-2] 
+    od:
+    data := transpose(sort(data));
+    return( data );
+end:
+
+EstimateLogEvalue := proc()
+    if _IsGBCmatrix<>true then 
+        error('EstimateLogEvalue of an alignment is only available for the "Benner, Gonnet and Cohen" Dayhoff Matrices');
+    fi:
+    if nargs>=1 and type(args[1],Alignment) then
+        if nargs=1 then 
+            len1 := args[1,'Length1']; len2 := args[1,'Length2']; 
+        elif nargs=2 then 
+            if type(args[2],numeric) then 
+                len1 := args[1,'Length1']; len2 := args[2];
+            else error('expected a numeric value as second argument') fi:
+        elif nargs>=3 then
+            len1 := args[2]; len2 := args[3];
+            if not type(len1, numeric) or not type(len2,numeric) then 
+                error('expected numeric values for 2nd and 3rd arg');
+            fi:
+        fi:
+        score := args[1,'Score']; 
+        pam := args[1,'PamDistance'];
+        if pam=0 then pam := args[1,'DayMatrix','PamDistance'] fi:
+        if not member('Local',args[1,'modes']) then 
+            warning('Evalue theorie only valid for local alignments.');
+        fi:
+    elif nargs=4 then
+        score := args[1]; pam := args[2]; len1 := args[3]; len2 := args[4];
+    else error('unexpected arguments');
+    fi:
+    
+    data := remember(LoadEvalueParams());
+    i := SearchOrderedArray(pam, data[1]);
+    dm := SearchDayMatrix(pam, DMS);
+    K := data[3,i]; lambda := data[2,i];
+    lenCorr := ln(K*len1*len2) / remember(FindEntropy(dm));
+    if lenCorr<0 or lenCorr/min(len1,len2) > 0.3 then
+        warning('strong edge effects. estimated evalue might be too big');
+    fi:
+
+    effLen1 := max(1.2,len1-lenCorr);
+    effLen2 := max(1.2,len2-lenCorr);
+    e := K*effLen1*effLen2*exp(-lambda*score);
+    logEvalue := -lambda*score + ln( K*effLen1*effLen2);
+
+    if printlevel>3 then 
+       printf('Summary of Evalue estimation:\n pam=%f, score=%f, lambda=%f, K=%f, lenCorr=%f, effLens=%f,%f\n',
+           pam, score, lambda, K, lenCorr, effLen1,effLen2);
+    fi:
+    return( logEvalue );
+end:
+
+
+TestEvalueEstimates := proc(score, pam, len1, len2) option internal;
+    evalue := exp(EstimateLogEvalue(args));
+    samples := ceil(50/evalue);
+    fnd := 0; 
+    printf('testing evalue of %g. nr samples: %d\n', evalue, samples);
+    for i to samples do 
+        s1 := Rand(Protein(len1));
+        s2 := Rand(Protein(len2));
+        a := Align(s1,s2,SearchDayMatrix(pam,DMS));
+        if a['Score']>score then fnd := fnd + 1; fi;
+    od:
+    printf('Estimated evalue: %f, Sampled evalue: %f\n', evalue, fnd/samples);
+end:
+
+
+

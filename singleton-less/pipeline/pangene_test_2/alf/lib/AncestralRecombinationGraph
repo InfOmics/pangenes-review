@@ -1,0 +1,424 @@
+module external ARG, ARG_type, ARGNode_type, CoalescentNode, CoalescentNode_select, CoalescentNode_type, RecombinationNode, RecombinationNode_select, RecombinationNode_type, LeafNode, LeafNode_select, LeafNode_type, ValidateARG, GraphViz_ARG;
+# data structure for ancestral recombination graph
+ARG := proc(nodes:list(ARGNode))
+    option polymorphic:
+    if length(nodes) = 0 then
+        error('list of nodes must not be empty'):
+    fi:
+
+    AccessTable := table():
+    for i to length(nodes) do
+        n := nodes[i]:
+        AccessTable[n['name']] := i:
+    od:
+    
+    # check consistency
+    names := {seq(n, n=Indices(AccessTable))}:
+    # check for duplicate names
+    if length(names) <> length(nodes) then
+        error('node list contains duplicate names'):
+    fi:
+    
+    rootFound := false:
+    for n in nodes do
+        # make sure there's only one root and all links are to existing nodes
+        if type(n, CoalescentNode) and n['parent'] = NULL then
+            if rootFound then
+                error(n, 'multiple root nodes in graph'):
+            elif {n['child1']} intersect names = {} or {n['child2']} intersect names = {} then
+                error(n, 'found inexistent reference in node'):
+            else
+                rootFound := true:
+            fi
+        elif (type(n, CoalescentNode) and ({n['parent']} intersect names = {} or
+                                         {n['child1']} intersect names = {} or
+                                         {n['child2']} intersect names = {})) or
+           (type(n, RecombinationNode) and ({n['parent1']} intersect names = {} or
+                                            {n['parent2']} intersect names = {} or
+                                            {n['child']} intersect names = {})) or
+           (type(n, LeafNode) and ({n['parent']} intersect names = {})) then
+                error(n, 'found inexistent reference in node'):
+        fi:
+    od:
+    if not rootFound then error('root node is missing') fi:
+
+    ValidateARG(nodes, AccessTable):
+
+    noeval(procname(args, AccessTable))
+end:
+
+ARG_type := noeval(structure(anything, ARG)):
+
+ARGNode_type := noeval({structure(anything,CoalescentNode), structure(anything, RecombinationNode), structure(anything, LeafNode)}):
+
+ValidateARG := proc(nodes:list; (AccessTable=0):{0, table})
+    global EncounteredARGEdges, VisitedARGEdges, VisitedARGNodes;
+    EncounteredARGEdges := {}:
+    VisitedARGEdges := {}:
+    VisitedARGNodes := table(0):
+
+    if AccessTable = 0 then
+        at := table():
+        for i to length(nodes) do at[nodes[i, 'name']] := i od:
+    else
+        at := AccessTable:
+    fi:
+
+    root := 0:
+    for n in nodes do
+        if type(n, CoalescentNode) and n['parent'] = NULL then
+            root := n:
+            break
+        fi
+    od:
+
+    VisitedARGNodes[root['name']] := VisitedARGNodes[root['name']] + 1:
+    ValidateARG_R(nodes[at[root['child1']]], root['name'], 'child1', nodes, at):
+    ValidateARG_R(nodes[at[root['child2']]], root['name'], 'child2', nodes, at):
+
+    if EncounteredARGEdges minus VisitedARGEdges <> {} then
+        error('some part of the graph are not connected to the root'):
+    fi:
+
+    for n in nodes do
+        if VisitedARGNodes[n['name']] = 0 then
+            error(n, 'node is not connected to the graph'):
+        fi:
+    od:
+end:
+
+ValidateARG_R := proc(n, pn, outLink, nodes, at)
+    global EncounteredARGEdges, VisitedARGEdges, VisitedARGNodes;
+    option internal;
+    
+    if type(n, CoalescentNode) then
+        if VisitedARGNodes[n['name']] > 0 then error(n, 'node visited more than once') fi:
+        VisitedARGNodes[n['name']] := 1:
+        if n['parent'] <> pn then error(n, 'parent link doesn''t match parent node') fi:
+        VisitedARGEdges := append(VisitedARGEdges, [pn, outLink, n['name'], 'parent']):
+        ValidateARG_R(nodes[at[n['child1']]], n['name'], 'child1', nodes, at):
+        ValidateARG_R(nodes[at[n['child2']]], n['name'], 'child2', nodes, at):
+
+    elif type(n, RecombinationNode) then
+        if VisitedARGNodes[n['name']] > 1 then error(n, 'node visited more than twice') fi:
+        if not (n['parent1'] = pn or n['parent2'] = pn) then error(n, 'parent link doesn''t match parent node') fi:
+        VisitedARGNodes[n['name']] := VisitedARGNodes[n['name']] + 1:
+        if n['parent1'] = n['parent2'] then # special case
+            p := nodes[at[pn]]:
+            if not type(p, CoalescentNode) then error(n, 'parent node doesn''t support multiple outgoing edges') fi:
+            if not p['child1'] = p['child2'] then error(n, 'parent link doesn''t match parent node') fi:
+            VisitedARGEdges := append(VisitedARGEdges, [pn, 'child1', n['name'], 'parent1'],
+                                                       [pn, 'child2', n['name'], 'parent2']):
+        else
+            if n['parent1'] = pn then
+                pl := 'parent1':
+                epl := 'parent2':
+            else
+                pl := 'parent2':
+                epl := 'parent1':
+            fi:
+
+            ep := nodes[at[n[epl]]]:
+            if type(ep, CoalescentNode) then
+                if(ep['child1'] = n['name']) then
+                    ecl := 'child1':
+                elif(ep['child2'] = n['name']) then
+                    ecl := 'child2':
+                else
+                    error(n, 'parent link doesn''t match parent node'):
+                fi:
+            elif type(ep, RecombinationNode) then
+                if ep['child'] = n['name'] then
+                    ecl := 'child':
+                else
+                    error(n, 'parent link doesn''t match parent node'):
+                fi:
+            else
+                error(n, 'parent node has unexpected type'):
+            fi:
+    
+            VisitedARGEdges := append(VisitedARGEdges, [pn, outLink, n['name'], pl]):
+            EncounteredARGEdges := append(EncounteredARGEdges, [ep['name'], ecl, n['name'], epl]):
+        fi:
+
+        # if this is the first time we've visited this node, continue down the graph
+        if VisitedARGNodes[n['name']] = 1 then
+            ValidateARG_R(nodes[at[n['child']]], n['name'], 'child', nodes, at):
+        fi:
+
+    elif type(n, LeafNode) then
+        if VisitedARGNodes[n['name']] > 0 then error(n, 'node visited more than once') fi:
+        VisitedARGNodes[n['name']] := 1:
+        if n['parent'] <> pn then error(n, 'parent link doesn''t match parent node') fi:
+        VisitedARGEdges := append(VisitedARGEdges, [pn, outLink, n['name'], 'parent']):
+    else
+        error('unrecognized node type'):
+    fi:
+
+end:
+
+# Node for coalescent event
+CoalescentNode := proc()
+    option polymorphic;
+    if nargs = 0 then
+        noeval(procname('untitled', 0, 0, 0, 0)):
+    elif nargs = 4 then
+    # root node can be initialized with 3 arguments (two children + height)
+        procname(args[1], 0, args[2..-1]):
+    else
+        # all other internal nodes have 4 arguments (parent, two children + height)
+        if nargs < 4 or nargs > 5 then
+            error('CoalescentNode expects 4 (for root node) or 5 (for inner nodes) arguments'):
+        fi:
+        # type checking for all required 
+        if not type(args[1], string) then
+            error(args[1], 'node name should be a string'):
+        fi:
+        if not (args[2] = 0 or type(args[2], string)) then
+            error(args[2], 'encountered unexpected type for parent!'):
+        fi:
+        if not (args[3] = 0 or type(args[3], string)) then
+            error(args[3], 'encountered unexpected type for child 1!'):
+        fi:
+        if not (args[4] = 0 or type(args[4], string)) then
+            error(args[4], 'encountered unexpected type for child 2!'):
+        fi:
+        if not type(args[5], numeric) then
+            error(args[5], 'encountered unexpected type for height!'):
+        fi:
+
+        noeval(procname(args))
+    fi:
+end:
+
+CoalescentNode_select := proc(u, select, val)
+    sel := uppercase(select):
+    if SearchString('NAME', sel) > -1 then
+        if nargs=3 then
+            if not type(val, string) then error('value has wrong type') fi:
+            u[1] := val
+        else
+            u[1]
+        fi:
+    elif SearchString('PARENT', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[2] := val
+        else
+            if u[2] = 0 then
+                NULL
+            else
+                u[2]
+            fi:
+        fi:
+    elif SearchString('CHILD1', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[3] := val
+        else
+            if u[3] = 0 then
+                NULL
+            else
+                u[3]
+            fi;
+        fi:
+    elif SearchString('CHILD2', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[4] := val
+        else
+            if u[4] = 0 then
+                NULL
+            else
+                u[4]
+            fi;
+        fi:
+    elif SearchString('HEIGHT', sel) > -1 then
+        if nargs = 3 then
+            if not type(val, numeric) then error('value has wrong type') fi:
+            u[5] := val
+        else
+            u[5]
+        fi:
+    else
+        error(select, 'unknown selector for class CoalescentNode'):
+    fi:
+end:
+
+CoalescentNode_type := noeval( CoalescentNode(string, {0, string}, {0, string}, {0, string}, numeric) ):
+
+# Node for recombination event
+RecombinationNode := proc()
+    option polymorphic;
+    if nargs = 0 then
+        noeval(procname('untitled', 0, 0, 0, 0, 0)):
+    else
+        # all recombination event nodes have 6 arguments (parent1, parent2, child, height, breakpoint)
+        if nargs <> 6 then
+            error('RecombinationNode expects 6 arguments'):
+        fi:
+        # type checking for all required
+        if not type(args[1], string) then
+            error(args[1], 'node name should be a string'):
+        fi:
+        if not (args[2] = 0 or type(args[2], string)) then
+            error(args[2], 'encountered unexpected type for parent 1!'):
+        fi:
+        if not (args[3] = 0 or type(args[3], string)) then
+            error(args[3], 'encountered unexpected type for parent 2!'):
+        fi:
+        if not (args[4] = 0 or type(args[4], string)) then
+            error(args[4], 'encountered unexpected type for child!'):
+        fi:
+        if not type(args[5], numeric) then
+            error(args[5], 'encountered unexpected type for height!'):
+        fi:
+        if not type(args[6], posint) then
+            error(args[6], 'encountered unexpected type for breakpoint'):
+        fi:
+        noeval(procname(args))
+    fi:
+end:
+
+RecombinationNode_select := proc(u, select, val)
+    sel := uppercase(select):
+    if SearchString('NAME', sel) > -1 then
+        if nargs=3 then
+            if not type(val, string) then error('value has wrong type') fi:
+            u[1] := val
+        else
+            u[1]
+        fi:
+    elif SearchString('PARENT1', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[2] := val
+        else
+            if u[2] = 0 then
+                NULL
+            else
+                u[2]
+            fi:
+        fi:
+    elif SearchString('PARENT2', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[3] := val
+        else
+            if u[3] = 0 then
+                NULL
+            else
+                u[3]
+            fi;
+        fi:
+    elif SearchString('CHILD', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[4] := val
+        else
+            if u[4] = o then
+                NULL
+            else
+                u[4]
+            fi;
+        fi:
+    elif SearchString('HEIGHT', sel) > -1 then
+        if nargs = 3 then u[5] := val else u[5] fi:
+    elif SearchString('BRKPNT', sel) > -1 then
+        if nargs = 3 then u[6] := val else u[6] fi:
+    else
+        error(select, 'unknown selector for class RecombinationNode'):
+    fi:
+end:
+
+RecombinationNode_type := noeval( RecombinationNode(string, {0, string}, {0, string}, {0, string}, numeric, posint) ):
+
+# Node for a leaf in the ARG
+LeafNode := proc()
+    option polymorphic;
+    if nargs = 0 then
+        noeval(procname('untitleed', 0, 0)):
+    else
+        # leaf nodes have 3 arguments (name, parent, height)
+        if nargs <> 3 then
+            error('LeafNode expects 3 arguments'):
+        fi:
+        # type checking for all required 
+        if not type(args[1], string) then
+           error(args[1], 'node name should be a string'):
+        fi:
+        if not (args[2] = 0 or type(args[2], string)) then
+            error(args[2], 'encountered unexpected type for parent!'):
+        fi:
+        if not type(args[3], numeric) then
+            error(args[3], 'encountered unexpected type for height!'):
+        fi:
+
+        noeval(procname(args))
+    fi:
+end:
+
+LeafNode_select := proc(u, select, val)
+    sel := uppercase(select):
+    if SearchString('NAME', sel) > -1 then
+        if nargs=3 then
+            if not type(val, string) then error('value has wrong type') fi:
+            u[1] := val
+        else
+            u[1]
+        fi:
+    elif SearchString('PARENT', sel) > -1 then
+        if nargs=3 then
+            if not (val = 0 or type(val, string)) then error('value has wrong type') fi:
+            u[2] := val
+        else
+            if u[2] = 0 then
+                NULL
+            else
+                u[2]
+            fi:
+        fi:
+    elif SearchString('HEIGHT', sel) > -1 then
+        if nargs = 3 then u[3] := val else u[3] fi:
+    else
+        error(select, 'unknown selector for class LeafNode'):
+    fi:
+end:
+
+LeafNode_type := noeval( LeafNode(string, {0, string}, numeric) ):
+
+
+CompleteClass(ARG): CompleteClass(CoalescentNode): CompleteClass(RecombinationNode): CompleteClass(LeafNode):
+
+GraphViz_ARG := proc(arg:ARG, fn:string; (t='ps'):string)
+    # plots a ARG in a file of type t, using the graphviz package (http://graphviz.org)
+
+    nodes := arg['nodes']:
+    at := arg[2]:
+
+    OpenWriting('temp.gv'):
+    printf('digraph AncestralRecombinationGraph {\n\trankdir=TD;\n\tsize="10,7"\n\trotate=0\n\tnode [shape = point, label =""];\n'):
+    for n in arg['nodes'] do
+        if type(n, CoalescentNode) then
+            K := nodes[at[n['child1']],'height'] - n['height']:
+            printf('%a -> %a [ label = %g, K = %g ];\n', n['name'], n['child1'], K, K):
+            K := nodes[at[n['child2']],'height'] - n['height']:
+            printf('%a -> %a [ label = %g, K = %g ];\n', n['name'], n['child2'], K, K):
+        elif type(n, RecombinationNode) then
+            K := nodes[at[n['child']],'height'] - n['height']:
+            printf('%a -> %a [ label = %g, K = %g ];\n', n['name'], n['child'], K, K):
+        elif type(n, LeafNode) then
+            printf('%a [ label = %a, shape = circle ];\n', n['name'], n['name']):
+        fi: 
+    od:
+    printf('}\n'):
+    OpenWriting(previous):
+    r := CallSystem('dot -T'.t.' -o'.fn.'.'.t.' temp.gv'):
+    if r <> 0 then
+        printf('could not generate postscript file. graphviz package not installed\n'):
+    else
+        #CallSystem('rm -f temp.gv'):
+    fi:
+end:
+
+end: #module

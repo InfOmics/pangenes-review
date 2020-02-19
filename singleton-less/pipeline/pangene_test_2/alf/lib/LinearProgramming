@@ -1,0 +1,131 @@
+#
+#	LinearProgramming: function to solve a simplex
+#
+#	LinearProgramming( A, b, c ) solves the problem of
+#	finding a vector x such that Ax >= b and c*x is maximum.
+#
+#	This is the unconstrained problem, the variables in x can
+#	be positive or negative, for the classical problem, x >= 0,
+#	these conditions have to be stated explicitly.
+#
+#	If c is 'Feasibility' LinearProgramming will only attempt
+#	to find a feasible solution, which is returned and do no
+#	optimization.  This saves computation.
+#
+#	LinearProgramming returns:
+#
+#		[x,set(posint)] where x is the solution and the set is the
+#				set of indices to rows of A which define
+#				the corner x
+#
+#		SimplexHasNoSolution when there is no solution
+#
+#		SimplexIsSingular when it cannot find a subset of rows
+#				from A which is non-singular
+#
+#		UnboundedSolution( x, d ) where x + h*d, is a solution for any
+#					h>=0 and c*(x+h*d) grows unboundedly.
+#
+#	Gaston H. Gonnet (Sep 29th, 2011)
+#
+LinearProgramming := proc(
+	A:matrix(numeric),
+	b:list(numeric),
+	c:{list(numeric),'Feasibility'} )
+m := length(A);
+n := length(A[1]);
+if length(b) <> m or type(c,list) and length(c) <> n then
+    error('inconsistent dimensions' )
+elif m < n then error('underdefined problem, m<n') fi;
+
+# find initial corner by adding a slack variable
+A2 := []:
+for i to m do A2 := append( A2, append( copy(A[i]), b[i]+Rand(0.5..1.5) )) od:
+x2 := [seq(0,n),1];
+A2 := append(A2,x2):
+b2 := append(copy(b),0);
+
+perm := Shuffle([seq(i,i=1..m)]);
+A3 := [A2[perm[1]]];
+inds := [perm[1]];
+# Gram-Schmidt orthogonalization to find independent subset
+for i from 2 to m do
+    Ai := A2[perm[i]];
+    normAi := Ai^2;
+    if normAi = 0 then next fi;
+    dep := false;
+    for w in A3 do
+	Ai := Ai - (Ai*w) / (w^2) * w;
+	if Ai^2 <= normAi*1e-24 then dep := true;  break fi;
+    od;
+    if dep then next
+    else A3 := append(A3,Ai);  inds := append(inds,perm[i]) fi;
+    if length(A3) >= n+1 then break fi;
+od:
+if length(A3) < n+1 then return( SimplexIsSingular ) fi;
+
+
+inds := {op(inds)};
+for i in inds do A2[i,n+1] := b[i] od;
+r := LinearProgramming_Iterate( A2, b2, [seq(0,n),-1], x2,
+	inds, 'feasibility' );
+
+if |r[1,n+1]| > 1e-12 then return( SimplexHasNoSolution )
+elif c='Feasibility' then return( [r[1,1..n], r[2] minus {r[2,-1]}] ) fi;
+
+LinearProgramming_Iterate( A, b, c, r[1,1..n], r[2] minus {r[2,-1]},
+	'optimization' );
+end:
+
+
+
+
+
+LinearProgramming_Iterate := proc( A:matrix(numeric), b:list(numeric),
+	c:list(numeric), x0:list(numeric), inds0:set(posint), tit:string )
+
+inds := inds0;
+x := x0;
+m := length(A);
+n := length(A[1]);
+all := {seq(i,i=1..m)};
+
+# main loop, from a corner, determine a possible edge to travel
+tol := 10*n*DBL_EPSILON*sqrt(c^2);
+do  invCo := transpose( 1/[seq(A[i],i=inds)] ):
+    dirs := invCo*c;
+    if max(dirs) <= tol then return([x,inds]) fi;  # reached cusp
+    norms := [ seq( sqrt( invCo[j]^2 ), j=1..n) ];
+    dirs := zip( dirs / norms );
+
+    for jmax in sort( [seq(i,i=1..n)], x -> -dirs[x] ) do
+	if dirs[jmax] <= tol then break fi;
+	d := invCo[jmax];
+
+        # find how far it can traverse the edge and which row will replace jmax
+        best := [DBL_MAX,0];
+        for i to m do if not member(i,inds) then
+            Aid := A[i]*d;
+            if Aid < -tol or Aid > tol then
+	        h := (b[i]-A[i]*x) / Aid;
+	        assert( Aid < 0 and h >= 0 or Aid > 0 and h <= 0 );
+	        if Aid < 0 and h < best[1] then
+		    if h = 0 then # row i is cuts the simplex smaller
+			 error(here);
+		    else best := [h,i] fi
+		fi;
+            fi
+        fi od;
+        if best[1] > tol then break fi;
+    od:
+    if best[1] = 0 then return([x,inds]) fi;  # reached cusp
+    if best[1] = DBL_MAX then return( UnboundedSolution( x, d ) ) fi;
+    x := x + best[1]*d;
+    if printlevel >= 3 then
+	printf( 'LP: %s phase, replacing row %d by %d, c*x=%g\n',
+	    tit, inds[jmax], best[2], c*x ) fi;
+    inds := (inds minus {inds[jmax]}) union {best[2]};
+od;
+end:
+
+

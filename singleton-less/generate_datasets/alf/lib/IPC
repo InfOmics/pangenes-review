@@ -1,0 +1,61 @@
+# Purpose: Routines for darwin IPC
+# Author:  Lukas Knecht
+# Created:  1 Nov 1993
+#
+ReceiveDataTcp := proc (timeout: {0,posint}) 
+  description 'Waits up to timeout seconds to receive data from another machine.
+  Returns (machine:string, pid:posint, data:string) or NULL if not successful.';
+ 
+#    OpenAppending('~cbrg/debug/cbrg.trace');
+#  lprint('ReceiveDataTcp:',timeout);
+  do
+    t := ReceiveTcp (timeout);
+    if t <> 'SIGCONT' then break fi
+  od;
+  if t <> NULL and t <> '' then
+    r := sscanf (t, 'DATA %s %d');
+    if length (r) <> 2 then
+      if length (t) > 5 and t[1..5] = 'error' then
+	error (t)
+      else
+	printf ('Received t="%s"\n', t);
+	error ('Invalid message format', t)
+      fi
+    fi;
+    p := CaseSearchString (':', t);
+    if p < 0 then error ('Colon missing') fi;
+    r[1], r[2], t[p+2..-1]
+  else
+    NULL
+  fi
+end:
+
+SendDataTcp := proc (machine: string, pid: posint, data: string) 
+  description 'Sends data to pid on machine.'; 
+#  OpenAppending('~cbrg/debug/cbrg.trace');
+#  lprint('SendTcp:',machine, pid, data);
+  SendTcp ('SEND '.machine.' '.pid.':'.data)
+end:
+
+ReadTcp := proc (timeout: {0,posint})
+  global tmpfile;
+  description 'Waits up to timeout seconds to receive data from another machine
+  and execute it as Darwin commands. Returns (machine:string, pid:posint)
+  or NULL if not successful.'; 
+#  OpenAppending('~cbrg/debug/cbrg.trace');
+#  lprint('ReadTcp:', timeout);
+  printlevel := 3; 
+  r := ReceiveDataTcp (timeout);
+  if r <> NULL then
+    if not assigned (tmpfile) then
+      tmpfile := '/tmp/ParExecute'.getpid();
+    fi;  
+    OpenWriting (tmpfile);
+    printf ('%s', r[3]);
+    OpenWriting (terminal);
+    ReadProgram(tmpfile);
+    r[1], r[2]
+  else
+    NULL
+  fi
+end:

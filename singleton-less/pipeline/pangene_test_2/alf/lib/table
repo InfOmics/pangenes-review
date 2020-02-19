@@ -1,0 +1,58 @@
+#
+#	Implementation of table
+#
+#	Gaston H. Gonnet (April 24th, 2002)
+#	rewritten for new tables using hashing, June 24th, 2010
+#
+table := proc( Table_Values, Table_Default ) option polymorphic, NoIndexing;
+if nargs=0 then noeval(procname([],unassigned))
+elif not type(Table_Values,list(set)) then procname([],args)
+elif nargs=1 then noeval(procname(Table_Values,unassigned))
+elif nargs>2 then error('too many arguments')
+else if length(Table_Values) > 0 then
+	  # has to reinsert everything, as it may have been on a different system
+	  t2 := noeval(table( [], Table_Default ));
+	  for w in Table_Values do for v in w do t2[v[1]] := op(v[2]) od od;
+	  t2
+     else noeval(procname(args)) fi
+fi
+end:
+
+
+# table_select is handled by the kernel completely
+
+
+table_print := proc( tab ) option internal;
+if op(1,tab)=[] then print( '[]\n' );  return() fi;
+for z in Indices(tab) do
+    r := tab[z];
+    printf( '%a  -->  %a\n', z, If( length([r])=1, r, symbol('')(r) ))
+od;
+end:
+
+
+# add the contents of two tables
+table_plus := proc( t1:table, t2:table ) option internal;
+r := copy(t1);
+for i in Indices(t2) do r[i] := r[i]+t2[i] od:
+r
+end:
+
+
+table_type := structure(anything,table):
+
+
+# Indices_iterator is removed in favour of the Iterator function
+# which has no computational advantage.  The Iterator() function has
+# the advantage that can be used by itself.  GhG (19.12.2010)
+
+Indices := proc( tab:table ) option internal;
+{ seq( seq(z[1],z=w), w=op(1,tab)) }
+end:
+
+# convert a table into a list of pairs
+table_list := proc(tab:table ) 
+  l := []:
+  for i in Indices(tab) do l := append(l, [i, tab[i]]) od:
+  return( l );
+end:

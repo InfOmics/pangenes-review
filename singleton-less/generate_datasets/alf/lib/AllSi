@@ -1,0 +1,57 @@
+AllSi := proc (s)
+
+  description 'Generate all possible s/i assignments by
+  systematically replacing all unknown positions.
+  e.g. : > AllSi (''I.I'');
+  [III, ISI]';
+
+  lo := 1;
+  hi := length (s);
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'ILo') <> -1 and type (op (2, args[i]), posint) then
+	lo := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'IHi') <> -1 and type (op (2, args[i]), posint) then
+	hi := op (2, args[i])
+      else
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+  
+  stack := []; sols := []; sol := copy (s); i := 1;
+  
+  for i from lo to hi do
+    if s[i] = '.' then
+      stack := append (stack, i)
+    fi
+  od;
+  
+  j := 1;
+  
+  do
+    if j > length (stack) then
+      sols := append (sols, copy(sol));
+      for j from length (stack) to 0 by -1 do
+	if j = 0 then
+	  return (sols)
+	fi;
+	i := stack[j];
+	if sol[i] = 'I' then
+	  sol[i] := 'S';
+	  break
+	else
+	  sol[i] := '.'
+	fi
+      od
+    else
+      sol[stack[j]] := 'I'
+    fi;
+    j := j + 1;
+  od;
+end:
+
+NULL:

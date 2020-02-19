@@ -1,0 +1,346 @@
+module external KHTest, MLTopoTest, ReadFastaIntoMAlignment;
+
+################################################################################
+#
+# Run KH test on two tree topologies over a MAlignment and retrun whether the
+# null hypothesis is rejected or not. Tree topologies are kept fixed during
+# resampling.
+# Wang Bo, Dec 2011
+#
+# - added convolution code, Stefan Z, March 2012
+
+# Read Fasta MSA into Darwin MAlignment, use '_' instead of '-' as gap
+ReadFastaIntoMAlignment := proc(filename:string)
+    _msa := ReadFasta(filename);
+    
+    alignments := _msa[1];
+    labels := _msa[2];
+    inputseqs := CreateArray(1..length(alignments));
+    
+    for i to length(alignments) do
+        alignments[i] := ReplaceString('-','_',alignments[i]);
+        inputseqs[i] := ReplaceString('_','',alignments[i]);
+        labels[i] := SearchDelim('/', labels[i])[1];
+    od:
+    
+    return(MAlignment(inputseqs,alignments,labels));
+end:
+
+# Find the p-value of test statistic
+pValue := proc(test:float, bootstraps:list(float))
+    N := length(bootstraps);
+    largerCount := 0;
+    for i to N do
+        if bootstraps[i] > test then largerCount:=largerCount+1; fi:
+    od:
+    pval := largerCount / N;
+    return(pval);
+end:
+
+# Remove average value from data
+Centering := proc(data:list(float))
+	avg_data := CreateArray(1..length(data),avg(data));
+	return (data - avg_data);
+end:
+
+# Use TreeResult from PhyML to get likelihood of bootstraps
+RellTreeDelta := proc(tr1:TreeResult, tr2:TreeResult, nrOfBootstraps:posint)
+    if tr1['LnLperSite'] = 'unassigned' or tr2['LnLperSite'] = 'unassigned' then
+        error('TreeResult has no lnL/site values stored'):
+        return():
+    fi:
+    
+    N := length(tr1['LnLperSite']):
+    if N <> length(tr2['LnLperSite']) then
+        error('TreeResult sites number inconsistent'):
+        return():
+    fi:
+    
+    SetRandSeed();
+    deltas := CreateArray(1..nrOfBootstraps):
+    for i to nrOfBootstraps do
+        idxs := [seq(Rand(1..N), j=1..N)]:
+        deltas[i] := sum(tr1['LnLperSite', x], x=idxs) - sum(tr2['LnLperSite', x], x=idxs):
+    od:
+    return(deltas):
+end:
+
+# Try to reject null hypothesis (RELL)
+RejectH0RELL := proc(msa:MAlignment, t1:Tree, t2:Tree; 
+                 'subst'=((subst='LG'):string), 
+                 'nrOfBootstraps'=((nrOfBootstraps=100):posint), 
+                 'sigLevel'=((sigLevel=0.05):float))
+
+    SetRandSeed();
+    tr1 := PhyML(msa,'subst'=subst,'start_tree'=t1,'opt_topo'=false,'opt_branch'=true,'LnLperSite'=true):
+    tr2 := PhyML(msa,'subst'=subst,'start_tree'=t2,'opt_topo'=false,'opt_branch'=true,'LnLperSite'=true):
+    
+    test_delta := tr1['Likelihood'] - tr2['Likelihood'];
+    
+    deltas := RellTreeDelta(tr1,tr2,nrOfBootstraps);
+    
+    # Centering procedure
+    deltas := Centering(deltas);
+    pval := pValue(test_delta, deltas);
+   
+    return(pval<(sigLevel/2) or pval>(1-sigLevel/2));
+end:
+
+# Bootstrap
+BootstrapMSA := proc(msa:MAlignment)
+	SetRandSeed();
+    alignments := msa['AlignedSeqs'];
+	alignments_ := CreateArray(1..length(alignments));
+	inputseqs_ := CreateArray(1..length(alignments));
+	N := length(alignments[1]);
+	idxs := [seq(Rand(1..N), j=1..N)]:
+	for i to length(alignments) do
+		alignments_[i] := string(seq(alignments[i,x],x=idxs));
+		inputseqs_[i] := ReplaceString('_','',alignments_[i]);
+	od:
+	msa_ := MAlignment(inputseqs_, alignments_, msa['labels']);
+	return(msa_);
+end:
+
+# Try to reject null hypothesis (do ML on every bootstrap sample)
+RejectH0BS := proc(msa:MAlignment, t1:Tree, t2:Tree; 
+                 'subst'=((subst='LG'):string), 
+                 'nrOfBootstraps'=((nrOfBootstraps=100):posint), 
+                 'sigLevel'=((sigLevel=0.05):float))
+
+    SetRandSeed();
+    tr1 := PhyML(msa,'subst'=subst,'start_tree'=t1,'opt_topo'=false,'opt_branch'=true):
+    tr2 := PhyML(msa,'subst'=subst,'start_tree'=t2,'opt_topo'=false,'opt_branch'=true):
+    
+    test_delta := tr1['Likelihood']-tr2['Likelihood'];
+    
+    deltas := CreateArray(1..nrOfBootstraps);
+    for k to nrOfBootstraps do
+        # Bootstrap
+        msa_ := BootstrapMSA(msa);
+
+        # Maximize liklihood
+        tr1 := PhyML(msa_,'subst'=subst,'start_tree'=t1,'opt_topo'=false,'opt_branch'=true):
+        tr2 := PhyML(msa_,'subst'=subst,'start_tree'=t2,'opt_topo'=false,'opt_branch'=true):
+        
+        deltas[k] := tr1['Likelihood']-tr2['Likelihood'];
+        lprint('bootstrap', k, deltas[k]);
+    od:
+    
+    # Centering procedure
+    deltas := Centering(deltas);
+    pval := pValue(test_delta, deltas);
+    
+    return(pval<(sigLevel/2) or pval>(1-sigLevel/2));
+end:
+
+# SZ: Try to reject null hypothesis via convolution
+RejectH0Conv := proc(msa:MAlignment, t1:Tree, t2:Tree; 
+                 'subst'=((subst='LG'):string), 
+                 'sigLevel'=((sigLevel=0.05):float))
+
+    SetRandSeed();
+    tr1 := PhyML(msa,'subst'=subst,'start_tree'=t1,'opt_topo'=false,'opt_branch'=true,'LnLperSite'=true):
+    tr2 := PhyML(msa,'subst'=subst,'start_tree'=t2,'opt_topo'=false,'opt_branch'=true,'LnLperSite'=true):
+    
+    test_delta := tr1['Likelihood'] - tr2['Likelihood']:
+    testdiff := tr1['LnLperSite'] - tr2['LnLperSite']:
+    conv := ConvolveLnL(testdiff):
+   
+    pval := ConvPVal(test_delta, conv):
+
+    return(pval<(sigLevel/2) or pval>(1-sigLevel/2)):
+end:
+
+# Try to reject null hypothesis (do ML on every bootstrap sample)
+KHTest := proc(msa:MAlignment, t1:Tree, t2:Tree;
+                 'method'=((method='CONV'):string), 
+                 'subst'=((subst='LG'):string), 
+                 'nrOfBootstraps'=((nrOfBootstraps=100):posint), 
+                 'sigLevel'=((sigLevel=0.05):float))
+    if method = 'BS' then
+    	return(RejectH0BS(msa,t1,t2,'subst'=subst,'nrOfBootstraps'=nrOfBootstraps,'sigLevel'=sigLevel));
+    elif method = 'RELL' then
+    	return(RejectH0RELL(msa,t1,t2,'subst'=subst,'nrOfBootstraps'=nrOfBootstraps,'sigLevel'=sigLevel));
+    elif method = 'CONV' then
+        return(RejectH0Conv(msa,t1,t2,'subst'=subst,'sigLevel'=sigLevel));
+    fi:
+    error('Method '. method . ' not supported');
+end:
+
+MLTopoTest := proc(msa:MAlignment, t1:Tree;
+                 'subst'=((subst='WAG'):string), 
+                 'nrOfBootstraps'=((nrOfBootstraps=100):posint), 
+                 'sigLevel'=((sigLevel=0.05):float))
+    SetRandSeed();
+    tr1 := PhyML(msa,'subst'=subst,'start_tree'=t1,'opt_topo'=true,'opt_branch'=true):
+    tr2 := PhyML(msa,'subst'=subst,'opt_branch'=true):
+    
+    test_delta := tr1['Likelihood']-tr2['Likelihood'];
+    lprint('test_delta', test_delta);
+    deltas := CreateArray(1..nrOfBootstraps);
+    for k to nrOfBootstraps do
+        # Bootstrap
+        msa_ := BootstrapMSA(msa);
+
+        # Maximize liklihood
+        tr1 := PhyML(msa_,'subst'=subst,'start_tree'=t1,'opt_topo'=true,'opt_branch'=true):
+        tr2 := PhyML(msa_,'subst'=subst,'opt_branch'=true):
+        
+        deltas[k] := tr1['Likelihood']-tr2['Likelihood'];
+        lprint('bootstrap', k, deltas[k]);
+    od:
+    
+    # Centering procedure
+    deltas := Centering(deltas);
+    pval := pValue(test_delta, deltas);
+    
+    return(pval<(sigLevel/2) or pval>(1-sigLevel/2));
+end:
+
+
+# Convolution code
+
+# Similar to SmoothData; creates a smoothed histogram
+# Returns the histogram and its range
+GetSmoothHist := proc( dat:list;
+                        'nclass'=(nc:posint),
+                        'rng'=(rng:range))
+    if not assigned(nc) then
+        nc := ceil(sqrt(length(dat))):
+    fi: 
+    if not assigned(rng) or rng[1] >= rng[2] then
+        rng := min(dat)..max(dat):
+    fi: 
+    binsize := (rng[2] - rng[1]) / (nc-1):
+    hist := CreateArray( 1..nc, 0 ):
+    for item in dat do
+        binfac := (item - rng[1])/binsize;
+        floorbin := floor( binfac ):
+        if floorbin <= 0 then
+            hist[1] := hist[1] + 1:
+        elif floorbin >= (nc-1) then
+            hist[nc] := hist[nc] + 1:
+        else
+            diff := binfac - (floorbin + 0.5):
+            prop1 := abs(diff - 0.5):
+            prop2 := abs(diff + 0.5):
+            hist[floorbin+1] := hist[floorbin+1] + prop1:
+            hist[floorbin+2] := hist[floorbin+2] + prop2:
+        fi:
+    od:
+    return( [hist/sum(hist), rng] ):
+end:
+
+# cuts the insignificant tails off of a histogram array
+# returns the new histogram and its boundaries
+CutArray := proc( dat:list, rng:range )
+    newrange := copy(rng):
+    stepsize := (rng[2] - rng[1])/(length(dat)-1):
+    for i from -1 to -(length(dat)) by -1 do
+        if (dat[i]) > DBL_EPSILON then break fi:
+    od:
+    newrange[2] := newrange[2] + ((i+1)*stepsize):
+    tmpdat := dat[1..i]:
+    for i from 1 to length(tmpdat) do
+        if (tmpdat[i]) > DBL_EPSILON then break fi:
+    od:
+    newrange[1] := newrange[1] + ((i-1)*stepsize):
+    resdat := tmpdat[i..-1]:
+    return([resdat, newrange]):
+end:
+
+GetNewRange := proc( oldRange:range, stepsize:numeric, addnr:numeric )
+    anr := addnr - 1:
+    newRange := (oldRange[1]-(anr/2*stepsize))..(oldRange[2]+(anr/2*stepsize)):
+    return(newRange):
+end:
+
+ConvPVal := proc( testval:float, conv )
+    convdata := copy(conv):
+    l := length(convdata[1]):
+    stepsize := (convdata[2,2]-convdata[2,1])/(l-1):
+    
+    # center
+    for i from 1 to l do
+        if sum(convdata[1,j], j=1..i) > 0.5 then break fi:
+    od:
+    mean := convdata[2,1] + (i-1)*stepsize:
+    convdata[2,1] := convdata[2,1] - mean:
+    convdata[2,2] := convdata[2,2] - mean:
+    # end center
+
+    c := 1:
+    valsum := 0:
+    for i from convdata[2,1] to testval by stepsize do
+        valsum := valsum + convdata[1,c]:
+        c := c+1:
+    od:
+    valsum := valsum + convdata[1,c]:
+    return(valsum):
+end:
+
+# Convolves the LnL per site with itself n times for MSAs with
+# n sites
+# Returns the convolution plus the range
+ConvolveLnL := proc( lnl:list; startbins:posint )
+    smHist := CutArray(op(GetSmoothHist( lnl,
+                        If(assigned(startbins), 'nclass'=startbins, NULL)))):
+    dat := smHist[1]:
+    histRange := smHist[2]:
+    stepsize := (histRange[2] - histRange[1]) / (length(dat)-1):
+
+    # pArr contains a binary representation of the number of sites:
+    # for nrSites := 42, pArr := [5,3,1]
+    # sum( 2^i, i=pArr ) == nrSites
+    nrSites := length(lnl):
+    pArr := []: s := nrSites:
+    for i from ilogb(nrSites) to 0 by -1 do
+        if (s - 2^i) >= 0 then
+            pArr := append( pArr, i ):
+            s := s - 2^i:
+            if s = 0 then break fi:
+        fi:
+    od:
+    
+    # calculate the convolution of 2^k for each k in pArr, store the
+    # solutions that are needed later to calculcate the real result
+    # cut off the tails if the numbers are smaller than DBL_EPSILON
+    tmpDat := [dat, histRange]:
+    tmpRes := CreateArray(1..length(pArr)):
+    c := -1:
+    for i from 0 to pArr[1] do
+        if i = pArr[c] then
+            tmpRes[c] := tmpDat:
+            c := c-1:
+        fi:
+        newRange := GetNewRange( tmpDat[2], stepsize, length(tmpDat[1]) ):
+        tmpDat := CutArray( convolve( tmpDat[1], tmpDat[1] ), newRange ):
+    od:
+
+    # convolute the precalculated arrays
+    resDat := tmpRes[1]:
+    for i from 2 to length(tmpRes) do
+        nRngLen := length(tmpRes[i,1]):
+        newRange := GetNewRange( tmpRes[i-1,2], stepsize, nRngLen ):
+        resDat := CutArray( convolve( resDat[1], tmpRes[i,1] ), newRange ):
+    od:
+    
+    return( resDat ):
+end:
+
+
+# =============
+# == Example ==
+# =============
+
+# Read tree1 and tree2
+# ReadProgram('datasets/quartet1/trees.drw');
+
+# Read MSA
+# msa := ReadFastaIntoMAlignment('datasets/quartet1/MSA_1.fa');
+
+# lprint('BootStrap', KHTest(msa,tree1,tree2,method='BS'));
+# lprint('RELL', KHTest(msa,tree1,tree2,method='RELL'));
+
+end; # module

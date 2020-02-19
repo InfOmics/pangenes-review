@@ -1,0 +1,56 @@
+#
+#	Two-dimensional diagram of points
+#
+#	The HTML version of this can be clicked at each point
+#	and displays some URL
+#
+#	This process consists of 4 parts:
+#
+#	(1) An html component which is returned by ClicableDiagram_HTMLC
+#	    This can be included in any html file.
+#
+#	(2) A picture (gif) which is given an arbitrary id and
+#	    is referenced by the html component.  Produced and
+#	    stored by ClicableDiagram_HTMLC.
+#
+#	(3) A file containing the description of the points and
+#	    the url to which they are to be linked if clicked.
+#	    Produced and stored by ClicableDiagram_HTMLC.
+#
+#	(4) A script that runs the appropriate darwin program
+#	    with the file from (3) and the coordinate inputs
+#	    resulting from clicking and produces the url.  This
+#	    program is fixed and is not produced by this function.
+#
+#					Gaston H Gonnet (Sept 1, 2001)
+
+
+ClicableDiagram := proc( title:string,
+	points:list( {[structure,{string,HyperLink}],[structure]} ) )
+noeval( procname(args) )
+end:
+
+
+ClicableDiagram_HTMLC := proc( cd:ClicableDiagram )
+minx := miny := DBL_MAX;
+maxx := maxy := -DBL_MAX;
+pl := [];
+for z in cd[points] do
+    z := z[1];
+    for i by 2 to length(z)-1 do
+	if type(z[i],numeric) and type(z[i+1],numeric) then
+	     if z[i] < minx then minx := z[i] fi;
+	     if z[i] > maxx then maxx := z[i] fi;
+	     if z[i+1] < miny then miny := z[i+1] fi;
+	     if z[i+1] > maxy then maxy := z[i+1] fi;
+	     fi
+	od;
+    pl := append(pl,z);
+    od:
+
+pl := [op(pl), CTEXT(minx,miny,'+'), CTEXT(minx,maxy,'+'),
+	CTEXT(maxx,miny,'+'), CTEXT(maxx,maxy,'+') ];
+DrawPlot( pl );
+# CallSystem( 'ghostview -landscape temp.ps' );
+
+end:

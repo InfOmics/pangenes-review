@@ -1,0 +1,74 @@
+#
+#	Compute the TPI indices from a given entry
+#
+#			Gaston H. Gonnet (April 18, 2003)
+#
+#	Requires the function CIntTotInt to be defined.
+#	CIntTotInt maps the CInt (codon numbers, 1..64) to a
+#	tInt (tRNA number).
+#
+#	tRNA numbers should be consecutive numbers from 1 to
+#	the maximum number of tRNAs.  If the function returns 0
+#	or fails, it is taken as a signal that the codon which
+#	caused the failure is a stop codon.  This should be in
+#	correspondence with the CodonToInt and CIntToInt functions.
+#
+#	These functions are normally set up by SetuptRNA.
+#
+#
+
+ComputeTPI := proc( e:string, mode:{string,name=posint} )
+
+  if nargs=2 and mode='AllAA' then # OK
+  elif nargs <> 1 then error('invalid arguments') fi;
+
+  tD := uppercase(SearchTag(DNA,e));
+  if tD='' then error(e,'does not contain a DNA sequence') fi;
+  if CodonToA(tD[-3..-1])='$' then tD:=tD[1..-4] fi;    # remove stop codon 
+  if not assigned(ntRNA) then
+	error('tRNAs has not been assigned, use SetuptRNA()') fi;  
+
+  tRNAs := CreateArray(1..ntRNA);
+  prev := CreateArray(1..20);
+  ch := CreateArray(1..20,-1);
+
+  for i by 3 to length(tD) do
+      j := CodonToCInt( tD[i..i+2] );
+      iaa := CIntToInt(j);
+      k := CIntTotInt(j);
+      tRNAs[k] := tRNAs[k]+1;
+      if k <> prev[iaa] then ch[iaa] := ch[iaa]+1;  prev[iaa] := k fi
+      od;
+
+  conva := conv := convi := NULL;
+  for iaa to 20 do
+      if length(IntTotInt(iaa)) >= 2 then
+	   d := TPIDistr( seq( tRNAs[i], i=IntTotInt(iaa) ) );
+	   conv := conv, d;
+	   conva := conva, IntToA(iaa);
+	   convi := convi, max(0,ch[iaa])
+      elif ch[iaa] > 0 then error('assertion failed, incorrect tRNA functions')
+	   fi
+      od;
+  conv := [conv, convolve( conv )];
+  convi := [convi, sum([convi]) ];
+  conva := [conva, 'AllAA' ];
+
+  # add the smallest tail to reduce error in extreme cases
+  r := [];
+  for k from If( nargs=2, 1, length(conv)) to length(conv) do
+      convn := convi[k];
+      lc := length(conv[k]);
+      S1 := sum( conv[k,i]*(i-1), i=2..lc );
+      if convn > S1 then
+           cum := conv[k,convn+1]/2 + sum(conv[k,i],i=convn+2..lc);
+           r := append( r, [- sqrt(2) * erfcinv( 2*cum ), 2*cum-1, conva[k]])
+      else cum := conv[k,convn+1]/2 + sum(conv[k,i],i=1..convn);
+           r := append( r, [sqrt(2) * erfcinv( 2*cum ), 1-2*cum, conva[k]]) fi
+      od;
+
+  if nargs=2 then r else r[1,1..2] fi
+
+end:
+
+

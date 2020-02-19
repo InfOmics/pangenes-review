@@ -1,0 +1,22 @@
+module external MinSquareTreeMSAv2;
+
+MinSquareTreeMSAv2 := proc(dmsa:MAlignment, seqtype:{'AA','DNA'};
+                        (doOLS=false):boolean,(tri=50):posint)
+    global DMS, MST_Qual;
+    distvar := RobustEstimateDistVarM(dmsa,seqtype);
+    D := distvar[1];
+    if doOLS then
+        V := CreateArray(1..length(D), 1..length(D), 1);
+        for i to length(D) do V[i,i] := 0; od;
+    else
+        V := distvar[2];
+    fi;
+                                           
+    cputime := time('All');
+    t := MinSquareTree(D, V, dmsa['labels'], Trials=tri);
+    cputime := time('All') - cputime;
+                                                                  
+    return(TreeResult(t,'Distance',CPUtime=cputime));
+end:
+
+end: #module

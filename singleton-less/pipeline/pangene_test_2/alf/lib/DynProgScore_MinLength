@@ -1,0 +1,103 @@
+#
+#	DynProgScore_MinLength -- compute dynamic programming alignments
+#	with a minimum length.
+#
+#	This function is called from the kernel.
+#	It is likely to go to the kernel once that the
+#	algorithm is well understood.
+#
+#	returns: [ score, Min1..Max1, Min2..Max2 ]
+#
+#					Gaston H. Gonnet (March 4th, 2003)
+#
+DynProgScore_MinLength := proc( seq1, seq2, dm, minlen )
+
+ loScore := DynProgScore(seq1,seq2,dm,Local);
+ if min( loScore[2,2]-loScore[2,1], loScore[3,2]-loScore[3,1] ) + 1 >= minlen
+	then return( loScore ) fi;
+
+ len1 := length(seq1);  len2 := length(seq2);
+ if minlen > min(len1,len2) then error('MinLength too large') fi;
+ rseq1 := CreateString(len1):
+ rseq2 := CreateString(len2):
+ for i to len1 do rseq1[i] := seq1[-i..-i] od:
+ for i to len2 do rseq2[i] := seq2[-i..-i] od:
+
+ LocalScore := proc( s1:string, s2:string, dm:DayMatrix, inc:positive )
+     dm1 := copy(dm);
+     dim := length(dm[Sim]);
+     for i to dim do for j from i to dim do
+	 dm1[Sim,i,j] := dm[Sim,i,j]+inc od od;
+     DynProgScore(s1,s2,dm1,Local)
+     end:
+
+ lo := 0;  hi := 1;
+ hiScore := LocalScore(seq1,seq2,dm,hi);
+ # candidate ranges to analyze -- add the range starting at 1 as Alignment
+ # (best PAM) may feed a candidate aligned to the first position.
+ ranges := { [1..len1,1..len2], loScore[2..3], hiScore[2..3] };
+
+ while min( hiScore[2,2]-hiScore[2,1], hiScore[3,2]-hiScore[3,1]) + 1 < minlen
+     do
+     lo := hi;  loScore := hiScore;
+     hi := 2*hi;  hiScore := LocalScore(seq1,seq2,dm,hi);
+     ranges := ranges union {hiScore[2..3]};
+     od;
+
+ to 4 do
+     mid := (hi+lo)/2;
+     midScore := LocalScore(seq1,seq2,dm,mid);
+     ranges := ranges union {midScore[2..3]};
+     if min( midScore[2,2]-midScore[2,1], midScore[3,2]-midScore[3,1]) < minlen
+          then lo := mid;  loScore := midScore
+          else hi := mid;  hiScore := midScore fi
+     od;
+ visited := {};
+
+ MinLengthShake := proc( s1,rs1, s2,rs2, ran1, ran2, dm, minlen )
+     external visited;
+     l1 := length(s1);  l2 := length(s2);
+     t2 := [-DBL_MAX, ran1, ran2 ];
+
+     to 10 do
+         m1 := t2[2,1];  m2 := t2[3,1];
+	 if min(l1-m1,l2-m2)+1 < minlen then return( [-DBL_MAX] ) fi;
+         t1 := DynProgScore(s1[m1..-1],s2[m2..-1],dm,Shake(minlen));
+	 ends := [t1[2,2]+m1-1, t1[3,2]+m2-1];
+         t1 := [t1[1], t1[2,1]+m1-1 .. t1[2,2]+m1-1,
+                       t1[3,1]+m2-1 .. t1[3,2]+m2-1];
+	 if member(ends,visited) then return( If( t1[1]>t2[1], t1, t2 ) ) fi;
+	 visited := visited union {ends};
+
+         m1 := l1-t1[2,2]+1;  m2 := l2-t1[3,2]+1;
+         t2 := DynProgScore(rs1[m1..-1],rs2[m2..-1],dm,Shake(minlen));
+	 ends := [l1-t2[2,2]-m1+2, l2-t2[3,2]-m2+2 ];
+         t2 := [t2[1], l1-t2[2,2]-m1+2 .. l1-t2[2,1]-m1+2,
+                       l2-t2[3,2]-m2+2 .. l2-t2[3,1]-m2+2 ];
+	 if member(ends,visited) then return( If( t1[1]>t2[1], t1, t2 ) ) fi;
+	 visited := visited union {ends};
+         od;
+     error('too many iterations without convergence')
+     end:
+
+
+ best := [-DBL_MAX];
+ for ran in ranges do
+     t := MinLengthShake( seq1,rseq1, seq2,rseq2, op(ran), dm, minlen );
+     if t[1] > best[1] then best := t fi;
+     t := MinLengthShake( rseq1,seq1, rseq2,seq2,
+        len1-ran[1,2]+1 .. len1-ran[1,1]+1,
+        len2-ran[2,2]+1 .. len2-ran[2,1]+1, dm, minlen );
+     if t[1] > best[1] then best := [t[1], len1-t[2,2]+1..len1-t[2,1]+1,
+                                           len2-t[3,2]+1..len2-t[3,1]+1] fi;
+     od;
+
+ to If( best[1]<0, 3, 0 ) do
+     t := MinLengthShake( seq1,rseq1, seq2,rseq2,
+        Rand(1..len1-minlen+1)..len1, Rand(1..len2-minlen+1)..len2,
+        dm, minlen );
+     if t[1] > best[1] then best := t fi;
+     od;
+
+best
+end:

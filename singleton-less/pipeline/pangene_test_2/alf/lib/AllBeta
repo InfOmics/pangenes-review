@@ -1,0 +1,297 @@
+#                             -*- Mode: Darwin -*- 
+# AllBeta -- non-deterministic automata that recognize strands
+# Author          : Marcel TURCOTTE
+# Created On      : 1996
+# Last Modified By: Darwin Account
+# Last Modified On: Wed May 14 15:49:47 1997
+
+#ignore off
+
+# \section{AllBeta}
+# The name of that procedure does not reflect
+# quite well its possibilities. This procedure is quite
+# general and recognizes strings, over an alphabet \{I,S\}, described by
+# an automaton given as an argument.  Exercise one, make this whole
+# package working for any given alphabet. Hint, make the alphabet a part of
+# the definition of the automaton and use {\tt SearchArray} to find the
+# appropriate column in the automaton.  Second exercise, introduce a parameter to make
+# the procedures case sensitive if the argument is true and not if the
+# argument is false.  For backward compatibility with existing code
+# use different names for the newly created procedures.
+
+Beta := proc (s:string, Automaton)
+
+  description 'Non-deterministic automaton which is used to recognize
+  beta-strands amongst other things.';
+  
+  # processing arguments
+  
+  ilo := 1;
+  non_det := true;
+
+  for i from 3 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'ILo') <> -1 and type (op (2, args[i]), posint) then
+	ilo := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'NonDeterministic') <> -1 and type (op (2, args[i]), boolean) then
+	non_det := op (2, args[i])
+      else
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  if length (Automaton) <> 2 then
+    error ('wrong format for automaton parameter')
+  else
+    t := Automaton [1];
+    if not type (t, array(array(integer))) then
+      error ('wrong format for automaton parameter')
+    fi;
+    accept := Automaton [2];
+    if not type (accept, set(integer)) then
+      error ('wrong format for automaton parameter')
+    fi
+  fi;
+  
+# {\tt trans\_stack} is used to cope with non-determinism caused by unknow assignments
+# in the input.
+
+  trans_stack := [];
+
+# {\tt goal_stack} is used to keep track of all accepting states we have 
+# been through.
+  
+  goal_stack := [];
+  
+  len := length (s);
+  pos := ilo;
+  state := 1;
+
+  do
+    if pos > len or state = 0 then
+      if trans_stack = [] then
+	break
+      else
+	n := length (trans_stack);
+	pos := trans_stack[n,1];
+	state := trans_stack[n,2];
+	trans_stack := trans_stack[1..-2];
+	i := 2
+      fi
+    else
+      if s[pos] = 'S' then
+	i := 1
+      elif s[pos] = 'I' then
+	i := 2
+      elif non_det then
+	trans_stack := append (trans_stack, [pos,state]);
+	i := 1
+      else
+	state := 0;
+	next
+      fi
+    fi;
+      
+    state := t[state,i];
+    
+    if member (state, accept) then
+      goal_stack := append (goal_stack, [pos, state])
+    fi;
+    
+    pos := pos + 1
+  od;
+
+  if goal_stack <> [] then
+    max(zip ((x->x[1])(goal_stack))) - ilo + 1
+  else
+    0
+  fi
+end:
+
+AllBeta := proc (s:string)
+
+  global A04;
+  description 'Finds all beta-strand regions';
+  
+  non_det := true;
+  automaton := A04;
+
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op(1, args[i]), 'Automaton') <> -1 then
+	automaton := op (2, args[i])
+      elif SearchString (op(1, args[i]), 'NonDeterministic') <> -1 and type (op (2, args[i]), boolean) then
+	non_det := op (2, args[i])
+      else
+	print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+      fi
+    else
+      print ('proc(' . procname . ') WARNING -- uncaught argument:', args[i])
+    fi
+  od;
+
+  len := length (s);
+  res := CreateArray (1..len);
+  shadow := 0;
+  
+  for i to len do
+    res[i] := Beta (s, automaton, ILo = i, 'NonDet'=non_det);
+    new_shadow := i + res[i] - 1;
+    if new_shadow > shadow then
+      shadow := new_shadow
+    else
+      res[i] := 0
+    fi
+  od;
+  res
+end:
+
+# An automaton is defined by a transition table and a set of
+# accepting states. The first dimension of the transition table
+# has one entry per state and the second dimension one entry per
+# symbol in the alphabet.
+
+# II
+A02 := [[[ 0, 2],
+	 [ 0, 3],
+	 [ 0, 0]],
+        {3}]:
+
+# III IIS ISI SII
+A03 := [[[ 2, 4],
+	 [ 0, 3],
+	 [ 0, 6],
+	 [ 5, 7],
+	 [ 0, 6],
+	 [ 0, 0],
+	 [ 6, 6]],
+        {6}]:
+
+# III
+A03a := [[[0,2],
+	  [0,3],
+	  [0,4],
+	  [0,4]],
+	 {4}]:
+
+# IIS
+A03b := [[[0,2],
+	  [0,3],
+	  [4,0],
+	  [0,0]],
+	 {4}]:
+
+# ISI
+A03c := [[[0,2],
+	  [3,0],
+	  [0,4],
+	  [0,0]],
+	 {4}]:
+
+# SII
+A03d := [[[2,0],
+	  [0,3],
+	  [0,4],
+	  [0,0]],
+	 {4}]:
+
+A04 := [[[ 2, 6],
+	 [ 0, 3],
+	 [ 4, 0],
+	 [ 0, 5],
+	 [ 4,10],
+	 [ 7,10],
+	 [ 0, 8],
+	 [ 9,10],
+	 [ 0, 8],
+	 [ 0,11],
+	 [ 0,12],
+	 [ 7,12]],
+        {5, 9,12}]:
+
+A05 := [[[ 0, 2],
+	 [ 0, 3],
+	 [ 0, 4],
+	 [ 5, 4],
+	 [ 0, 4]],
+        {4}]:
+
+A05a := [[[0, 2],
+	  [0, 3],
+	  [0, 4],
+	  [5, 0],
+	  [0, 6],
+	  [7, 0],
+	  [0, 6]],
+	 {6,7}]:
+
+A05b := [[[0, 2],
+	  [3, 0],
+	  [0, 4],
+	  [3, 5],
+	  [0, 6],
+	  [0, 6]],
+	 {6}]:
+
+A06 := [[[ 2, 6],
+	 [ 0, 3],
+	 [ 4, 0],
+	 [ 0, 5],
+	 [ 4, 0],
+	 [ 7,10],
+	 [ 0, 8],
+	 [ 9, 0],
+	 [ 0, 8],
+	 [ 0,11],
+	 [ 0,12],
+	 [ 0,12]],
+        {5, 9,12}]:
+
+A06r1 := [[[ 2,  7],
+	   [ 0,  3],
+	   [ 4,  0],
+	   [ 0,  5],
+	   [ 6,  0],
+	   [ 0,  5],
+	   [ 8, 12],
+	   [ 0,  9],
+	   [10,  0],
+	   [ 0, 11],
+	   [10,  0],
+	   [ 0, 13],
+	   [ 0, 14],
+	   [ 0, 14]],
+	  {5,6,10,11,14}]:
+
+A06r1a := [[[ 2,  7],
+	    [ 0,  3],
+	    [ 4,  0],
+	    [ 0,  5],
+	    [ 6,  0],
+	    [ 0,  5],
+	    [ 8,  0],
+	    [ 0,  9],
+	    [ 6,  0]],
+	   {5,6}]:
+
+A06r1b := [[[0, 2],
+	    [0, 3],
+	    [0, 4],
+	    [0, 5],
+	    [0, 5]],
+	   {5}]:
+
+A07 := [[[0, 2],
+	 [0, 3],
+	 [0, 4],
+	 [0, 5],
+	 [0, 6],
+	 [0, 7],
+	 [0, 8],
+	 [0, 8]],
+	{8}]:
+
+NULL:

@@ -1,0 +1,108 @@
+#
+# Algorithm which aprox. computes a solution for the MaxCut problem.
+#
+#   MAX-CUT is the problem of computing the maximum cut of a graph G(V,E),
+#   i.e., that of partitioning the vertex set V into two parts so that the
+#   number (resp. weight) of edges joining vertices in different parts is as
+#   large as possible. It is known to be NP-hard.
+#
+#                                       Adrian Altenhoff, Jun 2008
+#
+
+###################################################################
+#   A greedy algorithm which is a 1/2+1/(2n)-approximation.       #
+#   algortihm described in                                        #
+#     Jun-Dong Cho etal, Fast approximation algorithms on Maxcut, #
+#     k-Coloring and k-Color Ordering for VLSI Applications,      #
+#     IEEE Transactions on Computers, 47 (11), 1998               #
+###################################################################
+MaxCut := proc(G:Graph ; (weighted=false):boolean)
+	adj := G[Adjacencies]; 
+	N := length(adj); # number of nodes
+	V1 := V2 := {}; # current partition sets. decission taken!
+	C1 := CreateArray(1..N); C2 := CreateArray(1..N); #connectivity table
+	asgn := CreateArray(1..N); # assign to V1 / V2.
+	edgs := [op(G[Edges])];	nds  := [op(G[Nodes])];
+	#lookup from node-id to node-nr 
+	ndsT  := transpose(sort([seq([nds[i],i], i=1..N)])); 
+
+	if weighted then
+		edgs := sort(edgs, x->-x[Label]);
+		w := table(0);
+	fi:
+
+	# find a maximal matching.
+	M := []: 
+	for e in edgs do 
+		i := ndsT[2,SearchOrderedArray(e[From],ndsT[1])];
+		j := ndsT[2,SearchOrderedArray(e[To],ndsT[1])];
+		if weighted then 
+			if type(e[Label],numeric) then w[{i,j}] := e[Label];
+			else error('Weighted MaxCut needs numerics in edge label',e) fi;
+		fi:
+		if asgn[i]=0 and asgn[j]=0 then
+			M := append(M, {i,j});
+			asgn[i] := asgn[j] := 1;
+		fi; 
+	od:
+
+	VSassignment := proc(i,j)
+		global V1,V2,asgn;
+		if j=0 then
+			if C1[i]>=C2[i] then V2 := append(V2,i); asgn[i]:=2;
+			else V1 := append(V1,i); asgn[i]:=1 fi:
+		else
+			A := C2[i]+C1[j]; B := C1[i]+C2[j];
+			if A>B then 
+				 V1:=append(V1,i); V2:=append(V2,j); asgn[i]:=1; asgn[j]:=2;
+			else V1:=append(V1,j); V2:=append(V2,i); asgn[i]:=2; asgn[j]:=1 fi;
+		fi:
+	end:
+
+	UpdateConnectivity := proc(i)
+		global C1,C2;
+		for j in adj[i] do if asgn[j]=0 then
+			if   asgn[i]=1 then C1[j] := C1[j] + If(weighted, w[{i,j}], 1);
+			elif asgn[i]=2 then C2[j] := C2[j] + If(weighted, w[{i,j}], 1); fi;
+		fi od:
+	end:
+
+	asgn := 0*asgn;
+	queue := {}:
+	for i to N do if asgn[i]=0 then 
+		inMatch := false:
+		for j in adj[i] do if asgn[j]=0 then 
+			if member({i,j},M) then 
+				VSassignment(i,j); inMatch:=true; break; fi 
+		fi od:
+		if not inMatch then 
+			inAdj := false:
+			for j in adj[i] do if asgn[j]=0 then
+				VSassignment(i,j); inAdj := true; break;
+			fi od:
+			if not inAdj then queue := append(queue, i); j:=0; fi;
+		fi;
+		UpdateConnectivity(i); if j<>0 then UpdateConnectivity(j) fi:
+	fi od:
+	while queue<>{} do
+		i := queue[1]; j := If(length(queue)>1,queue[2],0);
+		queue := minus(queue, {i,j});
+		VSassignment(i,j); 
+		UpdateConnectivity(i); 
+		if j<>0 then UpdateConnectivity(j) fi;
+	od:
+#	if intersect(V1,V2)<>{} then error('overlap must not happen');
+#	elif length(union(V1,V2))<>N then error('all nodes must be in one set'); fi;
+
+	V1 := {seq(nds[i],i=V1)}; V2 := {seq(nds[i],i=V2)};
+	wCuts := 0; 
+	for e in G[Edges] do 
+		if (member(e[From],V1) and member(e[To],V2)) or 
+		   (member(e[From],V2) and member(e[To],V1)) then 
+		     wCuts:=wCuts+If(weighted,e[Label],1); 
+		fi:
+	od:
+		
+	return( [V1,V2,wCuts] );
+end:
+

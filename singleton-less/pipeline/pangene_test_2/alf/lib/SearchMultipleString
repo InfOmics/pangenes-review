@@ -1,0 +1,23 @@
+#
+#	SearchMultipleString( pat1, pat2, ..., text )
+#	Search for several consecutive, non-overlapping patterns in a text
+#
+#	return the offsets of the patterns or [] when it fails.
+
+SearchMultipleString := proc( )
+if nargs < 2 or not type([args],list(string)) then
+    error( args, 'invalid arguments' ) fi;
+
+t := args[nargs];
+offs := 0;
+r := [];
+
+for i to nargs-1 do
+    k := SearchString( args[i], offs+t );
+    if k < 0 then return( [] ) fi;
+    r := append(r,offs+k);
+    offs := offs+k+length(args[i]);
+    od;
+
+r
+end:

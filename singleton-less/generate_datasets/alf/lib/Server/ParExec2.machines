@@ -1,0 +1,109 @@
+# Purpose: Preferred ParExec2 machine usage
+# Author:  Lukas Knecht
+# Created: 25 May 1994
+# Changed: (Ver 2.0) 20.10.97 M. Hallett
+#
+GetMachines := proc (select: {string,set(string)})
+  global excl; 
+  description 'Returns (machines),(initAction) for ParExec2. selects
+  the machines to be used and may contain the following members:
+  all   - all available machines except the MasPar.
+  alpha - DEC alpha machines (darwin1, darwin2, darwin3, idefix, nother)
+  ru    - rutishauser cluster (mendel, vinci)
+  turing - Our HP 9000 (turing to turing3). 
+  hp    - D-ELEK HP 9000 cluster (ee01 to ee16).
+  hpsmall - "nice" subset of D-ELEK HP 9000 cluster (ee05 to ee12).
+  exclude=m - exclude machine m (if string) or machines m (if set).';
+  
+  has := proc (x, s)
+    evalb (SearchArray (x, [op (s)]) > 0)
+  end;
+
+  s := If (type (select, string), {args}, select);
+  excl := {};
+  for t in s do
+    if type (t, equal) then
+      if op (1, t) = 'exclude' then
+	excl := op (2, t);
+	if not type (excl, set) then excl := {excl} fi
+      else
+	ERROR ('Invalid option')
+      fi
+    fi
+ od;
+  if has ('all', s) then
+    s := s minus {'all'} union {'alpha','linneus' };
+#    s := s minus {'all'} union {'alpha' };
+#for debugging purposes feb 22 2001 mendel removed from list
+#    s := s minus {'all'} union {'alpha', 'ru' };
+  fi;
+  machines := [];
+  initAction := '';
+  if has ('alpha', s) then
+#    for m in ['darwin1','darwin2', 'darwin3', 'idefix'] do
+    for m in ['darwin2', 'darwin3', 'idefix'] do
+      p := CaseSearchString(':', m);
+      if not has (m[1..p], excl) then 
+	machines := append(machines, m.':6/3');
+	if m[1..2] = 'id' then
+	  initAction := initAction.'LoadThreshold  '.m.' 1 1\n';
+          initAction := initAction.'OffHours '.m.'  10..18\n';
+	else 
+	  initAction := initAction.'LoadThreshold  '.m.' 4 5\n';
+        fi;
+      fi;
+    od;
+  fi;
+  if has ('hp', s) or has ('hpsmall', s) then
+    for i from If (has ('hp', s), 1, 5) to If (has ('hp', s), 16, 12)  do
+      m := 'ee'.If(i<10,'0','').i;
+      if not has (m, excl) and m <> 'ee14' then
+	machines := append (machines, 'cbrg@'.m.':4');
+	initAction := initAction.'LoadThreshold '.m.' 0.4 1.5\n';
+        initAction := initAction.'OffHours '.m.'  8..19\n';
+      fi
+    od
+  fi;
+  if has ('ru', s) then
+    for m in ['mendel:3/4', 'vinci:3'] do
+      p := CaseSearchString (':', m);
+      if not has (m[1..p], excl) then
+	machines := append (machines, m);
+	if m[1..2] = 'ru' then
+	  initAction := initAction.'OffHours '.m[1..p].
+	  If (m[1..p] = 'ru5', ' 8..22\n', ' 8..19\n')
+	elif m[1..p] = 'mendel' then
+	  initAction := initAction.'LoadThreshold '.m[1..p].' 3.7 5\n'.
+	  'MaxJobs '.m[1..p].' 4\n'
+	fi
+      fi
+    od
+  fi; 
+  if has ('test', s) then
+    for m in ['darwin2:3/6'] do
+      p := CaseSearchString (':', m);
+      if not has (m[1..p], excl) then
+	machines := append (machines, m);
+	if m[1..p] = 'mendel' then
+	  initAction := initAction.'LoadThreshold '.m[1..p].' 3.7 5\n'.
+	  'MaxJobs '.m[1..p].' 4\n'
+	fi
+      fi
+    od
+  fi;
+  if has ('linneus', s) then
+    linn := [];
+     for j to 42 do linn := append(linn,'linneus'.j); od;
+    for m in linn do
+      p := CaseSearchString(':', m);
+      if not has (m, excl) then
+        machines := append (machines, m.':7/3');
+        initAction := initAction.'LoadThreshold '.m.' 2 3\n'.
+        'MaxJobs '.m[1..p].' 4\n'
+      fi
+    od
+  fi;
+  machines, initAction
+end:
+
+ReadLibrary('ParExec2');

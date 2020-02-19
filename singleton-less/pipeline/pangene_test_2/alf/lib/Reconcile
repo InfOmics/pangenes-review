@@ -1,0 +1,120 @@
+#
+#  Reconcile:
+#  Function to infere gene duplication and speciation events 
+#  on a gene tree. 
+#
+#  The code is based on the publication 
+#  Zmasek C. and Eddy S: A simple algortihm to infere gene duplication
+#  and speciation events on a gene tree, 2001, Bioinformatics, 17, 821-928
+#
+#                                         Adrian Altenhoff, Jan 6, 2009
+#
+module external ReconcileTree;
+local nxtNr, sParent, spec2nr;
+
+TreeLabels := proc(t) 
+    if type(t,Leaf) then t['Label'];
+    else procname(t['Left']), procname(t['Right']);
+    fi
+end:
+
+ReconcileTree := proc(g:Tree, s:{Tree,'OVERLAP'}, g2s:procedure; (reroot=false):boolean, (ratio=0):nonnegative)
+    global spec2nr, nxtNr, sParent:
+    genes := [TreeLabels(g)]:
+    if type(s,Tree) then
+        # do Zmasek reconciliation
+        species := {seq(g2s(z),z=genes)}:
+        pSpecTree := PruneTree(s,species):
+        tmp := {TreeLabels(pSpecTree)}:
+        if minus(species,tmp) <> {} then 
+            error(sprintf('Gene tree contains species which are not present in '.
+                'species tree: %a', minus(species,tmp))); fi:
+        
+        NS := length(tmp):
+        sParent := CreateArray(1..2*NS-1):
+        spec2nr := []: nxtNr := 1:
+    
+        LabelSpeciesTreeR(pSpecTree, g2s, 1):
+        spec2nr := transpose(sort(spec2nr)):
+
+        recMeth := ReconcileR; 
+        addArg := NULL;
+    elif s='OVERLAP' then
+        # do reconciliaton based on species overlap method
+        recMeth := ReconcileOverlapR; 
+        addArg := ratio:
+    fi:
+
+    tbest := recMeth(g,g2s,addArg):
+    if reroot then for z in AllRootedTrees(g) do
+        t := recMeth(z,g2s, addArg):
+        if t[2]<tbest[2] then tbest := t fi:
+    od fi:
+    return( tbest[1..2] );
+end:
+
+# a function which produces 
+#  i)  a list where the i-th node of the species tree (preorder traversal)
+#      contains the parent node number and
+#  ii) a mapping from a given species to the species tree node number.
+LabelSpeciesTreeR := proc(t:Tree, g2s, p:posint)
+    global nxtNr, sParent, spec2nr;
+    curNr := nxtNr:
+    sParent[curNr] := p; 
+    nxtNr := nxtNr+1;
+    if type(t,Leaf) then 
+        spec2nr := append(spec2nr, [t[Label], curNr]); 
+    else 
+        LabelSpeciesTreeR(t['Left'], g2s, curNr):
+        LabelSpeciesTreeR(t['Right'], g2s, curNr):
+    fi:
+end:
+
+ReconcileR := proc(g:Tree,g2s:procedure)
+    global spec2nr, sParent;
+    if type(g,Leaf) then
+        # find the mapping M(g) to the species nr
+        org := g2s(g[Label]):
+        k := SearchOrderedArray(org, spec2nr[1]):
+        if k<0 or k>length(spec2nr[1]) or spec2nr[1,k]<>org then 
+            error('must not happen') fi;
+        return( [g, 0, spec2nr[2,k]] );
+    else
+        # traverse in postorder -> get mapping of left and right subtrees.
+        l := ReconcileR(g['Left'], g2s);
+        r := ReconcileR(g['Right'], g2s);
+        a := l[3]; b:= r[3];
+        while a<>b do if a>b then a:=sParent[a]; else b:=sParent[b] fi od:
+        m := a;
+        if m=l[3] or m=r[3] then 
+            return([ Tree(l[1], g['Height'], r[1], 'D=Y'), l[2]+r[2]+1, m ]);
+        else
+            return([ Tree(l[1], g['Height'], r[1], 'D=N'), l[2]+r[2], m ]);
+        fi:
+    fi:
+end:
+
+ReconcileOverlapR := proc(g:Tree,g2s:procedure ; (ratio=0):nonnegative)
+    global spec2nr;
+    if type(g,Leaf) then
+        # find the mapping M(g) to the species nr
+        org := g2s(g[Label]):
+        return( [g, 0, {org}] );
+    else
+        # traverse in postorder -> get mapping of left and right subtrees.
+        l := procname(g['Left'], g2s, ratio);
+        r := procname(g['Right'], g2s, ratio);
+        specSet := union(l[3],r[3]);
+        if length(intersect(l[3],r[3])) / length(specSet) > ratio then
+            ev := 'D=Y'; 
+            dups := l[2]+r[2]+1;
+        else 
+            ev := 'D=N';
+            dups := l[2]+r[2];
+        fi:
+        return( [Tree(l[1],g['Height'],r[1], ev), dups, specSet]);
+    fi:
+end:
+        
+
+end: #module

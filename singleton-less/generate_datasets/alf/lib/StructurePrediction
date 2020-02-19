@@ -1,0 +1,600 @@
+########################################################################
+#  Basic package for computer assisted secondary structure prediction  #
+#                                                Thomas F. Jenny 1994  #
+########################################################################
+
+
+SurfIntActPred:= proc (MulAlign: array(string), MinSquareTree)
+  description 'Generates the prediction of surface, interior and active site positions in a multiple alignment.';  
+#Parameters and Preparations:
+  Prediction:= CreateString(length(MulAlign[1]), '.');
+  Surf:= [];
+  Int:= [];
+  ThresholdMin:= -0.0;
+  ThresholdMax:= 0.2;
+  SurfAA:= ['KRED', 'KREND', 'KRENDH', 'KRENDHQ', 'KRENDHQT'];
+  IntAA:= ['FAMILYVW', 'FAMILYVWC', 'FAMILYVWCHQT'];
+  ActAA:= 'CHQSTKREND';
+  MaxPW:= PamWindows(MinSquareTree);
+  MA:= SortedMA (MulAlign, MinSquareTree);
+#Program
+  if length(MA) < 5 and printlevel > 2 then
+    printf ('\nWARNING: Number of sequences is dangerously small for a prediction.\n');
+    printf ('         Search for additional sequences.\n')
+  fi;
+  if length(MA[1]) < 100 and printlevel > 2 then
+    printf ('\nWARNING: Sequences are rather short for a prediction.\n');
+    printf ('         Check wether the multiple alignment contains exclusively fragments.\n')
+  fi;
+  if (max(MaxPW) < 10 or max(MaxPW) > 250) and printlevel > 2 then
+    printf ('\nWARNING: Evolutionary distance of the sequences is either too wide or too\n         narrow for a prediction.\n');
+    printf ('         Check the corresponding tree and multiple alignment.\n');
+  else
+    if (max(MaxPW) < 80 or max(MaxPW) > 180) and printlevel > 2 then
+      printf ('\nWARNING: Evolutionary distance of the sequences is dangerously low or high\n         for a prediction.\n');
+      printf ('         Check the corresponding tree and multiple alignment\n')
+    fi;
+#Calculation of the required Matrices:				  
+    Cluster:= ClusterRelPam(MinSquareTree, MaxPW);
+    ActMatrixOut:= ActOut (MA, ActAA);
+    AlignedMatrixOut:= AlignedSeq (MA);
+    IntMatrix:= Interior(Cluster, MA, MaxPW, IntAA, ActMatrixOut);
+    IntMatrixTot:= InteriorTot(IntMatrix);
+    IntMatrixOut:= IntOut(IntMatrix, IntMatrixTot);
+    SurfMatrix:= Surface(Cluster, MA, MaxPW, SurfAA, ActMatrixOut);
+    SurfMatrixTot:= SurfaceTot(SurfMatrix);
+    SurfMatrixOut:= SurfOut(SurfMatrix, SurfMatrixTot);
+#Normalization of Interior and Surface:
+    IntMatrixOut:= IntNorm(IntMatrixOut);
+    SurfMatrixOut:= SurfNorm(SurfMatrixOut);
+#Further transformations:
+    SurfIntAct:= SurfMatrixOut[1] - IntMatrixOut[1];
+    for Pos to length(MA[1]) do
+      if SurfIntAct[Pos] > 0 then Surf:= append (Surf, SurfIntAct[Pos]) fi;
+      if SurfIntAct[Pos] < 0 then Int:= append (Int, SurfIntAct[Pos]) fi
+    od;
+    if length(Surf) > 0 then SurfMean:= sum (Surf) / length (Surf) else SurfMean := 0;fi;
+    if length(Int) > 0 then IntMean:= sum (Int) / length (Int) else IntMean := 0; fi;
+#Output:
+    for Pos to length(MA[1]) do
+      if ActMatrixOut[Pos] = ' ' or ActMatrixOut[Pos] = 0 then   
+	if SurfIntAct[Pos] < ThresholdMin then
+	  if SurfIntAct[Pos] <= IntMean then 
+	    Prediction[Pos]:= 'I'
+	  else
+	    Prediction[Pos]:= 'i'
+	  fi
+	elif SurfIntAct[Pos] > ThresholdMax then
+	  if SurfIntAct[Pos] >= SurfMean then 
+	    Prediction[Pos]:= 'S'
+	  else
+	    Prediction[Pos]:= 's'
+	  fi
+	fi
+      elif AlignedMatrixOut[Pos] = length(MA) then
+	Prediction[Pos]:= 'A'
+      else
+	Prediction[Pos]:= 'a'
+      fi
+    od
+  fi;
+  Prediction;
+end:
+
+
+
+ParsePred:= proc (MulAlign: array(string), tree)
+  description 'Generates the prediction of parse regions in a multiple alignment';
+
+  ParseAA:= ['_', '_P', '_PG', '_PGDNS']; # order form SP26Unique.SingleAnalysis
+
+  Parse:= CreateString(length(MulAlign[1]));
+  MA:= SortedMA (MulAlign, tree);  # MulAlign was in order of the tree (Ptt[2])
+  ParseMatrixOut:= ParseOut (MA, ParseAA);
+  Max:= max (ParseMatrixOut[2]);
+#  HighestParse:= 5;
+  HighestParse:= Max;
+  for pos to length(Parse) do
+    if ParseMatrixOut[2, pos] > 0 then
+      Parse[pos]:= sprintf('%1d', round (ParseMatrixOut[2, pos] * HighestParse / Max))
+    fi
+  od;
+  Parse
+end:
+
+
+
+
+
+
+#############################
+########## Surface ##########
+#############################
+
+Surface := proc (Cluster: list(list(list)), MA: array(string), MaxPW: array, SurfAA: array, ActMatrixOut: array)
+  description 'Reports the number of variable subgroups at defined PAM windows 
+  in which at least one amino acid is of the type defined in SurfAA';
+  SurfMatrix := CreateArray (1..length (MaxPW), 1..length (SurfAA), 1..length (MA[1]));
+  for Pos to length(MA[1]) do
+    if ActMatrixOut[Pos] = ' ' or ActMatrixOut[Pos] = 0 then
+      for SurfDef to length(SurfAA) do
+        for Window to length(MaxPW) do
+          for Fam to length(Cluster[Window]) do
+            Family:= Cluster[Window, Fam];
+            for Seq to length(Family) while AToInt(MA[Family[Seq], Pos]) = 0 do od;
+            for i from Seq to length(Family)
+              while MA[Family[Seq], Pos] = MA[Family[i], Pos] or AToInt(MA[Family[i], Pos]) = 0 do
+            od;
+            if i <= length(Family) then
+              for i to length(Family)
+                while CaseSearchString(MA[Family[i], Pos], SurfAA[SurfDef]) < 0 do
+              od;
+              if i <= length(Family) then
+                SurfMatrix[Window, SurfDef, Pos]:= SurfMatrix[Window, SurfDef, Pos] + 1;
+              fi;
+            fi;
+          od;
+        od
+      od
+    fi;
+  od;
+  SurfMatrix;
+end:
+
+
+SurfaceTot := proc (SurfMatrix: array(array(array)))
+  description 'Reports the sum of the number of variable subgroups at defined 
+  PAM windows and SurfAAs counted over all positions';
+  SurfMatrixTot:= CreateArray (1..length (SurfMatrix), 1..length (SurfMatrix[1]));
+  for Window to length(SurfMatrix) do
+    for SurfDef to length(SurfMatrix[1]) do
+      for Pos to length(SurfMatrix[1,1]) do
+        if SurfMatrix[Window, SurfDef, Pos] > 0 then SurfMatrixTot[Window, SurfDef]:= SurfMatrixTot[Window, SurfDef] + 1 fi
+      od;
+    od;
+  od;
+  SurfMatrixTot;
+end:
+
+
+SurfOut:= proc(SurfMatrix: array(array(array)), SurfMatrixTot: array(array))
+  description 'Returns for each position the SurfProb of being on the surface, 
+  the number of variable subgroups at the specified MaxPW and SurfAA used to 
+  determine SurfProb';
+  res:= CreateArray (1..4, 1..length(SurfMatrix[1,1]));
+  for Pos to length(SurfMatrix[1,1]) do
+    for Window to length(SurfMatrix) do
+      for SurfDef to length(SurfMatrix[1]) do
+        if SurfMatrixTot[Window, SurfDef] <> 0 then
+          SurfProb:= SurfMatrix[Window, SurfDef, Pos] / SurfMatrixTot[Window, SurfDef] else
+          SurfProb:= SurfMatrix[Window, SurfDef, Pos]
+        fi;
+        if res[1, Pos] < SurfProb then
+          res[1, Pos]:= SurfProb;
+          res[2, Pos]:= SurfMatrix[Window, SurfDef, Pos];
+          res[3, Pos]:= Window;
+          res[4, Pos]:= SurfDef;
+        fi;
+      od;
+    od;
+  od;
+  res;
+end:
+
+
+SurfNorm:= proc (SurfMatrixOut)
+  SurfCount:= 0;
+  for Pos to length(SurfMatrixOut[1]) do
+    if SurfMatrixOut[1, Pos] <> 0 then SurfCount:= SurfCount + 1 fi
+  od;
+  if SurfCount > 0 and sum(SurfMatrixOut[1]) > 0 then
+    SurfMatrixOut[1]:= SurfMatrixOut[1] /( sum(SurfMatrixOut[1]) / SurfCount);
+  fi;
+  SurfMatrixOut;
+end:
+
+
+
+
+##############################
+########## Interior ##########
+##############################
+
+Interior := proc (Cluster: list(list(list)), MA: array(string), MaxPW: array, IntAA: array, ActMatrixOut: array)
+  description 'Reports the length of the largest subgroup at defined PAM 
+  windows in which all amino acids are of the types defined in IntAA';
+  IntMatrix := CreateArray (1..length (MaxPW), 1..length (IntAA), 1..length (MA[1]));
+  for Pos to length(MA[1]) do
+    if ActMatrixOut[Pos] = ' ' or ActMatrixOut[Pos] = 0 then
+      for IntDef to length(IntAA) do
+        for Window to length(MaxPW) do
+          for Fam to length(Cluster[Window]) do
+            Family:= Cluster[Window, Fam];
+            res:= true;
+            for Seq to length(Family) do
+              if CaseSearchString(MA[Family[Seq], Pos], IntAA[IntDef]) < 0 then res:= false fi;
+            od;
+            if res and length(Family) > 1 then
+              IntMatrix[Window, IntDef, Pos]:= max(IntMatrix[Window, IntDef, Pos], length(Family));
+            fi;
+          od;
+        od
+      od
+    fi;
+  od;
+  IntMatrix;
+end:
+
+
+InteriorTot := proc (IntMatrix: array(array(array)))
+  description 'Reports the sum of the length of all the largest subgroups at 
+  defined PAM windows and IntAAs counted over all positions';
+  IntMatrixTot:= CreateArray (1..length (IntMatrix), 1..length (IntMatrix[1]));
+  for Window to length(IntMatrix) do
+    for IntDef to length(IntMatrix[1]) do
+      for Pos to length(IntMatrix[1,1]) do
+        if IntMatrix[Window, IntDef, Pos] > 0 then IntMatrixTot[Window, IntDef] := IntMatrixTot[Window, IntDef] + 1 fi;
+      od;
+    od;
+  od;
+  IntMatrixTot;
+end:
+
+
+IntOut:= proc(IntMatrix: array(array(array)), IntMatrixTot: array(array))
+  description 'Returns for each position the IntProb of being interior, 
+  the size of the largest APC subgroup at the specified MaxPW and IntAA used 
+  to determine IntProb';
+  res:= CreateArray (1..4, 1..length(IntMatrix[1,1]));
+  for Pos to length(IntMatrix[1,1]) do
+    for Window to length(IntMatrix) do
+      for IntDef to length(IntMatrix[1]) do
+        if IntMatrixTot[Window, IntDef] <> 0 then
+          IntProb:= IntMatrix[Window, IntDef, Pos] / IntMatrixTot[Window, IntDef] else
+          IntProb:= IntMatrix[Window, IntDef, Pos]
+        fi;
+        if res[1, Pos] < IntProb then
+          res[1, Pos]:= IntProb;
+          res[2, Pos]:= IntMatrix[Window, IntDef, Pos];
+          res[3, Pos]:= Window;
+          res[4, Pos]:= IntDef;
+        fi;
+      od;
+    od;
+  od;
+  res;
+end:
+
+
+IntNorm:= proc (IntMatrixOut)
+  IntCount:= 0;
+  for Pos to length(IntMatrixOut[1]) do
+    if IntMatrixOut[1, Pos] <> 0 then IntCount:= IntCount + 1 fi
+  od;
+  IntMatrixOut[1]:= IntMatrixOut[1] /( sum(IntMatrixOut[1]) / IntCount);
+  IntMatrixOut;
+end:
+
+
+
+
+#################################
+########## Active Site ##########
+#################################
+
+ActOut:= proc (MA: array(string), ActAA)
+  description 'Reports the APC positions in which the amino acid is of the type ActAA';
+  ActMatrixOut:= CreateArray (1..length(MA[1]));
+  for Pos to length(MA[1]) do
+    ActMatrixOut[Pos]:= APC (MA, Pos);
+    if CaseSearchString(ActMatrixOut[Pos], ActAA) < 0 then ActMatrixOut[Pos]:= ' ' fi
+  od;
+  ActMatrixOut;
+end:
+
+
+APC:= proc (MA: array(string), Pos: integer; threshold=1:numeric)
+    description
+    'Returns an APC amino acid if all sequences in MA at Pos contain the       
+     same amino acid. If a third argument is given then the percentage 
+     of non indel is greater than or equal to a certain threshold.              
+     Deletions are ignored';
+
+    cpt := 0;
+    res:= ' ';
+    for i to length(MA) do
+        if AToInt(MA[i, Pos]) > 0 then
+            cpt := 1;
+            res:= MA[i, Pos];
+            break;
+        fi;
+    od;
+    if nargs=2 then return(res) fi;
+
+    for j from i+1 to length(MA) do
+        if AToInt(MA[j, Pos]) > 0 then
+            if MA[j,Pos] <> res then
+                res:= ' '
+            else
+                cpt := cpt + 1
+            fi
+        fi
+    od;
+
+    If (cpt / length (MA) >= threshold, res, ' ')
+end:
+
+
+###############################
+########## Utilities ##########
+###############################
+
+InfixNr:= proc (t: Tree)
+  description 'returns all numbers of the leafs in a tree (or a leaf)';
+  if op (0, t) = Leaf then 
+     if type(t[1], numeric) then 
+       t[1];
+     else
+       t[3];
+     fi; 
+  else 
+     InfixNr (t[1]), InfixNr (t[3]);
+  fi;
+end:
+  
+
+SortedMA := proc (mulAlign: array(string), tree: Tree)
+  description 'Returns the sequences of the multiple alignment sorted in order 
+  of the original data base';
+  leafs := [InfixNr (tree)];
+  res := CreateArray (1..length (leafs));
+  for i to length (leafs) do
+    res[leafs[i]] := mulAlign[i]
+  od;
+  res
+end:
+
+AlignedSeq:= proc(MA: array(string))
+  description 'returns for all positions in a multiple alignment the number of 
+  alignable sequences';
+  res:= CreateArray (1..length(MA[1]));
+  for pos to length(MA[1]) do
+    for i to length(MA) do
+      if AToInt(MA[i,pos]) > 0 then res[pos]:= res[pos] + 1 fi;
+    od;
+  od;
+  res;
+end:
+
+PamWindows:= proc (MinSquareTree: Tree)
+  description 'returns a vector containing all different PamWindows in a tree';
+  MaxPam:= [TreeNodes(MinSquareTree)];
+  for i to length(MaxPam) do
+    MaxPam[i]:= round(MaxPam[i] + 0.5)
+  od;
+  MaxPam:= {op(MaxPam)};
+  MaxPam:= sort([op(MaxPam)], x -> -x);
+  MaxPam;
+end:
+
+TreeNodes:= proc (MinSquareTree: Tree)
+  # Used by PamWindows
+  if op (0, MinSquareTree) = Leaf then
+    return()
+  else
+    PamMax(MinSquareTree), TreeNodes(MinSquareTree[1]), TreeNodes(MinSquareTree[3]);
+  fi;
+end:  
+
+PamMax:= proc (MinSquareTree: Tree)
+  description 'returns the largest pam distance of two sequences in a 
+  MinSquareTree';
+  d1:= min (TreeToPam(MinSquareTree[1]));
+  d3:= min (TreeToPam(MinSquareTree[3]));
+  Pam:= abs (d1 + d3) + 2 * MinSquareTree[2];
+  Pam
+end:
+
+TreeToPam:= proc (tree)
+  description 'returns a expression sequence which contains the PAM distance 
+  of the leafs of a tree (or a leaf)';
+  if op (0,tree) = Leaf then
+    tree[2]
+  else
+    TreeToPam(tree[1]), TreeToPam(tree[3])
+  fi
+end:
+
+
+
+#############################
+########## Cluster ##########
+#############################
+
+ClusterRelPam:= proc (MinSquareTree: Tree, MaxPW: array)
+  description 'returns an array of array of clusters for the Pam windows. 
+  Each sequence from SeqToMul can be addressed directly by 
+  [PAMwindow_no, Cluster_no, Sequence_no]';
+  SubTrees:= MultipleSubTree(MinSquareTree, MaxPW);
+  Cluster:= CreateArray(1..length(MaxPW));
+  for i to length(MaxPW) do
+    Cluster[i]:= CreateArray(1..length(SubTrees[i]));
+    for j to length(SubTrees[i]) do
+      Cluster[i,j]:= [InfixNr (SubTrees[i,j])];
+    od
+  od;
+  Cluster;
+end:
+
+MultipleSubTree:= proc (MinSquareTree: Tree, MaxPW: array)
+  description 'generates an array of arrays of SubTrees for all Pam windows in MaxPW';
+  MulSubTree:= CreateArray(1..length(MaxPW));
+  for i to length(MaxPW) do
+    MulSubTree[i]:= [SubTree (MinSquareTree, MaxPW[i])]
+  od;
+  MulSubTree
+end:
+
+SubTree:= proc (MinSquareTree: Tree, pam)
+  description 'generates an expression sequence of SubTrees from a given 
+  MinSquareTree at a specified pam distance';
+  if nargs < 3 then dist:= 0 else dist:= args[3] fi;
+  if op(0, MinSquareTree) = Leaf then
+    res:= [true, [dist - MinSquareTree[2]], []]
+  else
+    d1:= SubTree(MinSquareTree[1], pam, MinSquareTree[2]);
+    d3:= SubTree(MinSquareTree[3], pam, MinSquareTree[2]);
+    res := CreateArray (1..3);
+    res[2] := [];
+    res[3] := [op (d1[3]), op (d3[3])];
+    if d1[1] and d3[1] then
+      res[1] := true;
+      for x in d1[2] while res[1] do
+        for y in d3[2] while res[1] do
+          if x + y > pam then res[1] := false fi
+        od
+      od;
+      if res[1] then
+	for x in d1[2] do
+	  res[2] := append (res[2], dist - MinSquareTree[2] + x)
+	od;
+	for x in d3[2] do
+	  res[2] := append (res[2], dist - MinSquareTree[2] + x)
+	od;
+	if nargs = 2 then res[3] := [MinSquareTree] fi
+      fi
+    else
+      res[1] := false
+    fi;
+    if not res[1] then
+      if d1[1] then res[3] := append (res[3], MinSquareTree[1]) fi;
+      if d3[1] then res[3] := append (res[3], MinSquareTree[3]) fi
+    fi
+  fi;
+  if nargs = 2 then
+    op(res[3])
+  else
+    res
+  fi
+end:
+
+
+
+###########################
+########## Parse ##########
+###########################
+
+
+
+ParseOut:= proc (MA: array(string), ParseAA: array(string))  #Newest version of the parse heuristic july 1994
+# Generates 3 parse matrices: 1. One ParseAA within two positions, 2. Two within three, 3. Three within four.
+# The rows contain the ParseAA definition and the columns contain the position of the multiple alignment.
+# Step 1: Each element reports how many sequences contain a certain parse element at a defined position.
+#         This number is then divided by the sum of all elements with the same definition.
+# Step 2: For each position of the multiple alignment all elements are counted together
+# Step 3: The strongest parse is set to 5, the weakest one to 0 (which means no parse).
+
+  ParseMatrixOut:= CreateArray (1..2, 1..length(MA[1]));
+  for Pos to length(MA[1]) do			     
+    for Seq to length(MA) do
+      if AToInt(MA[Seq,Pos]) > 0 or MA[Seq,Pos] = '_' then ParseMatrixOut[1, Pos]:= ParseMatrixOut[1, Pos] + 1 fi
+    od
+  od;
+  
+  ParseLengthMax:= 3;  # 3 means three ParseAA within four alignment positions
+  ParseMatrix:= CreateArray (1..ParseLengthMax, 1..length(ParseAA), 1..length(MA[1]));
+  
+# Step 1: Counting  
+  for ParseLength from 1 to ParseLengthMax do
+    for ParseDef to length(ParseAA) do
+      for Seq to length(MA) do
+	ParseMatrix[ParseLength, ParseDef]:=
+	ParseMatrix[ParseLength, ParseDef] + ParseSequenceTest2(MA[Seq], ParseLength, ParseAA[ParseDef])
+      od;
+      for Pos to length(ParseMatrix[ParseLength, ParseDef]) do
+        ParseMatrix[ParseLength, ParseDef, Pos]:=
+        ParseMatrix[ParseLength, ParseDef, Pos] / (ParseMatrixOut[1,Pos]*ParseLengthMax*length(ParseAA));
+      od	
+    od
+  od;
+  
+# Step 2: Summarizing
+  ParseTot:= CreateArray(1..length(MA[1]));
+  for ParseLength from 1 to ParseLengthMax do
+    for ParseDef to length(ParseAA) do
+      ParseTot:= ParseTot + ParseMatrix[ParseLength, ParseDef]
+    od
+  od;
+  
+# NewStep: Summarizing positionwise
+  ParsePosition:= CreateArray(1..length(MA[1]));
+  for ParseDef to length(ParseAA) do
+    for Pos to length(MA[1]) do
+      ParsePosition[Pos]:= ParsePosition[Pos] + CountVariable(MA, Pos, ParseAA[ParseDef])
+    od
+  od;
+  for Pos to length(MA[1]) do
+    ParsePosition[Pos]:= ParsePosition[Pos] / (ParseMatrixOut[1,Pos]*length(ParseAA));
+  od;
+  ParsePosition:= ParsePosition / 1;  # correction that GPGGSGGN gets a ParseScore 1
+                                      # correction that SNNDNDNN gets a ParseScore 0
+				      # should be between 1 and 3
+                                      # The higher the number, the less important is variability
+  ParseTot:= ParseTot + ParsePosition;
+  
+# NewStep: Correction
+  for i to length(ParseTot) do          # correction that APC P gets a ParseScore 1
+    ParseTot[i]:= ParseTot[i] - .2      # .15 means APC P gets 1 and APC G gets 0
+  od;
+  
+# Step 3: Normalizing between 0 and 5
+  ParseMax:= 3;                      # means deletions everywhere is strongest parse
+  for Pos to length(ParseTot) do
+    ParseTot[Pos]:= round (ParseTot[Pos] * 5 / ParseMax)
+  od;
+  ParseMatrixOut[2]:= ParseTot;
+  ParseMatrixOut;
+end:
+
+
+
+ParseSequenceTest2:= proc(Sequence, ParseLength, ParseDef)
+  # performs the ParseTest x ParseAA within x+1 positions for all positions of a sequence
+  ParseSeq:= CreateArray(1..length(Sequence));
+  for Pos to length(Sequence)-ParseLength do
+    counter:= 0;
+    for i to ParseLength+1 do
+      if CaseSearchString(Sequence[Pos+i-1], ParseDef)>= 0 then counter:= counter + 1 fi
+    od;
+    if counter >= ParseLength then
+      for j from Pos to Pos+ParseLength do
+	ParseSeq[j]:= ParseSeq[j] + 1
+      od
+    fi
+  od;
+  ParseSeq
+end:
+
+
+
+
+CountVariable:= proc (MA, Pos, ParseDef)
+  # counts the number of amino acids from ParseDef at a position 
+  # that contains at least two amino acids from ParseDef that are not 
+  # identical; deletions are ignored
+  Counter:= 0;
+  Variability:= false;
+  for i to length(MA) do
+    if AToInt(MA[i, Pos]) > 0 and CaseSearchString (MA[i, Pos], ParseDef) >= 0 then
+      break
+    fi
+  od;
+  for j from i to length(MA) do
+    if AToInt(MA[j, Pos]) > 0 and CaseSearchString (MA[j, Pos], ParseDef) >= 0 then
+      Counter:= Counter+1;
+      if MA[i, Pos] <> MA[j, Pos] then Variability:= true fi
+    fi
+  od;
+  if Variability = false then Counter:= 0 fi;
+  Counter
+end:

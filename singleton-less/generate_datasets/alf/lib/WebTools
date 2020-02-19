@@ -1,0 +1,27 @@
+#################################################
+# Some useful functions to access webpages 	#
+# through Darwin.				#
+#			Adrian Schneider, 2006	#
+#################################################
+
+# Read in a URL as a string (like ReadRawFile)
+ReadURL := proc(url:string)
+t := TimedCallSystem('wget -q -O - "'.url.'"');
+if t[1]<>0 then
+    # if it fails, try again non-quiet to catch the error msg
+    t := TimedCallSystem('wget -O - "'.url.'"');
+    error('wget failed');
+else
+    return(t[2]);
+fi;
+end:
+
+# Download a URL into a file
+DownloadURL := proc(url:string, filename:string)
+t := TimedCallSystem('wget -q -O '.filename.' "'.url.'"');
+if t[1]<>0 then
+    # if it fails, try again non-quiet to catch the error msg
+    t := TimedCallSystem('wget -O '.filename.' "'.url.'"');
+    error('wget failed');
+fi;
+end:

@@ -1,0 +1,174 @@
+#
+#	Greedy optimization algorithm
+#
+#	Run an optimization algorithm under various variants of the
+#	greedy-style algorithms.
+#
+#	Usage:  Greedy( OptProblem(...), ... )
+#
+#	where OptProblem is a class which describes an optimization
+#	problem in a partial state of solution.  The class OptProblem
+#	has to accept the following selectors:
+#
+#	p := OptProblem(...);
+
+#	p[Value]       - The optimization value, which Greedy attempts to
+#                        minimize.  This value is only used for the options
+#                        Paths and Stack.  For partial solutions, it does
+#			 not need to be exact, but the more accurate the
+#			 better.
+
+#       p[Final]       - true/false depending on whether the solution is
+#                        complete.  p[Value] should be accurate in this case.
+
+#       p[Signature]   - A value (usually an integer) which identifies the
+#                        partially solved problem.  If two Signatures
+#                        coincide, Greedy will assume that the same solution
+#                        has been found and will only use the one with
+#                        lowest p[Value].
+#
+#	Additionally to these selectors, the Class should also perform
+#	two operations:
+#
+#	OptProblem_NextStep( p:OptProblem, k:posint ) -> list(choice)
+#               Returns a list with the k top choices for the next step
+#		suitable for the partial solution p.  The posint k is an
+#               indication.  The function could return more (which will
+#               be ignored) or fewer choices.  If the problem is not
+#		completed (p[Final]=false) then it must return at least
+#		one.
+#
+#	OptProblem_union( p:OptProblem, c:set(choice) ) -> OptProblem
+#		Adds one choice to the partial solution in p.
+
+#
+#	The final result from Greedy is the completed solution which
+#	has the smallest value.  The function OptProblem_union is
+#	responsible for storing the steps that lead to the solution, if
+#	this is desired.
+#
+#				Gaston H. Gonnet (Jan 14, 2006)
+#
+
+
+Greedy := proc( problem:structure ; mode:{'Random','Paths','Stack'},
+	k:posint )
+
+class := op(0,problem);
+ns := symbol( class . '_NextStep' );
+if not assigned(mode) and assigned(k) then mode := 'Stack' fi;
+if not assigned(k) then k := 10 fi;
+
+if not assigned(mode) or mode = 'Random' then
+     # Simple greedy algorithm or
+     # Random greedy - select the top choices with an exponential distribution
+     pr := problem;
+     if not assigned(mode) then k := 1 fi;
+     do  chs := ns(pr,k);
+	 if length(chs) < 1 then
+	     error(chs,ns,'returned an empty list of choices') fi;
+         i := ceil( k - lg( 1 + (2^k-1)*Rand() ));
+         pr := pr union {chs[min(i,length(chs))]};
+         if pr['Final'] then return(pr) fi;
+     od
+
+elif mode = 'Stack' then
+     pr := [problem];
+     sig0 := table();
+     sig1 := table();
+     bestv := DBL_MAX;
+
+     # main interation adding one set of choices at a time
+     do  prn := [];
+	 for z in pr do
+	     chs := ns(z,k);
+	     # do not complain on an empty list of choices,
+	     # in the hope that other solutions will survive
+	     if length(chs) > k then chs := chs[1..k] fi;
+	     #if length(pr) > 0.9*k and length(chs) > 5 then chs := chs[1..4] fi;
+	     for ch in chs do
+		 zch := z union {ch};
+		 zchv := zch['Value'];
+		 if zch['Final'] then
+		      if zchv < bestv then bestv = zchv;  best := zch fi;
+		      next
+		 fi;
+		 zchs := zch['Signature'];
+		 if ( sig0[zchs] = 'unassigned' or sig0[zchs] > zchv ) and
+		    ( sig1[zchs] = 'unassigned' or sig1[zchs] > zchv ) then
+		      # add random noise to value to select the best at random
+		      prn := append(prn,[zchv*(1+1e-10*Rand()),zchv,zchs,zch]) fi
+	     od
+	 od:
+	 if prn=[] then
+	      if assigned(best) then return(best)
+	      else error('failed to find any final solution') fi
+	 fi;
+
+	 # eliminate duplicate signatures, and shorten to k partial solutions
+	 prn := sort( prn, x -> x[3] ):
+	 i := 1;
+	 for j from 2 to length(prn) do
+	     if prn[i,3] < prn[j,3] then i := i+1;  prn[i] := prn[j]; fi;
+	 od;
+	 prn := sort(prn[1..i]):
+	 if i > k then prn := prn[1..k] fi:
+
+	 sig0 := sig1;
+	 sig1 := table();
+	 for z in prn do sig1[z[3]] := z[2] od;
+	 pr := [seq(z[4],z=prn)]:  prn[1];
+     od:
+
+elif mode = 'Paths' then
+     pr := [problem];
+     sig0 := table();
+     sig1 := table();
+     bestv := DBL_MAX;
+
+     # main interation adding one set of choices at a time
+     do  prn := [];
+	 for z in pr do
+	     chs := ns(z,k);
+	     # do not complain on an empty list of choices,
+	     # in the hope that other solutions will survive
+	     if chs=[] then next fi;
+	     for i to length(chs) do
+	         ch := chs[i];
+		 if i>1 and Rand()*length(prn) > k then next fi;
+	         zch := z union {ch};
+	         zchv := zch['Value'];
+	         if zch['Final'] then
+		      if zchv < bestv then bestv = zchv;  best := zch fi;
+		      next
+	         fi;
+	         zchs := zch['Signature'];
+	         if ( sig0[zchs] = 'unassigned' or sig0[zchs] > zchv ) and
+		    ( sig1[zchs] = 'unassigned' or sig1[zchs] > zchv ) then
+		      # add random noise to value to select the best at random
+		      ordv := If( i=1, -DBL_MAX, zchv ) * (1-1e-10*Rand());
+		      prn := append(prn,[ordv,zchv,zchs,zch]) fi
+	     od
+	 od;
+	 if prn=[] then
+	      if assigned(best) then return(best)
+	      else error('failed to find any final solution') fi
+	 fi;
+
+	 # eliminate duplicate signatures, and shorten to k partial solutions
+	 prn := sort( prn, x -> x[3] );
+	 i := 1;
+	 for j from 2 to length(prn) do
+	     if prn[i,3] < prn[j,3] then i := i+1;  prn[i] := prn[j]; fi;
+	 od;
+	 prn := sort(prn[1..i]);
+	 if i > k then prn := prn[1..k] fi;
+
+	 sig0 := sig1;
+	 sig1 := table();
+	 for z in prn do sig1[z[3]] := z[2] od;
+	 pr := [seq(z[4],z=prn)];
+     od:
+
+else error(args,'invalid arguments') fi
+end:

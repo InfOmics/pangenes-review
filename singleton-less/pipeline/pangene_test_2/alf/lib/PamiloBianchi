@@ -1,0 +1,227 @@
+# Compute Ka and Ks according to Pamilo & Bianchi 1993.
+# Based on program by Barbara Keller,
+#		adjusted for the library:
+#				Adrian Schneider, June 2008
+
+module external EstimatePB93;
+
+# isTransitions takes two strings (which are advantageous Nucleotides) as input and
+# returns 1 if the two Nucleotides are a transition, 2 if its a transversion, 0 otherwise
+isTransition := proc(nuc1:string, nuc2:string) option internal;
+
+if (nuc1='A' and nuc2='G') or (nuc1='G' and nuc2='A')
+    or ((nuc1='T' or nuc1='U') and nuc2='C') or 
+	(nuc1='C' and (nuc2='T' or nuc2='U')) then
+    return(1):
+elif ((nuc1='A' or nuc1='G') and (nuc2='T' or nuc2='C' or nuc2='U'))
+       or ((nuc1='T' or nuc1='C' or nuc1='U') and (nuc2='A' or nuc2='G')) then
+       return(2):
+else 
+       return(0):
+fi:
+end:   
+
+
+# foldArray is a lookup-table for every nucleotide position (l = 1..3) in each codon  
+# they are classified into non- (L0), twofold (L2)  or fourfold (L4) degenerate sites.
+# 
+# could look like this:
+#           codon 1    codon 2     codon i    codon 64
+# site 1      L0         L0	     L0		 L0	
+# site 2      L0	 L2          L0          L0
+# site 3      L2	 L4          L0          L2
+#
+
+foldArray := CreateArray(1..64, 1..3):
+substitutionArray := [[2,3,4],[1,3,4],[1,2,4],[1,2,3]]:
+# Calculate for all possible Codons (4*4*4) its foldarray-entry
+for i from 1 to 4 do
+    for j from 1 to 4 do
+        for k from 1 to 4 do
+            orig_codon := IntToB(i) . IntToB(j) . IntToB(k):
+            orig_codonIntList := [i, j, k]:
+
+            
+            for l from 1 to 3 do
+               similars := 0:
+               for m from 1 to 3 do
+                   nIntList := [i,j,k]:
+                   # for every position in the Codon (l) 
+                   # we go through all possible neighbours (substitutionArray[orig_codonIntList[l][1..3])
+                   nIntList[l] := substitutionArray[orig_codonIntList[l], m]:
+                   neighbour_codon := IntToB(nIntList[1]) . IntToB(nIntList[2]) . IntToB(nIntList[3]):
+
+                   # check if the original and mutated Codon code for the same AminoAcid
+                   if (CodonToA(neighbour_codon) = CodonToA(orig_codon)) then
+                       similars := similars + 1:
+                   fi:
+              od:
+              if (similars = 3) then
+                   foldArray[CodonToCInt(orig_codon)][l] := 4:
+              elif (similars = 0) then
+                   foldArray[CodonToCInt(orig_codon)][l] := 0:
+              else # 3 fold are matched to twofolds...
+                   foldArray[CodonToCInt(orig_codon)][l] := 2:
+              fi:
+           od:
+        od:
+    od:
+od:
+
+# To Calculate Pamilo/Bianchis Ks
+# The two sequences are expected to have the same length
+# For calculating, the length of sequence 1 is taken   
+
+EstimatePB93 := proc(sequence1:string, sequence2:string)
+
+L0 := 0:
+L2 := 0:
+L4 := 0:
+
+# counting the sites
+# sum up the numbers of each type 
+# (non-, twofold and fourfold degenerate) in each sequence
+for i from 0 to length(sequence1)/3 -1 do
+    ci1 := CodonToCInt(sequence1[3*i+1..3*i+3]);
+    ci2 := CodonToCInt(sequence2[3*i+1..3*i+3]);
+    if ci1=0 or ci2=0 then next fi;
+    for j from 1 to 3 do
+	faj := foldArray[ci1][j];
+        if faj=0 then
+            L0 := L0 + 1:
+        elif faj=2 then
+            L2 := L2 +1:
+        elif faj=4 then
+            L4 := L4 + 1:
+        fi:    
+	faj := foldArray[ci2][j];
+        if faj=0 then
+            L0 := L0 + 1:
+        elif faj=2 then
+            L2 := L2 +1:
+        elif faj=4 then
+            L4 := L4 + 1:
+        fi:    
+   od:
+od:
+
+L0 := L0/2:
+L2 := L2/2:
+L4 := L4/2:        
+
+
+# counting the differences
+# for each difference check if its transitional or transversional 
+# and how the site on which it occured is classified and sum them up
+
+S0 := 0:
+S2:= 0:
+S4:= 0:
+V0 := 0:
+V2 := 0:
+V4:= 0:
+
+for i from 0 to length(sequence1)/3-1 do
+    ci1 := CodonToCInt(sequence1[3*i+1..3*i+3]);
+    ci2 := CodonToCInt(sequence2[3*i+1..3*i+3]);
+    if ci1=0 or ci2=0 then next fi;
+    for j from 1 to 3 do
+       faj1 := foldArray[ci1][j];
+       faj2 := foldArray[ci2][j];
+       if (isTransition(sequence1[3*i+j],sequence2[3*i+j]) = 1) then
+           # It could happen, that the corresponding site in  sequence 1 and 
+	   # in sequence 2 is not 
+	   # classified the same that's why we count +0.5 for each.
+           if faj1=0 then
+               S0 := S0 +0.5:
+           elif faj1=2 then
+               S2 := S2 +0.5:
+           else
+               S4 := S4 +0.5:
+           fi:
+           if faj2=0 then
+               S0 := S0 +0.5:
+           elif faj2=2 then
+               S2 := S2 +0.5:
+           else
+               S4 := S4 +0.5:
+           fi:
+          
+       elif (isTransition(sequence1[3*i+j],sequence2[3*i+j]) = 2) then
+
+           if faj1=0 then
+               V0 := V0 +0.5:
+           elif faj1=2 then
+               V2 := V2 +0.5:
+           else
+               V4 := V4 +0.5:
+           fi:
+
+           if faj2=0 then
+               V0 := V0 +0.5:
+           elif faj2=2 then
+               V2 := V2 +0.5:
+           else
+               V4 := V4 +0.5:
+           fi:
+       fi:
+    od:
+od:
+
+
+
+# start the calculation:
+# Pi = Si/Li and Qi = Vi/Li
+# ai = 1/(1-2*Pi-Qi)
+# bi = 1/(1-2*Qi)
+# Ai = 1/2*log(ai) - 1/4*log(bi)
+# Bi = 1/2*log(bi)
+# Ki = Ai + Bi
+# Ks = (L2*A2 + L4*A4)/(L2+L4) + B4
+# Ka = A0 + (L0*B0 + L2*B2)/(L0+L2)
+
+P0 := If(S0=0 and L0=0,0,S0/L0);
+P2 := If(S2=0 and L2=0,0,S2/L2);
+P4 := If(S4=0 and L4=0,0,S4/L4);
+
+Q0 := If(V0=0 and L0=0,0,V0/L0);
+Q2 := If(V2=0 and L2=0,0,V2/L2);
+Q4 := If(V4=0 and L4=0,0,V4/L4);
+
+# check for possible errors during calculation:
+# divisor != 0 and no no log of a number < 0 is tried to calculate
+if ((1-2*P0-Q0 > 0) and (1-2*Q0 > 0) and (1-2*P2-Q2 > 0) and 
+   (1-2*Q2 > 0) and (1-2*P4-Q4 > 0) and (1-2*Q4 > 0)) then
+    a0 := 1/(1-2*P0-Q0):
+    b0 := 1/(1-2*Q0):
+    c0 := (a0-b0)/2:
+
+    a2 := 1/(1-2*P2-Q2):
+    b2 := 1/(1-2*Q2):
+    c2 := (a2-b2)/2:
+
+    a4 := 1/(1-2*P4-Q4):
+    b4 := 1/(1-2*Q4):
+    c4 := (a4-b4)/2:
+
+    A0 := 1/2*log(a0) - 1/4*log(b0):
+    B0 := 1/2*log(b0):
+
+    A2 := 1/2*log(a2) - 1/4*log(b2):
+    B2 := 1/2*log(b2):
+
+    A4 := 1/2*log(a4) - 1/4*log(b4):
+    B4 := 1/2*log(b4):
+
+    KS := (L2*A2+L4*A4)/(L2+L4) + B4:
+    KA := A0 + (L0*B0+L2*B2)/(L0+L2):
+else
+    KS := -1;
+    KA := -1;
+fi:
+
+return([KA,KS]):
+end:
+
+NULL
+end: # module

@@ -1,0 +1,215 @@
+SvdAnalysis := proc( AtA:matrix(numeric), btA:list(numeric), btb:numeric,
+	NData:posint, names:list(string), svmin:{numeric,First(posint)} )
+local V;
+description
+'
+SvdAnalysis does a least squares approximation and returns various measures
+of quality of the fit.
+
+ Problem:  Given a matrix of A (dim n x m) and a vector b (dim n),
+	we want to find a vector x (dim m)  such that Ax ~ b.
+	This approximation is in the least squares sense,
+	i.e. ||Ax-b||^2 is minimum
+
+   The calling arguments are:
+	AtA is a matrix (dim m x m) which is the product A^t * A
+	btA is a vector (dim m) which is the product b^t * A
+	btb is the norm squared of b, i.e. ||b||^2 = b^t * b
+	NData is the number of data points (A is dim n x m)
+	names is a list (dim m) of the names associated with each
+		column of A, or with each value of x.
+	svmin is a positive numeric value.  All singular values less than
+		svmin will not be used.  Making svmin=0, all singular
+		values are used, and this is equivalent to pure least
+		squares.  Alternatively, svmin can be the structure
+		First(k), where k is a positive integer not greater
+		than the dimension of AtA.  In this case, the largest
+		k singular values will be used.
+
+	If the global variable ComputeSensitivity is set to false,
+	SvdAnalysis will not compute the sensitivity analysis and will
+	compute more quickly.  For m > 100 this is highly recommended.
+
+ Output: The output is a darwin data structure
+	SvdResult( Norm2Err, SensitivityAnalysis, SingularValuesUsed,
+		SingularValuesDiscarded, Norm2Indep, MinNorm2Err,
+		SolutionVector, NData )
+   where:
+	Norm2Err is the norm squared of the resulting approximation, i.e.
+		||Ax-b||^2
+	SensitivityAnalysis is a list of 4-tuples with m entries, each one corresponding
+		for one variable.  Each entry is [nnn,vvv,sss,ttt], where:
+		nnn is the name of the variable,
+		vvv is the result value (the x[i] value)
+		sss is an estimate of the standard deviation of vvv
+		ttt is the amount by which ||Ax-b||^2 will increase
+			if nnn would not be used.  Two compute this
+			difference, all singular values are used.
+		The list is sorted by decreasing ttt
+		The list is only produced if the global variable
+		ComputeSensitivity is not set to false, otherwise it is
+		empty.
+	SingularValuesUsed is a list of the singular vales used ( > svmin )
+	SingularValuesDiscarded is a list of the singular values discarded ( <= svmin )
+	Norm2Indep is simply btb, the norm squared of the independent variables,
+		the maximum norm that could be reached
+	MinNorm2Err is the norm of ||Ax-b||^2 if all singular values were used,
+		i.e. is the minimum norm that could be achieved with
+		these m variables.
+	SolutionVector is the solution vector x
+	NData   is the number of data points (A is of dimensions n x m)
+
+  A good summary explanation of the Svd analysis can be found in many
+  books, I like the one in Forsythe Malcolm and Moler, Computer Methods
+  for mathematical computations.
+
+See Also:  ?SvdBestBasis  ?LSBestSum  ?LSBestDelete  ?LSBestSumDelete';
+
+#				Gaston H. Gonnet (Mar 1997)
+
+m := length(AtA);
+if m <> length(AtA[1]) then error('AtA is not a square matrix')
+elif m<1 then error('too few variables, cannot do analysis')
+elif length(btA) <> m then error('btA is not of the right dimension')
+elif length(names) <> m then error('wrong number of names') fi;
+
+lambda := Eigenvalues(AtA,V);
+if type(svmin,numeric) then svmin1 := svmin
+elif svmin[1] >= m then svmin1 := lambda[1] - 1
+else svmin1 := ( lambda[m-svmin[1]] + lambda[m-svmin[1]+1] ) / 2 fi;
+
+svmin2 := abs(lambda[m])*100*m^2*DBL_EPSILON;
+d := btA * V;
+z := CreateArray(1..m):
+svu := svd := NULL;
+t3 := 0;
+for i to m do
+    if lambda[i] > max(svmin1,svmin2) then
+	 z[i] := If( lambda[i]>0, d[i]/lambda[i], 0);
+	 svu := svu, lambda[i]
+    else z[i] := 0;  svd := svd, lambda[i] fi;
+    if lambda[i] > svmin2 then t3 := t3 + d[i]^2/lambda[i] fi
+    od;
+err := max( 0, btb - z*d);
+minerr := max( 0, btb - t3);
+x := V * z;
+
+if ComputeSensitivity=false then r := [seq( [names[k],x[k],0,0], k=1..m)]
+elif m=1 then
+     t5 := If( AtA[1,1]=0, 0, btA[1]^2/AtA[1,1] );
+     r := [ [names[1], x[1], abs(x[1])/(1.0e-20+sqrt(abs(t5))), t5] ]
+else r := [];
+     # AtA may be singular (or nearly singular), invert it using the E/E
+     iAtA := CreateArray(1..m,1..m);
+     for i to m do iAtA[i,i] :=
+	If( lambda[i] <= 1e-12*lambda[m], 0, 1/lambda[i] ) od;
+     iAtA := V * iAtA * transpose(V);
+     btA2 := CreateArray(1..m-1);
+     z2 := CreateArray(1..m-1);
+     AtA2 := CreateArray(1..m-1,1..m-1);
+     for k to m do
+         for i to m-1 do
+	     btA2[i] := btA[ If(i<k,i,i+1) ];
+	     for j from i to m-1 do
+	         AtA2[j,i] := AtA2[i,j] := AtA[If(i<k,i,i+1), If(j<k,j,j+1)] od
+	     od;
+         lambda2 := Eigenvalues(AtA2,noeval(V));
+         svmin2 := abs(lambda2[m-1])*100*DBL_EPSILON;
+         d2 := btA2 * V;
+         t5 := t3;
+         for i to m-1 do if lambda2[i] > svmin2 then
+	     t5 := t5 - d2[i]^2/lambda2[i] fi od;
+	 if type(iAtA,matrix) and NData > m then
+	      stdxk := sqrt( iAtA[k,k]*minerr/(NData-m) )
+	 else stdxk := abs(x[k])/(1.0e-20+sqrt(abs(t5))) fi;
+         r := append( r, [names[k], x[k], stdxk, t5] )
+         od;
+     fi;
+
+SvdResult( err, sort( r, a -> -a[4] ), [svu], [svd], btb, minerr, x, NData )
+end:
+
+
+SvdResult := proc( Norm2Err:numeric,
+    SensitivityAnalysis:list([string,numeric,numeric,numeric]),
+    SingularValuesUsed:list(numeric),
+    SingularValuesDiscarded:list(numeric),
+    Norm2Indep:numeric,
+    MinNorm2Err:numeric,
+    SolutionVector:list(numeric),
+    NData:posint )
+if nargs < 7 or nargs > 8 then error('invalid number of arguments')
+else noeval(SvdResult(args)) fi
+end:
+
+SvdResult_type := {
+    noeval(SvdResult( numeric, list([string,numeric,numeric,numeric]),
+	list(numeric), list(numeric), numeric, numeric, list(numeric))),
+    noeval(SvdResult( numeric, list([string,numeric,numeric,numeric]),
+	list(numeric), list(numeric), numeric, numeric, list(numeric),
+	posint )) }:
+
+
+SvdResult_print := proc( svr )
+
+printf( '\nResults of SVD analysis\n' );
+if length(svr)=8 then printf( '%d data points, ', svr['NData'] ) fi;
+printf( '%d independent variables', length(svr['SolutionVector']) );
+if length(svr['SolutionVector']) <> length(svr['SensitivityAnalysis']) then
+     printf( ', %d used here', length(svr['SensitivityAnalysis']) ) fi;
+printf( '\n' );
+
+if length(svr[SingularValuesDiscarded]) > 0 then
+     printf( 'Norms of:     raw data    residuals  all SV used\n' );
+     printf( '         %13.5g%13.5g%13.5g\n',
+	svr[Norm2Indep], svr[Norm2Err], svr[MinNorm2Err] )
+else
+     printf( 'Norms of:     raw data    residuals\n' );
+     printf( '         %13.5g%13.5g\n', svr[Norm2Indep], svr[Norm2Err] )
+fi;
+
+r := svr[SingularValuesUsed];
+printf( '%d singular values used:', length(r) );
+for i to length(r) do
+    if mod(i,9)=6 then printf( '\n' ) fi;
+    printf( '  %.4g', r[i])
+od;
+printf( '\n' );
+
+r := svr[SingularValuesDiscarded];
+if length(r) > 0 then
+     printf( '%d singular values discarded', length(r) );
+     for i to length(r) do
+	if mod(i,9)=6 then printf( '\n' ) fi;
+	printf( '  %.3g', r[i]) od;
+     printf( '\n' );
+fi;
+
+if length(r) > 0 and r[1] < 1e-10 or svr[SingularValuesUsed,1] < 1e-10 then
+     printf( '        variable      coeff\n' );
+     for r in sort( svr[SensitivityAnalysis], x -> -|x[2]| ) do
+	printf( '%16s%12.5g\n', r[1], r[2]) od
+else
+     printf( '        variable      coeff/stdev    norm decrease\n' );
+     for r in svr[SensitivityAnalysis] do
+         if r[4] < 1e-10 then
+	      printf( '%16s%9.4f +-  INF     0.0\n', r[1], r[2] )
+         else printf( '%16s%9.4f +- %.4f    %.4g\n', r[1], r[2], r[3], r[4] ) fi
+     od
+fi;
+NULL
+end:
+
+
+
+SvdResult_Rand := proc( )
+m := round(3+4*Rand());
+n := round(10+10*Rand());
+A := CreateArray(1..n,1..m);
+b := CreateArray(1..n);
+for i to n do
+    for j to m do A[i,j] := 10*Rand() od;
+    b[i] := 7*A[i,1] - 3*A[i,3] + 0.3*(2*Rand()-1)
+    od;
+SvdAnalysis( transpose(A)*A, b*A, b^2, n, [ seq( v.i, i=1..m ) ], 20 )
+end:

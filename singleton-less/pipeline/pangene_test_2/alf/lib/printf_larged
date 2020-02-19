@@ -1,0 +1,13 @@
+#
+#	Called when printf hits an d, i, o, u, x or X and the
+#	integer cannot be represented in a single word
+#	
+#				Gaston H. Gonnet (March 20th, 2009)
+printf_larged := proc( pat:string, val:numeric )
+if pat[-1] = 'd' or pat[-1] = 'i' then
+    return( sprintf( pat[1..-2] . '.0f', val )) fi;
+pow2 := 2 ^ If( pat[-1] = 'o', 21, 28 );
+val1 := If( val>0, floor(val/pow2), ceil(val/pow2) );
+val2 := val - val1*pow2;
+sprintf( pat, val1 ) . (sprintf( '%07' . pat[-1], val2 )[-7..-1])
+end:

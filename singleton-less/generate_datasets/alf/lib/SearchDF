@@ -1,0 +1,152 @@
+#
+# SearchDb: Search a database for the entries which have certain strings
+#
+#  Usage: SearchDb( {word1, word2, ..}, {word3,..}, ... )
+#
+#	will return all the entries (as an Entry() data structure)
+#	which contain one word of each of the sets.
+#
+#	Each argument can be a string or a set of strings.  A set
+#	of strings is interpreted as an ``or'' of strings to match
+#
+#				Gaston H. Gonnet (March 1991)
+SearchDb := proc( s1:{string,set(string)} )
+  if not type(DB, database) then
+    error('DB should be assigned a database') fi;
+
+  #  Fill entry vector
+  ev := CreateArray(1..nargs);
+  for i to nargs do
+    if type(args[i],string) then
+         ev[i] := CreateArray(1..1)
+    elif type(args[i],set(string)) then
+         if length(args[i]) = 0 then error('empty set') fi;
+         ev[i] := CreateArray(1..length(args[i]))
+    else error('invalid arguments') fi
+  od;
+  
+  maxmin := 1;  res := [];
+  while maxmin <= DB[TotEntries] do
+    flag := true;
+    for i to nargs do
+      jmin := 1;
+      for j to length(ev[i]) do
+	if ev[i,j] < maxmin then
+	  SearchString( If( type(args[i],string), args[i], args[i,j] ),
+		     DB[entry,maxmin]+DB[string] );
+	  if " < 0 then ev[i,j] := DB[TotEntries]+1
+	  else ev[i,j] := GetEntryNumber( DB[entry,maxmin]+" ) fi
+	fi;
+	if ev[i,j] < ev[i,jmin] then jmin := j fi
+      od;
+      if ev[i,jmin] > maxmin then
+	flag := false;
+	maxmin := ev[i,jmin];
+	if maxmin > DB[TotEntries] then break fi
+      fi
+    od;
+    
+    if flag then res := append(res, Entry(maxmin));  maxmin := maxmin+1 fi
+  od;
+  op(res)
+end:
+
+
+
+#
+#  SearchID: find an entry with the given ID
+#
+#	returns an Entry data structure with the entry which
+#	matches the ID.
+#	If it is not found, it returns NULL
+#
+#				Gaston H. Gonnet (Sep 23rd, 2001)
+#
+SearchID := proc( pat:string )
+global SearchID_table,SearchID_DBname;
+if not type(DB,database) then error('no database loaded, use ReadDb')
+elif not (type(SearchID_table,list) and SearchID_DBname = DB[FileName]) then
+     SearchID_DBname := DB[FileName];
+     t := CreateArray(1..DB[TotEntries],'');
+     for i to DB[TotEntries] do
+	 t[i] := SearchTag('ID',DB[string,DB[entry,i]+1..DB[entry,i+1]]) od;
+     SearchID_table := sort(t);
+     fi;
+
+lo := 0;  hi := DB[TotEntries];
+while hi-lo > 1 do
+     j := round((lo+hi)/2);
+     if pat <= SearchID_table[j] then hi := j else lo := j fi
+     od;
+if hi>0 then
+     t := SearchID_table[hi];
+     lp := length(pat);
+     if t=pat or length(t) > lp and t[1..lp+1] = pat . ';' then
+          Entry(GetEntryNumber(GetOffset(SearchID_table[hi]))) fi
+fi;
+end:
+#
+#  SearchID: find an entry with the given ID
+#
+#	version with table(), too slow still
+#
+#				Gaston H. Gonnet (Oct 29rd, 2003)
+#
+#SearchID := proc( pat:string )
+#global SearchID_table,SearchID_DBname;
+#if not type(DB,database) then error('no database loaded, use ReadDb')
+#elif not (type(SearchID_table,list) and SearchID_DBname = DB[FileName]) then
+#     SearchID_DBname := DB[FileName];
+#     SearchID_table := table();
+#     for i to DB[TotEntries] do
+#	 SearchID_table[
+#	    SearchTag('ID',DB[string,DB[entry,i]+1..DB[entry,i+1]])] := i od;
+#     fi;
+#
+#r := SearchID_table[pat];
+#if type(r,posint) then r else NULL fi;
+#end:
+
+
+
+#
+#  SearchAC: find an entry with the given AC
+#
+#	returns an Entry string which has a matching AC field
+#	If it is not found, it returns NULL
+#
+#				Gaston H. Gonnet (Sep 23rd, 2001)
+#
+module external SearchAC;
+local SearchAC_table,SearchAC_DBname;
+
+SearchAC := proc( pat:string )
+global SearchAC_table,SearchAC_DBname;
+if not type(DB,database) then error('no database loaded, use ReadDb')
+elif not (type(SearchAC_table,list) and SearchAC_DBname = DB[FileName]) then
+     SearchAC_DBname := DB[FileName];
+     t := [];
+     for i to DB[TotEntries] do
+	 z := SearchTag('AC',DB[string,DB[entry,i]+1..DB[entry,i+1]]);
+	 if SearchString(';',z) < 0 then t := append(t,z)
+	 else do  j := SearchString(';',z);
+	          if j < 0 then break fi;
+	          t := append(t,z[1..j+1]);
+	          z := j+2+z
+	          od
+	      fi
+	 od;
+     SearchAC_table := sort(t);
+     fi;
+
+lo := 0;  hi := length(SearchAC_table);
+while hi-lo > 1 do
+     j := round((lo+hi)/2);
+     if pat <= SearchAC_table[j] then hi := j else lo := j fi
+     od;
+if hi>0 and SearchAC_table[hi] = pat then
+     Entry(GetEntryNumber(GetOffset(SearchAC_table[hi])))
+elif pat[-1..-1] <> ';' then SearchAC(pat.';')
+else return() fi
+end:
+end:

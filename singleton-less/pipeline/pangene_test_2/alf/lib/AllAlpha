@@ -1,0 +1,76 @@
+AllAlpha := proc (s:string)
+
+  description 'Returns the positions and lengths of 3.6 periodicity regions in string s.
+  The procedure is called with a binary string, typically S and I, the search is not case
+  sensitive and . is the symbol for do not know. Optional arguments are: window length, 
+  winlen = numeric, which is the minimum of residues per regions per turn (18 residues), and
+  minimum length, minlen = numeric, which is the minimum length an helix is allowed to be.';
+
+  winlen := 2;
+  minlen := 7;
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op (1, args[i]), 'Winlen') <> -1 and type (op (2, args[i]), numeric) then
+	winlen := op (2, args[i])
+      elif SearchString (op (1, args[i]), 'MinLen') <> -1 and type (op (2, args[i]), numeric) then
+	minlen := op (2, args[i])
+      fi
+    fi
+  od;
+
+  CallExternal ('/usr/local/lib/darwin/Local/allalpha', s, winlen, minlen)
+
+end:
+
+AllAlpha2 := proc (s:string)
+
+  description 'Returns the positions and lengths of 3.6 periodicity regions in string s.
+  The procedure is called with a binary string, typically S and I, the search is not case
+  sensitive and . is the symbol for do not know. Optional arguments are: window length, 
+  winlen = numeric, which is the minimum of residues per regions per turn (18 residues), and
+  minimum length, minlen = numeric, which is the minimum length an helix is allowed to be.';
+
+  winlen := 0;
+  minlen := 7;
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op (1, args[i]), 'Winlen') <> -1 and type (op (2, args[i]), numeric) then
+	winlen := op (2, args[i])
+      elif SearchString (op (1, args[i]), 'MinLen') <> -1 and type (op (2, args[i]), numeric) then
+	minlen := op (2, args[i])
+      fi
+    fi
+  od;
+
+  CallExternal ('/usr/local/lib/darwin/Local/allalpha2', s, winlen, minlen)
+
+end:
+
+AllAlpha3 := proc (s:string)
+
+  description 'Returns the positions and lengths of 3.6 periodicity regions in string s.
+  The procedure is called with a binary string, typically S and I, the search is not case
+  sensitive and . is the symbol for do not know. Optional arguments are: window length, 
+  winlen = numeric, which is the minimum of residues per regions per turn (18 residues), and
+  minimum length, minlen = numeric, which is the minimum length an helix is allowed to be.';
+
+  winlen := 1;
+  minlen := 5;
+  
+  for i from 2 to nargs do
+    if type (args[i], string = anything) then
+      if SearchString (op (1, args[i]), 'Winlen') <> -1 and type (op (2, args[i]), numeric) then
+	winlen := op (2, args[i])
+      elif SearchString (op (1, args[i]), 'MinLen') <> -1 and type (op (2, args[i]), numeric) then
+	minlen := op (2, args[i])
+      fi
+    fi
+  od;
+
+  CallExternal ('/usr/local/lib/darwin/Local/allalpha3', s, winlen, minlen)
+
+end:
+
+NULL:

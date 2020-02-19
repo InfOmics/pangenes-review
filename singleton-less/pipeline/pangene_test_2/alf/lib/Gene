@@ -1,0 +1,324 @@
+# Purpose: Data structure defining gene-peptide references
+# Author:  Lukas Knecht
+# Created: 30 Sep 1993
+#
+Gene := proc( Division:string, NucEntry:integer, Exons:list(posint..posint),
+    PepOffset:integer, PepLength:integer, AlignErrors:integer)
+  option polymorphic;
+
+  if not member(nargs,{3,5,6}) then error('invalid number of arguments') fi;
+  noeval (Gene (args))
+end:
+
+Gene_type := noeval(structure(anything,Gene)):
+
+Gene_select := proc (g, sel, val)
+  global DB, PepDB, NucDB;
+  i := SearchArray (sel, ['Division', 'NucEntry', 'Exons', 'PepOffset', 
+			  'PepLength', 'AlignErrors', 'Introns', 'NucSequence',
+			  'mRNA', 'PepSequence']);
+  if i = 0 then
+    error ('Invalid selector', sel)
+  fi;
+  if i > length (g) then
+    if nargs = 3 then error ('Cannot assign', sel) fi;
+    if i <= 6 then return (0) fi;
+    if i = 7 then
+      if length (g[3]) <= 1 then
+	res := []
+      else
+	res := CreateArray (1..length (g[3]) - 1);
+	for i to length (g[3]) - 1 do
+	  res[i] := g[3,i,2] + 1..g[3,i+1,1] - 1
+	od
+      fi;
+      return (res)
+    fi;
+    if type (NucDB, database) then oldDF := DB; DB := NucDB fi;
+    nuc := string (Sequence (Entry (abs (g[2])))):
+    if type (oldDF, database) then DB := oldDF fi;
+    if g[2] < 0 then nuc := antiparallel (nuc) fi;
+    if i = 8 then return (nuc) fi;
+    rna := '';
+    for e in g[3] do
+      rna := rna.nuc[e]
+    od;
+    if i = 9 then return (rna) fi;
+    pep := CreateString (trunc (length (rna) / 3));
+    for i to length (pep) do
+      p := CodonToInt (rna[3*i-2..3*i]);
+      pep[i] := If (p = 22, '$', IntToA(p))
+    od;
+    pep
+  else
+    if nargs = 3 then g[i] := val else g[i] fi
+  fi
+end:
+
+Gene_print := proc ()
+  global DB, PepDB, NucDB;
+  g := noeval (Gene (args));
+  if type (NucDB, database) then oldDF := DB; DB := NucDB fi;
+  nuc := g[NucSequence,g[Exons,1,1]..g[Exons,length(g[Exons]),2]];
+  lNuc := length (nuc);
+  if nargs > 2 and type (PepDB, database) then
+    pep := g[PepOffset] + PepDB[string]
+  else
+    pep := g[PepSequence]
+  fi;
+  lowPA := 'arndcqeghilkmfpstwyvx$';
+  bpind := CreateString (lNuc, '.');
+  enc := CreateString (lNuc);
+  err := CreateString (lNuc);
+  pos := CreateArray (1..3);
+  codon := CreateString (3);
+  bp := g[Exons,1,1];
+  for i to lNuc do
+    if mod (bp, 10) = 0 then
+      mark := sprintf ('%d', If (mod (bp, 50) = 0, bp, mod (bp, 100)));
+      k2 := i - length (mark);
+      for k to length (mark) do
+	if k2 + k > 0 then
+	  bpind[k2 + k] := mark[k]
+	fi
+      od
+    elif mod (bp, 5) = 0 then
+      bpind[i] := '|'
+    fi;
+    bp := bp + 1
+  od;
+  j := k := nrErrors := 0;
+  for c in g[Exons] do
+    for i from c[1] - g[Exons,1,1] + 1 to c[2] - g[Exons,1,1] + 1 do
+      j := j + 1;
+      codon[j] := nuc[i];
+      pos[j] := i;
+      if j = 3 then
+	p := CodonToInt (codon);
+	aa := If (p = 22, '$', IntToA(p));
+	k := k + 1;
+	aa2 := If (k > length (pep) or pep[k] = '<', '$', pep[k]);
+	if aa2 = aa then
+	  enc[pos[1]] := '<';
+	  enc[pos[2]] := aa;
+	  enc[pos[3]] := '>'
+	else
+	  nrErrors := nrErrors + 1;
+	  err[pos[1]] := '^';
+	  err[pos[2]] := '^';
+	  err[pos[3]] := '^';
+	  enc[pos[1]] := lowPA[p];
+	  enc[pos[2]] := '/';
+	  enc[pos[3]] := aa2
+	fi;
+	j := 0
+      fi
+    od
+  od;
+  if j <> 0 then lprint ('Warning:', j, 'bases left at end') fi;
+  width := Set(screenwidth=80);  Set(screenwidth=width);
+  PrintHeader (DB[Entry, abs (g[NucEntry])]);
+  if nargs > 2 and type (PepDB, database) then
+    DB := PepDB; PrintHeader (g[PepOffset])
+  fi;
+  if nrErrors > 0 then printf ('mismatches=%d', nrErrors) fi;
+  lprint ();
+  i := 1;
+  while i <= lNuc do
+    j := j0 := min (i+width-1, lNuc);
+    if j < lNuc then
+      for j from j0 by -1 to max (j0-6, i) while enc[j] <> '>' do od;
+      if j < max (j0-6, i) then j := j0 fi
+    fi;
+    lprint (bpind[i..j]);
+    lprint (nuc[i..j]);
+    lprint (enc[i..j]);
+    lprint (err[i..j]);
+    i := j + 1
+  od;
+  if type (oldDF, database) then DB := oldDF fi;
+  NULL
+end:
+
+Reverse := proc( s:{string, list} )
+    if type(s,string) then  # reverse string
+        ls := length(s);
+        r := CreateString(ls);
+        for i to ls do r[ls-i+1] := s[i] od;
+        return(r);
+    else  # reverse list
+        ls := length(s);
+        r:= CreateArray(1..ls);
+        for i to ls do r[ls-i+1] := s[i] od;
+        return(r);
+    fi;
+end:
+
+Complement := proc( nuc:string ) Reverse(antiparallel(nuc)) end:
+
+GetComplement := proc (nuc: string)
+  global CO_Cache, DB, NucDB;
+
+  if type (DB, database) then
+    if not assigned (CO_Cache) then CO_Cache := [],[] fi;
+    ofs := GetOffset (nuc, If (type (NucDB, database), NucDB, DB));
+    p := SearchArray (ofs, CO_Cache[1]);
+    if p > 0 then return (CO_Cache[2,p]) fi
+  fi;
+  res := antiparallel (nuc);
+  if type (DB, database) then
+    CO_Cache[1] := append (CO_Cache[1], ofs);
+    CO_Cache[2] := append (CO_Cache[2], res)
+  fi;
+  res
+end:
+
+ComplementSequence := proc (ofs: integer)
+  global CO_Cache, DB, NucDB;
+
+  if assigned (CO_Cache) then
+    for i to length (CO_Cache[2]) do
+      cofs := GetOffset (CO_Cache[2,i], If (type (NucDB, database), NucDB, DB));
+      if ofs >= cofs and ofs < cofs + length (CO_Cache[2,i]) then
+        return ([cofs, -CO_Cache[1,i]])
+      fi
+    od
+  fi;
+  NULL
+end:
+
+PSubGene := proc (g: Gene, new: {posint, posint..posint}, 
+		  newLength: posint)
+  if type (new, posint) then
+    firstbp := (max (new, g[PepOffset]) - g[PepOffset]) * 3;
+    lastbp := min (g[PepLength], new + newLength - g[PepOffset]) * 3;
+    newOffset := new
+  else
+    firstbp := (new[1] - 1) * 3;
+    if length (g) > 3 then
+      lastbp := min (new[2], g[PepLength]) * 3;
+      newOffset := g[PepOffset] + new[1] - 1
+    else
+      lastbp := new[2] * 3
+    fi
+  fi;
+  newExons := CreateArray (1..max (1, length (g[Exons])));
+  n := bp := 0;
+  for c in g[Exons] do
+    bp2 := bp + c[2] - c[1] + 1;
+    newc := c[1] + max (0, firstbp - bp) .. c[2] - max (0, bp2 - lastbp);
+    if newc[1] <= newc[2] then
+      n := n + 1;  newExons[n] := newc
+    fi;
+    bp := bp2 
+  od;
+  if length (g) > 3 then
+    Gene (g[Division], g[NucEntry], newExons[1..n], 
+	  max (newOffset, g[PepOffset]), (lastbp - firstbp) / 3, g[AlignErrors])
+  else
+    Gene (g[Division], g[NucEntry], newExons[1..n])
+  fi
+end:
+
+NSubGene := proc (g: Gene, baseRange: posint..posint)
+  bp := 0;
+  exons := g[Exons];
+  for i to length (exons) while exons[i,2] < baseRange[1] do 
+    bp := bp + exons[i,2] - exons[i,1] + 1
+  od;
+  newOffset := g[PepOffset];
+  newLength := 0;
+  newExons := [];
+  if i <= length (exons) then
+    firstbp := max (baseRange[1], exons[i,1]);
+    bp0 := bp + firstbp - exons[i,1];
+    if mod (bp0, 3) <> 0 then
+      firstbp := firstbp + 3 - mod (bp0, 3);
+      newOffset := g[PepOffset] + trunc (bp0 / 3) + 1
+    else
+      newOffset := g[PepOffset] + bp0 / 3
+    fi;
+    for j from i to length (exons) while exons[j,1] <= baseRange[2] do
+      bp := bp + exons[j,2] - exons[j,1] + 1
+    od;
+    if j > i then
+      j := j - 1;
+      lastbp := min (baseRange[2], exons[j,2]);
+      bp := bp - (exons[j,2] - lastbp);
+      lastbp := lastbp - mod (bp, 3);
+      newLength := trunc ((bp - bp0) / 3);
+      for k from i to j do
+	r := max (exons[k,1], firstbp)..min (exons[k,2], lastbp);
+	if r[1] <= r[2] then newExons := append (newExons, r) fi
+      od
+    fi
+  fi;
+  if length (g) > 3 then
+    Gene (g[Division], g[NucEntry], newExons, newOffset, newLength,
+	  g[AlignErrors])
+  else
+    Gene (g[Division], g[NucEntry], newExons)
+  fi
+end:
+
+Gene_NucPepMatch := proc ()
+  global DB, NucDB;
+  g := noeval (Gene (args));
+  if type (NucDB, database) then oldDF := DB; DB := NucDB fi;
+  first := g[Exons,1,1];
+  last := g[Exons,length (g[Exons]),2];
+  ofs := GetOffset (g[NucSequence]);
+  if type (oldDF, database) then DB := oldDF fi;
+  noeval (NucPepMatch (0, ofs + first - 1, g[PepOffset],
+		   last - first + 1, g[PepLength], 0, 0, Intron(g[Division])))
+end:
+
+NucPepMatch_Gene := proc ()
+  global DB, NucDB, CO_Cache;
+  m := noeval (NucPepMatch (args));
+  if m[Introns] = 0 then
+    error ('No alignment information in NucPepMatch, use AlignNucPepMatch first')
+  elif length (m[PepGaps]) <> 0 then
+    error ('NucPepMatch has peptide gaps, cannot convert to Gene')
+  fi;
+  oldDF := DB; DB := NucDB;
+  if m[NucOffset] < 0 or m[NucOffset] >= length (DB[string]) then
+    if not assigned (CO_Cache) then CO_Cache := [],[] fi;
+    for i to length (CO_Cache[2]) do
+      nucSeq := GetOffset (CO_Cache[2,i]);
+      if m[NucOffset] >= nucSeq and
+	m[NucOffset] < nucSeq + length (CO_Cache[2,i]) then
+	break
+      fi
+    od;
+    if i > length (CO_Cache[2]) then
+      error ('Cannot determine NucDB entry')
+    fi;
+    nucEntry := -GetEntryNumber (CO_Cache[1,i])
+  else
+    nucEntry := GetEntryNumber (m[NucOffset]);
+    nucSeq := Sequence (Entry (nucEntry))[1]
+  fi;
+  exons := [m[NucOffset] - nucSeq + 1..0];
+  ni := ii := 1;
+  while ni <= length (m[NucGaps]) or ii <= length (m[Introns]) do
+    if ii > length (m[Introns]) or ni <= length (m[NucGaps]) and
+      m[NucGaps,ni,1] < m[Introns,ii,2,1] then
+      gap := m[NucGaps,ni]; ni := ni + 1;
+      if gap[2] < 0 then gap := gap[1]..gap[1] + gap[2] - 1 fi
+    else
+      gap := m[Introns,ii,2]; ii := ii + 1
+    fi;	
+    exons[length(exons),2] := exons[1,1] + gap[1] - 2;
+    exons := append (exons, exons[1,1] + gap[2]..0)
+  od;
+  exons[length(exons),2] := exons[1,1] + m[NucLength] - 1;
+  DB := oldDF;
+  div := m[IntronScoring];
+  if div = 0 then
+    div := NucDB[FileName,-3..-1]
+  elif type (div, structure) then
+    div := op (div)
+  fi;
+  Gene (div, nucEntry, exons, m[PepOffset], m[PepLength])
+end:

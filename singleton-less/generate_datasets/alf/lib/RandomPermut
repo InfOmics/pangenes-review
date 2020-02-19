@@ -1,0 +1,273 @@
+#
+# CreateRandPermutation( n:posint ): return a random
+#	permutation of the integers from 1 to n
+#
+#			Gaston H. Gonnet (Nov 1991)
+#			revised for linear time, Aug 1998
+#
+CreateRandPermutation := proc( n:posint )
+
+p := CreateArray(1..n);
+for i to n do p[i] := i od:
+for i from n by -1 to 2 do
+    j := round( Rand()*i+0.5 );
+    p[j];  p[j] := p[i];  p[i] := ""
+    od;
+p
+end:
+
+#
+# Shuffle( t:{string,list,structure} ): randomly permute the
+#	characters of a string or components of a list or
+#	structure
+#
+#			Gaston H. Gonnet (Nov 1991)
+#			revised for linear time, Aug 1998
+#			revised to prevent contents copy Apr/2005
+#
+Shuffle := proc( t:{string,list,structure,set} )
+if type(t,symbol) then s := ''.t
+elif type(t,string) then s := copy(t)
+elif type(t,{list,set}) then s := [seq(z,z=t)]
+else s := op(0,t)( seq(z,z=[op(t)]) ) fi;
+for i from length(t) by -1 to 2 do
+    j := round( Rand()*i+0.5 );
+    s[j];  s[j] := s[i];  s[i] := ""
+    od;
+s
+end:
+
+
+module external Mutate;
+#
+#  Mutate( seq:string, PAM:numeric )
+#	Randomly mutate the given sequence by PAM units
+#
+#			Gaston H. Gonnet (Nov 1991)
+#
+Mutate := proc( seq:string, PAM:numeric, DelType:string )
+
+if nargs>2 and DelType='ExpGaps' then
+     return( Mutate_ExpGaps( seq, PAM ) )
+elif nargs>2 and DelType='ZipfGaps' then
+     return( Mutate_ZipfGaps( seq, PAM ) )
+elif nargs>2 then
+     error( 'DelType must be ExpGaps or ZipfGaps' )       
+elif type(logPAM1,array(array(numeric))) then
+     M := exp(PAM*logPAM1)
+elif type(NewLogPAM1,array(array(numeric))) then
+     M := exp(PAM*NewLogPAM1)
+elif not assigned(logPAM1) then
+     CreateDayMatrices();
+     M := exp(PAM*logPAM1)
+else error('logPAM1 should be the log of a 1-PAM matrix') fi;
+Flen := length (M);
+if Flen = 20 then
+     Px := IntToA; xP := AToInt
+else Px := IntToB; xP := BToInt fi;
+
+for i from 2 to Flen do M[i] := M[i] + M[i-1] od;
+M := transpose(M);
+newseq := CreateString(length(seq));
+
+for i to length(seq) do
+    newseq[i] := Px( SearchOrderedArray( Rand(), M[xP(seq[i])]) + 1 )
+od;
+
+newseq
+end:
+#
+# Mutate and produce random, exponentially distributed, gaps
+#
+Mutate_ExpGaps := proc( seq:string, PAM:numeric )
+
+if type(logPAM1,array(array(numeric))) then
+     M := exp(PAM*logPAM1);  DM := CreateDayMatrix(logPAM1,PAM);
+elif type(NewLogPAM1,array(array(numeric))) then
+     M := exp(PAM*NewLogPAM1);  DM := CreateDayMatrix(NewLogPAM1,PAM);
+else error('logPAM1 should be the log of a 1-PAM matrix') fi;
+Flen := length (M);
+if Flen = 20 then
+     Px := IntToA; xP := AToInt
+else Px := IntToB; xP := BToInt fi;
+
+freq := copy(M[1]);  freq[1] := 1;
+for i from 2 to Flen do freq[i] := M[i,1]/freq[i] + freq[i-1] od;
+freq := freq/freq[Flen];
+for i from 2 to Flen do M[i] := M[i] + M[i-1] od;
+M := transpose(M);
+newseq := CreateString(2*length(seq)+100);
+a := 10/DM[IncDel]/log(10);
+b := 10/DM[IncDel]/log(10)*log(10^(-1/10*DM[IncDel])-1)-
+	1/DM[IncDel]*DM[FixedDel]+2;
+
+
+j := 0;
+for i to length(seq) do
+    r1 := floor( a*log(Rand())+b );
+    if r1 < 1 then
+	 j := j+1;
+         newseq[j] := Px (SearchOrderedArray (Rand (), M[xP(seq[i])]) + 1)
+    elif Rand() < 0.5 then
+	 # generate a deletion in new
+	 i := i+r1-1;
+    else # generate a deletion in old
+	 to r1 do
+	     j := j+1;
+	     newseq[j] := Px( SearchOrderedArray(Rand(),freq) + 1 )
+	     od;
+	 i := i-1
+	 fi
+    od;
+
+newseq[1..j]
+end:
+#
+# taken from the All-x-all of SwissProt version 19, exact data
+HistogramOfGaps :=
+[ 6719, 2867, 1864, 1236, 860, 642, 493, 373, 338, 270, 198, 160, 132, 117,
+    121, 83, 94, 79, 66, 57, 52, 47, 29, 42, 26, 29, 22, 19, 8, 28, 15, 19,
+    19, 16, 12, 10, 11, 6, 7, 6, 9, 2, 5, 3, 1, 0, 1, 2, 5, 4, 3, 7, 2, 3, 4,
+    2, 1, 1, 3, 2, 1, 1, 1, 2, 3, 3, 1, 0, 0, 0, 0, 0, 3, 0, 0, 0, 0, 1, 0, 1,
+    3, 0, 2, 1, 0, 1, 2, 0, 2, 2, 3, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 2, 0,
+    0, 1, 1, 0, 0, 0, 0, 0, 1, 0, 2, 1, 1, 2, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0,
+    1, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+    1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 1]:
+#
+# Mutate and produce random, Zipfian distributed, gaps
+#
+Mutate_ZipfGaps := proc( seq:string, PAM:numeric )
+  global HistogramOfGaps;
+  
+if type(logPAM1,array(array(numeric))) then
+     M := exp(PAM*logPAM1);  DM := CreateDayMatrix(logPAM1,PAM);
+elif type(NewLogPAM1,array(array(numeric))) then
+     M := exp(PAM*NewLogPAM1);  DM := CreateDayMatrix(NewLogPAM1,PAM);
+else error('logPAM1 should be the log of a 1-PAM matrix') fi;
+
+Flen := length (M);
+if Flen = 20 then
+     Px := IntToA; xP := AToInt
+else Px := IntToB; xP := BToInt fi;
+
+prdel := 0;
+th := -1.697;
+for i from 1000 by -1 to 1 do prdel := prdel + i^th od;
+prdel := prdel * 10 ^(-3.6835 + .7987*log10(PAM));
+
+if HistogramOfGaps[2] < HistogramOfGaps[1] then
+    for i from 2 to length(HistogramOfGaps) do
+	HistogramOfGaps[i] := HistogramOfGaps[i-1]+HistogramOfGaps[i] od;
+    HistogramOfGaps := HistogramOfGaps /
+	HistogramOfGaps[length(HistogramOfGaps)];
+    fi;
+
+freq := copy(M[1]);  freq[1] := 1;
+for i from 2 to Flen do
+    freq[i] := M[i,1]/freq[i];
+    freq[i] := freq[i]+freq[i-1]
+    od;
+freq := freq/freq[Flen];
+for i from 2 to Flen do M[i] := M[i] + M[i-1] od;
+for i to Flen do for j to i - 1 do
+    h := M[i,j]; M[i,j] := M[j,i]; M[j,i] := h od od;
+newseq := [];
+
+
+for i to length(seq) do
+    if Rand() > prdel then
+         newseq :=append(newseq,
+             Px (SearchOrderedArray (Rand (), M[xP(seq[i])]) + 1));
+    elif Rand() < 0.5 then
+	 # generate a deletion in new
+	 j := SearchOrderedArray( Rand(), HistogramOfGaps );
+	 if printlevel > 4 then
+	     printf( 'Mutate: %d-long deletion in new\n', j+1 ) fi;
+	 i := i + j;
+    else # generate a deletion in old
+	 j := SearchOrderedArray( Rand(), HistogramOfGaps ) + 1;
+	 if printlevel > 4 then
+	     printf( 'Mutate: %d-long insertion in new\n', j ) fi;
+	 to j do
+	     newseq := append(newseq,Px( SearchOrderedArray(Rand(),freq) + 1 ));
+	     od;
+	 i := i-1
+	 fi
+    od;
+
+newseqstring := CreateString(length(newseq));
+for i to length(newseq) do newseqstring[i] := newseq[i]; od:
+return(newseqstring);
+end:
+
+end:	# end module
+
+#
+# SetRandSeed():  initialize the random number generator
+#	to produce a sequence depending on the date and time
+#
+#				Gaston H. Gonnet (Sep 1993)
+#
+SetRandSeed := proc() global SetRandSeed_value;
+  if type(SetRandSeed_value,posint) then
+       i := SetRandSeed_value+1;
+  else
+       d := sscanf( date()[8..-1], '%d %d:%d:%d %d' );
+       i := mod( (((d[1]*12+d[2])*60+d[3])*60+d[4])*200+d[5] + 12321*getpid() +
+	     hashstring(hostname()), 2^31 );
+  fi;
+  SetRandSeed_value := i;
+  if printlevel > 2 then printf( '# SetRandSeed: SetRand(%d):\n', i ) fi;
+  SetRand( i )
+end:
+
+
+
+#
+#  CreateRandSeq( len:posint, Freq:array(numeric,20) ):
+#
+#	Build a random amino acid/base sequence based on the
+#	frequency (or probability) vector Freq.
+#
+#			Gaston H. Gonnet (Nov 1991)
+#
+# Extended for codon sequences, Adrian Schneider, April 2006
+CreateRandSeq := proc( len:posint, f:array(numeric) )
+F := copy(f);
+Flen := length (F);
+if Flen=20 then Px := IntToA
+elif Flen=4 then Px := IntToB
+elif Flen=64 or Flen=65 then Px := CIntToCodon 
+else error('frequency vector must be of length 4, 20, 64 or 65') fi;
+if Flen=65 then F := F[1..64]; Flen := 64 fi;
+if Flen = 64 then 
+    for z in AToCInt('$') do F[z] := 0 od:
+    F := F/sum(F);
+fi;
+cumulative := CreateArray(1..Flen);
+cumulative[1] := F[1];
+for i from 2 to Flen do
+      cumulative[i] := cumulative[i-1] + F[i] 
+od;
+#result := '';
+# optimized code for long random sequences. not pretty, but more efficient... DD, 24.3.2011
+if Flen = 64 then
+    result := CreateString(3*len,'X');
+    for i from 0 to len-1 do
+        cur := Px (SearchOrderedArray (Rand()*cumulative[Flen], cumulative) + 1):
+	result[i*3+1] := cur[1]:
+	result[i*3+2] := cur[2]:
+	result[i*3+3] := cur[3]:
+    od:
+else
+    result := CreateString(len,'X'):
+    for i to len do
+#        result := result.Px (SearchOrderedArray (Rand()*cumulative[Flen], cumulative) + 1);
+        result[i] := Px (SearchOrderedArray (Rand()*cumulative[Flen], cumulative) + 1);
+    od;
+fi:
+result
+end:
+
+

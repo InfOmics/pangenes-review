@@ -1,0 +1,455 @@
+# Purpose: MultAlign server processing (ParExecuteIPC version)
+# Author:  Chantal Korostensky
+# Created: 10.04.1997
+#
+JobTitle := 'No title specified';
+#ReadProgram('~cbrg/GetMachine'):
+
+AppendPostScript := proc (fromfile: string, tofile: string, title: string)
+  global tmpfile;
+  t := ReadRawFile (fromfile);
+  p := CaseSearchString ('\n', t);
+  OpenAppending (tofile);
+  printf ('%s\n%% %s in PostScript\n%s', t[1..p], title, t[p+2..-1]);
+  OpenAppending (tmpfile)
+end:
+
+GetLine := proc(what, body);
+  p := SearchString(what, body);
+  res := '';
+  if p>-1 then
+     p1 := SearchString('&', body[p+1..-1])+p+2;
+     p2 := SearchString('&', body[p1+1..-1])+p1;
+     if p2-p1>0 then res := body[p1..p2] fi;
+  fi;
+res.' ':
+end:
+
+NoBlanks := proc(t: string);
+res := '';
+for i to length(t) do
+  if t[i] <> ' ' and t[i] <> '\n' then res := res.t[i]; fi;
+od;
+return(copy(res));
+end:
+
+
+isalpha := c -> SearchString(uppercase(c), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ1234567890-_') > -1:
+isnumeric := c -> SearchString(c, '1234567890') > -1:
+
+GetTokens := proc(line: string);
+  newtok := c -> c=':' or c=';' or c=',' or c='\n'::
+  isspace := c ->  c=',' or c=':' or c=';':
+  p := 1;
+  res := [];
+  while p<length(line) do
+    while p<length(line) and isspace(line[p]) do p:= 1+p od;
+    if p<length(line) then
+        r := '';
+       while not isspace(line[p]) and length(line)>p do  
+	  if isalpha(line[p]) then r := r . line[p]; fi;
+ 	  p := 1+p;
+       od; 
+       res := append(res, NoBlanks(r));
+    fi;
+  od;
+  res;
+end:
+
+printlong := proc(msg);
+  width := Set(screenwidth=80);  
+  Set(screenwidth=width);
+  if msg <> 0  then 
+    l := length(msg);
+    times:=round(l/width+0.5);
+    for i to times do
+        if length(msg)>width*(i-1)+1 then
+          printf('%a\n',  msg[width*(i-1)+1 .. min(width*i, length(msg))] );
+        fi;
+    od;
+    lprint();
+  fi;
+end:
+
+ParseMsg := proc (msg: string)
+  global db, DB, SPDF, JobTitle;
+  description
+'Parses incoming message for MultAlign and returns
+   - a text with commands if there is a correct data base to be AllAlled
+   - an error message preceded by a ? if there is an error we should reply to
+   - a 0 if there is no valid message to reply to.';
+  
+  nst := (a,b) -> SearchString(a,b) = -1:
+  lprint(msg);
+  if msg[1..5] = 'Debug' then
+     lprint('DEBUG');
+     first := CaseSearchString ('\n', msg);
+     start := CaseSearchString ('\n', first + 2 + msg);
+     if first < 0 then
+       lprint ('Start of message body not found');
+       return (0)
+     fi;
+     body := msg[first+start+3..-1];
+  else
+    if length (msg) < 10 or msg[1..5] <> 'From ' then
+      lprint ('Invalid incoming message');
+      return (0)
+    fi;
+    first := CaseSearchString ('\n\n', msg);
+    if first < 0 then
+      lprint ('Start of message body not found');
+      return (0)
+    fi;
+    last := CaseSearchString ('\n\n', first + 2 + msg);
+    if last < 0 then
+      return ('?there is no message body.')
+    fi;
+    do
+      skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+      if skip < 0 then break fi;
+      last := last + skip + 2
+    od;
+    body := msg[first+3..first+2+last];
+  fi;
+  token := sscanf (body, '%s');
+  token := If (length (token) = 0, '', token[1]);
+  if length (token) < 6 or SearchString (token, 'TestNewFunction1') <> 0 and
+    SearchString (token, 'MultAlign') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token))
+  fi;
+  body := CaseSearchString (token, body) + length (token) + body;
+  
+  JobTitle  := GetLine('Title:',body);
+  Labels := GetTokens(GetLine('Labels:',body));
+  Alignment  := GetTokens(GetLine('Sequences:',body));
+  Commands  := GetTokens(GetLine('Commands:',body));
+print('Debug info:');
+printf('Title: %s\n', JobTitle);
+printf('Labels: %a\n', Labels);
+printf('Alignment: %a\n', Alignment);
+printf('Commands: %a\n', Commands);
+lprint();
+
+  for i to length(Commands) do 
+    c := Commands[i];
+printf('Command: %s\n',c);
+    if nst('score',c) and nst('domain',c) and nst('gap',c) and nst('tree',c) and nst('probanc',c)
+       and nst('clustal',c) and nst('prob',c) and nst('msa',c) and nst('', c) then
+        return (sprintf ('?"%s" is not a valid server option.', c))
+    fi;
+  od;
+
+  ctrlm := '\n';
+  bad := '';
+  if Alignment[length(Alignment)] = '' and length(Alignment)>1 then
+    Alignment := Alignment[1..length(Alignment)-1];
+  fi;
+  for s to length(Alignment) do
+    Align := uppercase(Alignment[s]);
+    # decide which is the format
+    if length(Align)<1  then 
+      return (sprintf ('?You entered a sequence with no length. Maybe there were two seperators somewhere instead of one? Here is you input: %s',GetLine('Sequences:',body))); 
+    fi;   
+    if Align[1] = '<' then 
+      # entry in SGML format
+      if length (Align) < 3 or Align[1..3] <> '<E>' then
+	return ('?SGML entry "'.Align[1..-1].'" does not start with <E>.')
+      fi;
+      i3 := CaseSearchString ('</E>', Align);
+      if i3 < 0 then
+	return ('?SGML entry "'.Align[1..-1].'" does not end with </E>.')
+      fi;
+      i4 := CaseSearchString ('<SEQ>', Align);
+      if i4 < 0 or i4 > i3 then
+	return ('?SGML entry "'.Align[1..-1].'" has no <SEQ> tag.')
+      fi;
+      i5 := CaseSearchString ('</SEQ>', Align);
+      if i5 < i4 or i5 > i3 then
+	return ('?SGML entry "'.Align[1..-1].'" has no </SEQ> tag.')
+      fi;
+      Align := Align[i4+6..i5];
+    elif length(Align)<15 then
+	# must be an accession number or an ID
+	arg := sscanf (Align[1..-1], '%s %d-%d');
+	if length (arg) <> 1 and length (arg) <> 3 then
+	  return ('?"'.Align[1..-1].'" is not a valid Sequence identification.')
+	fi;   
+	if CaseSearchString ('_', Align) >0 and CaseSearchString ('__', Align)=-1 then
+	  ent := SearchDb('<ID>'.arg[1].'</ID>');
+	elif arg[1] = 'P' then
+	  ent := SearchDb('<AC>'.arg[1].'</AC>');
+	else
+	  ent := SearchDb(arg[1]);
+	fi;
+        if length(ent)>1 then
+	   return(sprintf('?"%s" was found %d times in the database. Please specify more clearly.', arg[1],length(ent)));
+        elif length(ent)<>1 then
+	   return ('?"'.arg[1].'" cannot be found in the database. Enter IDs or just the peptide sequences')
+	else
+           if length(arg) = 3 then a := arg[2]; b := arg[3];
+	   else a := 1; b := -1; fi;
+           Align := copy(ent['Seq'])[a..b];
+	 fi;
+    else
+	# must be an explicitly given amino acid Alignuence
+        temp :=copy(''); dna := true;
+	for i to length(Align) do
+          if SearchString( Align[i], '-_ ') >=0 then
+            temp := temp.'_';
+          elif SearchString(Align[i], 'ACDEFGHIKLMNPQRSTVWYX' ) > -1 then
+            temp := temp.Align[i];
+	    if SearchString(Align[i], 'DEFHIKLMNPQRSVWY' ) > -1 then
+	      dna := false;
+	    fi;
+	  elif SearchString(ctrlm, Align[i])=-1 then
+  	    bad := bad.Align[i];
+	  fi;
+        od;
+	if dna = true then 
+	  s := 'There are only GATC characters in your sequences. I guess these are DNA sequences\n- but I can only do alignments with PEPTIDES!\n';
+	  s := s.getAlign(Alignment); 
+	  return(sprintf(s)); 
+	fi;
+        Align := copy(temp);
+    fi;
+    Alignment[s] := Align;
+  od;
+
+  if length(Alignment) < 2 then
+    return( sprintf('?there are less than two Sequences, I need at least two though. Maybe you did not seperate your sequences with either ; or :?\nDo not use blanks or line feeds to seperate sequences, because they are removed in the parsing process.\nHere is the alignment you entered: '.GetLine('Sequences:',body)));
+  fi;
+  Sequence := CleanSeq(Alignment);
+  for i to length(Labels) while Labels[i] <> '' do od;
+ 
+  if length(Labels) = length(Alignment) and i > length(Labels)  then
+    msa := MultiAlign(Sequence);
+    msa['labels'] := Labels;
+    msa['ma'] := Alignment;
+  else
+    msa := MultiAlign(Sequence);
+    msa['MA'] := Alignment;
+  fi;
+  
+  [msa, Commands, bad];
+end:
+
+getAlign := proc(align: array);
+  s := '\nHere are your input sequences:\n';
+  for i to length(align) do
+    s := s.align[i].'\n';
+  od;
+  s := s.'\n';
+  return(s);	  
+end:
+
+DoServerMultiAlign := proc(msaorig, OldCommands, tmpfile, bad)
+global prefix, tmpfile, JobTitle;
+ printlevel := 0;
+  msa := copy(msaorig);
+  msa['Title'] := JobTitle;
+  if bad <> '' then 
+    printf('There were some bad characters in the alignment string: "%s"\nThey will be ignored (probably just escape or newline characters, or maybe you wanted to use IDs?).\n\n', bad);
+  fi; 
+  plotfile := prefix.'ps'; postscriptfile := prefix.'all.ps';
+  OpenWriting (postscriptfile); OpenAppending (tmpfile);
+  Set(plotoutput=plotfile);
+  if length(OldCommands) = 0 then
+    print('You did not enter a command!');
+    print('Instead of doing nothing I will recalculate the alignment with');
+    print('the probabilistic model plus gap adjustment...');
+    lprint();
+    Commands := ['ProbModel'];
+  else
+    Commands := OldCommands;
+  fi;  
+  printlevel := 2;
+  for i to length(Commands) do
+    print('###############################################');
+    printf('\nCommand: %s -> ',Commands[i]);
+    if SearchString('tree', Commands[i])>=0 then
+       printf('Phylogenetic rooted tree:\n\n');
+       tree := msa['Tree'];
+       print(tree);  
+       DrawTree(tree, msa['Title']);
+       AppendPostScript (plotfile, postscriptfile, msa['title']);
+       # draw it... 
+    elif SearchString('score', Commands[i])>=0 then
+       printf('Score of the original alignment:\n\n');
+       print(msa); 
+     elif SearchString('ancest', Commands[i])>=0 then
+       printf('Probabilistic ancestral sequence:\n\n');
+       OpenWriting(terminal);
+       PAS := msa['PAS'];
+       OpenAppending(tmpfile);
+       PrintPV(PAS, 0.1);
+    elif SearchString('prob', Commands[i])>=0 then
+       printf('Probabilistic model:\n\n');
+       OpenWriting(terminal);   
+       msa1 := DoMultiAlign(msa, 'prob gap');
+       OpenAppending(tmpfile);
+       print(msa1);    
+    elif SearchString('clustal', Commands[i])>=0 then
+       msa1 := DoMultiAlign(msa, 'clustal'); 
+       OpenAppending(tmpfile); 
+       if SearchString('gap', Commands[i])>=0 then 
+         OpenWriting(terminal);
+	 msa1 := DoMultiAlign(msa1, 'gap');  
+	 OpenAppending(tmpfile);  
+         printf('ClustalW with gap adjustment:\n\n');
+       else
+          printf('ClustalW:\n\n');
+       fi;      
+       print(msa1);
+     elif SearchString('domain', Commands[i])>=0 then
+       printf('Domain alignment:\n\n');
+       
+       if true then
+	 lprint('We are working on this function right now, and it will not be');
+	 lprint('available for the next few weeks. Please be patient...');
+       else
+	 OpenWriting(terminal);
+	 domains := msa['domains'];
+	 MSA:= DoMultiAlign(msa, 'domain');
+	 OpenAppending(tmpfile);
+	 for i to length(MSA) do
+	   MSA[i, 'sia']:
+	   MSA[i, 'parse']:
+	   MSA[i, 'score']:
+	   print(MSA[i]);
+	 od:
+       fi;
+     elif SearchString('msa', Commands[i])>=0 then  
+       msa1 := DoMultiAlign(msa, 'msa');  
+       OpenAppending(tmpfile);
+       if SearchString('gap', Commands[i])>=0 then
+         msa1 := DoMultiAlign(msa1, 'gap');    
+         printf('MSA with gap adjustment:\n\n');
+       else
+         printf('MSA:');
+       fi; 
+       print(msa1);
+    elif SearchString('gap', Commands[i])>=0 then
+       printf('Gap adjustment:\n\n');
+      
+       lprint('(This option *only* makes sense, if you alredy have'); 
+       lprint('a multiple sequence alignment, and just want to adjust the gaps...');
+       lprint();
+       # check if the msa is really ok
+       if isMsaOk(msa) = true then 
+	 OpenWriting(terminal);   
+	 msa := removeBlanks(msa); 
+	 OpenAppending(tmpfile);
+       else
+	 lprint('Something is not ok with the msa. ');
+	 lprint('Maybe the aligned sequences are not all of same legnth.');
+	 lprint('I will recalculate it using ProbModel.');
+	 lprint();
+	 writefile(terminal);
+	 msa := DoMultiAlign(msa, 'prob');
+         OpenAppending(tmpfile);
+       fi;
+       
+       OpenWriting(terminal);   
+       msa1 := DoMultiAlign(msa, 'gap');  
+       OpenAppending(tmpfile);
+       print(msa1);   
+    elif SearchString('score', Commands[i]) = -1 and Commands[i] <> '' then 
+       printf('I do not know the command "%s"...\n',Commands[i]);
+    fi;
+    lprint();
+  od; 
+    
+  t := ReadRawFile (postscriptfile);
+  OpenAppending(tmpfile);
+  if length (t) > 0 then
+    printf ('--- PostScript output -------- cut here --------\n%s', t)
+  fi
+end:
+
+###############
+# MainProgram #
+###############
+init := proc ();
+  if not assigned(DM) then CreateDayMatrices() fi;
+#  db_path := GetMachine():
+  db_path := '~darwin/DB/':
+  if not assigned(DB) then DB := ReadDb(db_path.'SwissProt.Z') fi;
+  Set(printgc=false);
+  ReadLibrary('MAlignment');
+  ReadLibrary(ProbModel);
+  ReadLibrary(GapHeuristics);
+  ReadLibrary(Tree);
+ # ReadProgram('/ProbFix');
+  ReadLibrary('FileConv');
+
+end:
+
+
+job := proc ()
+  global msg, JobTitle, prefix, tmpfile; 
+
+ # TEMPORARY FOR DEBUGGING
+ 
+   OpenWriting (tmpfile);
+  lprint('Dear user,');
+  lprint();
+  lprint('We are working on the MultAlign server right now it');
+  lprint('will not be available for the next few days.');
+  lprint('Please try the AllAll Server for an older version of');
+  lprint('Darwins Multiple Sequence Alignment. ');
+  lprint('We apologize for the trouble');
+  lprint();
+  lprint('Greetings, the cbrg team');
+  OpenWriting (terminal);
+  res := ReadRawFile (tmpfile);
+  CallSystem ('rm '.prefix.'*');
+  return(res);
+  
+
+
+  wts := ParseMsg (msg);
+  res := 'ERROR';
+  if not type(res, numeric) then
+    prefix := '/tmp/'.getpid ().'.';
+    if type(wts,string) then
+      OpenWriting (tmpfile);
+      printlong('Sorry, your request could not be processed, because '.wts[2..-1]);
+    else
+      OpenWriting (tmpfile);
+      printf('Title of your search: %s\n',JobTitle); 
+      printf('Requested commands:    %a\n\n',op(wts[2])); 
+      printf('Using %s release %s (if you entered IDs).\n\n',
+	       SearchTag ('DBNAME', DB[string]), 
+	       SearchTag ('DBRELEASE', DB[string]));
+      a := traperror( DoServerMultiAlign(wts[1], wts[2], tmpfile, wts[3]));
+       if a = lasterror then
+         lprint ();
+         lprint ();
+         lprint ('Sorry, your request could not be processed');
+         lprint ('because an error was encountered.');
+         lprint ('Please send this error to darwin.comments@inf.ethz.ch.');
+         lprint ('Thank you, the cbrg team.');
+         lprint ();
+         lprint ();
+         printf ('%s', a);
+         lprint ();
+       fi;
+    fi;
+    OpenWriting (terminal);
+    CallSystem ('rm '.prefix.'*');
+    res := ReadRawFile (tmpfile);
+  fi;
+  OpenWriting('~cbrg/MultAlign/result.txt');
+  lprint(res);
+  OpenWriting(terminal);
+  res
+end:
+
+# ReadProgram('~darwin/v2/lib/Server/MultAlign');
+# ReadProgram('~cbrg/MultAlign/lastmsg');
+# init();
+# wts := ParseMsg (msg);
+#  prefix := '~/msa.';
+#  tmpfile := '~/msa.test';
+#  DoServerMultiAlign(wts[1], wts[2], tmpfile, wts[3]); OpenWriting (terminal);
+#  res := ReadRawFile (tmpfile); printtext(res);

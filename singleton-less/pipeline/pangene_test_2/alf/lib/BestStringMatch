@@ -1,0 +1,73 @@
+#
+# Functions to do string searching with
+#  errors (insertions, deletions and mismatches)
+#
+#				Gaston H. Gonnet (May 20, 1992)
+#
+BestSearchString := proc( pat:string, t:string )
+  global NumberErrors;
+
+lo := 0;
+hi := min( length(pat), 254 );
+loc := 0;
+while hi-lo > 1 do
+    j := round( (3*hi+lo-1)/4 );
+    offs := max(0,loc-hi-1);
+    i := ApproxSearchString(pat,offs+t,j);
+    if i = -1 then lo := j else hi := j;  loc := i+offs fi
+    od;
+NumberErrors := hi;
+loc
+end:
+#
+# Print the alignment of a string matched against a text
+#
+#				Gaston H. Gonnet (May 20, 1992)
+#
+
+PrintStringMatch := proc( pat:string, t:string )
+  description
+  'Print the alignment of a string (pat) matched against a text (t).';
+
+lp := length(pat);
+loc := BestSearchString(pat,t);
+tt := loc+t;
+lt := lp+NumberErrors;
+D := CreateArray( 1..lp+1, 1..lt+1 );
+for i to lt+1 do D[1,i] := i-1 od;
+for i to lp+1 do D[i,1] := i-1 od;
+for j from 2 to lt+1 do
+    for i from 2 to lp+1 do
+	s := D[i-1,j-1];
+	if SearchString(pat[i-1],tt[j-1]) = -1 then s := s+1 fi;
+	D[i,j] := min( s, D[i,j-1]+1, D[i-1,j]+1 )
+	od;
+    if D[lp+1,j] = NumberErrors then break fi;
+    od;
+
+if D[lp+1,j] <> NumberErrors then error('should not happen') fi;
+spat := st := '';
+i := lp+1;
+width := Set(screenwidth=80);  Set(screenwidth=width);
+while i>1 or j>1 do
+    if length(spat) = width then
+	 printf('%s\n%s\n\n',st,spat);
+	 spat := st := '';
+	 fi;
+    if i=1 or j>1 and D[i,j-1]+1 = D[i,j] then
+	 st := tt[j-1] . st;
+	 spat := '-' . spat;
+	 j := j-1
+    elif j=1 or i>1 and D[i-1,j]+1 = D[i,j] then
+	 st := '-' . st;
+	 spat := pat[i-1] . spat;
+	 i := i-1
+    else st := tt[j-1] . st;
+	 spat := pat[i-1] . spat;
+	 i := i-1;
+	 j := j-1;
+	 fi;
+    od;
+printf('%s\n%s\n', st, spat );
+NULL
+end:

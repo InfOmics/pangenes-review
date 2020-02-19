@@ -1,0 +1,197 @@
+#
+#  LLL reduction  using integer arithmetic and "localized reduction
+#  of blocks".
+#  Ref:  J.A. Abbott "On the Factorization of Polynomials over
+#        Algebraic Fields". Technical Report 89-27, University
+#        of Bath, Computer Science.
+#
+#  NOTE: the idea is to compute with the mu[i,j]*dj's instead of the 
+#        mu[i,j]'s where di = |bstar_1|^2*...|bstar_i|^2.
+#        (with LLL's notation). Thus the variable mu[i,j] is assigned
+#        the value mu[i,j]*dj.
+#
+#  Recoded by Gaston H. Gonnet
+#
+
+LLL := proc( b:matrix({integer,LongInteger}) )
+
+n := length(b);
+
+if n<2 then error('vector too short') fi;
+d := CreateArray(1..n+1);
+mu := CreateArray(1..n, 1..n-1);
+dim := 1;
+
+d[1] := 1;
+d[2] := b[1]*b[1];
+k := 2;
+
+while dim < n do
+
+   # Initialize the mu[k,j]'s
+   #
+   for j to k-1 do
+      num := b[k]*b[j] * d[j];
+      den := 1;
+      for i to j-1 do
+         num1 := d[j] * mu[k,i] * mu[j,i];
+         den1 := d[i] * d[i+1];
+         num := num * den1 - num1 * den;
+         den := den * den1
+      od;
+
+      # This division should be exact
+      #
+      mu[k,j] := iquo(num,den);
+
+   od;
+
+   # Initialize d[k+1]
+   #
+   num := b[k]*b[k] * d[k];
+   den := 1;
+   for i to k-1 do
+      num1 := d[k] * mu[k,i]^2;
+      den1 := d[i] * d[i+1];
+      num := num * den1 - num1 * den;
+      den := den * den1;
+   od;
+   d[k+1] := iquo(num,den);
+   dim := dim + 1;
+
+   while k <= dim do
+      dk1 := d[k];
+      dkdk2 := d[k+1] * d[k-1];
+      if mu[k,k-1]<0 then r := iquo(2*mu[k,k-1]-dk1,2*dk1)
+      else r := iquo(2*mu[k,k-1]+dk1,2*dk1) fi;
+      if r <> 0 then
+	 b[k] := b[k] - r*b[k-1];
+         for l to k-2 do mu[k,l] := mu[k,l] - r * mu[k-1,l] od;
+         mu[k,k-1] := mu[k,k-1] - r * dk1;
+      fi;
+
+      if 4*dkdk2 >= (3*dk1^2-4*mu[k,k-1]^2) then
+         for i from k-2 by -1 to 1 do
+            if mu[k,i]<0 then r := iquo(2*mu[k,i]-d[i+1],2*d[i+1])
+            else r := iquo(2*mu[k,i]+d[i+1],2*d[i+1]) fi;
+            if r <> 0 then
+	       b[k] := b[k] - r*b[i];
+               for l to i-1 do mu[k,l] := mu[k,l] - r * mu[i,l] od;
+               mu[k,i] := mu[k,i] - d[i+1] * r;
+            fi;
+         od;
+         k := k+1;
+      else
+         m := mu[k,k-1];
+         m2 := m^2;
+         oldm := m;
+         olddk1 := dk1;
+         m11 := 1;
+         m22 := 1;
+         m12 := 0;
+         m21 := 0;
+         do
+            dk1 := iquo(dkdk2 + m2, dk1);
+            r := iquo(m,dk1);  m := m-r*dk1;
+            if m<0 then if 2*m < -dk1 then r := r-1;  m := m+dk1 fi
+            elif 2*m > dk1 then r := r+1;  m := m-dk1 fi;
+            m21;  m21 := m11 - r * m21;  m11 := "";
+            m22;  m22 := m12 - r * m22;  m12 := "";
+            m2 := m^2;
+
+            if 4*dkdk2 >= 3*dk1^2-4*m2 then break fi;
+         od;
+         d[k] := dk1;
+         m11*b[k-1] + m12*b[k];
+         b[k] := m21*b[k-1] + m22*b[k]; 
+         b[k-1] := ""; 
+         mu[k,k-1] := m;
+         for j to k-2 do
+            m11 * mu[k-1,j] + m12 * mu[k,j];
+            mu[k,j] := m21 * mu[k-1,j] + m22 * mu[k,j];
+            mu[k-1,j] := "";
+         od;
+         if k<dim then
+            s1 := m11 * olddk1 + m12 * oldm;
+            s2 := (m21 * olddk1 + m22 * oldm) * dk1 - m * s1;
+            s3 := (m22 * dk1 - m12 * m) * d[k-1];
+         fi;
+         for j from k+1 to dim do
+            iquo( s1 * mu[j,k-1] + m12 * mu[j,k] * d[k-1], olddk1);
+            mu[j,k] := iquo( s2 * mu[j,k-1] + s3 * mu[j,k],
+                         olddk1 * d[k-1]);
+            mu[j,k-1] := "";
+         od;
+
+         if k > 2 then k := k-1 fi; 
+      fi;
+   od;
+od;
+
+b
+end:
+
+
+#
+#  Replaced Feb. 97 (AS) --- a more efficient (in practice, not
+#                            asymptotically) version of LLL based on
+#                            fraction free Gaussian elimination
+
+LLL_AS := proc(A)
+
+   n := length(A);
+
+   B := CreateArray(1..n,1..n);
+   d := CreateArray(1..n+1);
+   d[1] := 1;
+   d[2] := A[1]*A[1];
+
+   k := 2;
+   kmax := 1;
+   flag := true;
+   while k<n+1 do
+
+      # Compute column k for first time if required.
+      if k>kmax then
+         for i to k do
+            t := A[i]*A[k];
+            for l to i-1 do t := iquo(t*d[l+1]-B[l,i]*B[l,k],d[l]) od;
+            if i=k then d[k+1] := t else B[i,k] := t fi;
+         od;
+         if d[k+1]=0 then error('the ivectors are linearly dependant') fi;
+         kmax := kmax+1;
+      fi;
+
+      # Reduce column k.
+      for i from k-1 by -1 to 1 while flag do
+	 q := iquo(B[i,k],d[i+1]);
+         r := B[i,k] - q*d[i+1];
+         if q=0 then next fi;
+         A[k] := A[k]-q*A[i];
+         for j to i-1 do B[j,k] := B[j,k]-q*B[j,i] od;
+         B[i,k] := r;
+      od;
+
+      d0 := d[k+1]; d1 := d[k]; d2 := d[k-1]; c := B[k-1,k];
+      if 2*d0*d2 < d1*d1 then
+         dd := iquo(d0*d2+c*c,d1);
+         t := A[k]; A[k] := A[k-1]; A[k-1] := t;      
+         for i to k-2 do t := B[i,k-1]; B[i,k-1] := B[i,k]; B[i,k] := t od;
+         for j from k+1 to kmax do
+            t := B[k-1,j];
+            B[k-1,j] := iquo(B[k,j]*d2+c*B[k-1,j],d1);
+            B[k,j]   := iquo(t*dd-c*B[k-1,j],d2);
+         od;
+         d[k] := dd;
+         if k>2 then k := k-1; flag := false else flag := true fi;
+      else
+         k := k+1;
+         flag := true;
+      fi;
+ 
+   od;
+
+A
+
+end:
+

@@ -1,0 +1,22 @@
+#
+#	convolve( v1, v2, ... )
+#
+#	compute the covolution of several vectors
+#
+#			Gaston H Gonnet (April 17, 2003)
+#
+convolve := proc( v1:list(numeric), v2:list(numeric) )
+if nargs=0 then [1]
+elif nargs=1 then v1
+elif nargs > 2 then
+     sa := sort( [args], length );
+     procname( procname(sa[1],sa[2]), op(3..nargs,sa) )
+else l1 := length(v1);
+     l2 := length(v2);
+     if l1=0 or l2=0 then return( [] ) fi;
+     r := CreateArray(1..l1+l2-1);
+     for k from 2 to l1+l2 do
+	r[k-1] := sum( v1[i]*v2[k-i], i=max(1,k-l2)..min(l1,k-1) ) od;
+     r
+     fi
+end:

@@ -1,0 +1,256 @@
+#
+#	Algorithm for general Evolutionary optimization
+#	Based along the lines described in the course
+#	"Modelling and Simulation".
+#
+#	Uses as input:
+#
+#	- Solution - an object class which describes a solution
+#		of the optimization problem
+#	- RandomSol := proc() -> Solution;
+#		produces a random solution to the optimization problem
+#	- MutateSol := proc( s:Solution ) -> Solution;
+#		randomly mutates a solution into a (similar) one
+#	- MergeSols := proc( s1:Solution, s2:Solution ) -> Solution
+#		merges two solutions into one, like father/mother producing
+#		a child
+#
+#	For each of the above, a function or a list of functions can
+#	be given.  Individual statistics are kept to track the most successful.
+#	If any of the functions return FAIL the returned value is ignored.
+#
+#	It is advisable for MutatSol and for MergeSols that if the new
+#	solution is not better than the original ones, that FAIL is returned.
+#	Otherwise, cloning of worse versions of a good solution may push out
+#	all other solutions.
+#
+#	- Functional := proc( s:Solution ) -> numeric;
+#		Evaluates a solution and returns the functional value which
+#		will be minimized (change the sign if you want a maximization)
+#	- Signature := proc( s:Solution )
+#		returns a signature of the solution (similar to a hashing
+#		value) which will be used to determine which solutions
+#		are equal.  Ideally the signature is a large integer.
+#		Any darwin structure is good, but please notice that the
+#		algorithm keeps track of visited solutions, so if the
+#		signature is a big structure, it may be too costly in
+#		space (and to compare).
+#
+#	Returns the top sqrt(PopulationSize) solutions as an ordered list
+#
+#			Gaston H. Gonnet (June 7th, 2008)
+#
+EvolutionaryOptimization := proc(
+	RandomSol:{procedure,list(procedure)},
+	MutateSol:{procedure,list({procedure,UseOnlyOnBest(procedure)})},
+	MergeSols:{procedure,list(procedure)},
+	Functional:procedure ;
+	(Signature=Functional):procedure,
+	'IniPopulation' = ((Pop={}) : set),
+	'MaxIter' = ((MaxIter=10000) : posint),
+	'MaxNoImprov' = ((MaxNoImprov=100) : posint),
+	'MaxTime' = ((MaxTime=300) : positive),
+	'PopulationSize' = ((N=100) : posint),
+	'PreserveDiversity' = ((PreserveDiversity=false) : boolean),
+	'SelectionExponent' = ((SelectionExponent=1) : nonnegative ),
+	'TimeExponent' = ((TimeExponent=0) : nonnegative )
+)
+global EvolutionaryOptimization_lineage;
+
+if N < 2 then error('Population too small') fi;
+Nfin := round(sqrt(N));
+procs := iprocs := action := [];
+for z in [RandomSol,MutateSol,MergeSols] do
+    procs := append(procs,If(type(z,list),op(z),z));
+    iprocs := append(iprocs,length(procs));
+    if type(z,list) then
+	 to length(z) do action := append(action,3/length(z)) od;
+    else action := append(action,3) fi;
+od;
+action0 := copy(action)/300;
+action2 := CreateArray(1..length(action));
+DejaVu := table(false);
+c1 := CreateArray(1..iprocs[3]);  c2 := c3 := 0;
+win := copy(c1);
+adv := copy(c1);
+times := copy(c1);
+
+st2 := time();
+lastimprov := 0;
+for i to iprocs[1] do action[i] := 3*action[i] od;
+alpha := 0.7;	# adaptivity constant (see Orthologues/Adaptivity3.drw)
+
+EvolutionaryOptimization_lineage :=
+	[ seq( [{},IniPopulation,Signature(z)], z=Pop )];
+# convert the IniPopulation to the internal format, if any
+Pop := { seq( [Functional(z),z,1], z=Pop )};
+for z in Pop do DejaVu[Signature(z[2])] := true od;
+lastsucc := CreateArray(1..5);
+
+# Now with at least two solutions we can start the main loop
+for iter to MaxIter while time()-st2 < MaxTime and iter-lastimprov <= MaxNoImprov do
+
+    if mod(iter,10) = 0 then
+	 j := mod(iter/10,5)+1;
+	 s := sum(action2);
+	 s2 := s - lastsucc[j];  lastsucc[j] := s;
+	 if iter >= 50 then
+	     # empirical adjustment of alpha, (see Orthologues/Adaptivity3.drw)
+             alpha := (50+0.10748*max(s2,1)) / (50+3.09755*max(s2,1));
+	 fi;
+	 # normalize the life values (mostly aesthetical)
+	 f := sum(w[3],w=Pop);
+	 if f > 0 then f := 100/f;  for w in Pop do w[3] := w[3]*f od fi;
+	 if printlevel >= 3 then
+	     printf( 'iter: %d, succ: %d/%d, action weights:', iter, s2,
+		 min(iter,50) );
+	     for i to length(action) do
+	         printf( If( action[i]<10, ' %.4f', If( action[i]<100, ' %.3f',
+			' %.2f' )), action[i] );
+		 if i=iprocs[1] or i=iprocs[2] then printf(' ') fi
+	     od;
+	     if PreserveDiversity then
+		  printf( ', min(life)=%g\n', min(seq(w[3],w=Pop)) )
+	     else printf( '\n' ) fi
+	 fi
+    fi;
+
+    # Decide on New Random, Mutate existing or Merging two existing
+    if TimeExponent = 0 then i := RandomSelection(action)
+    else i := RandomSelection( [seq( action[i] *
+	     (max(c1[i],1)/max(times[i],0.1)) ^ TimeExponent, i=1..length(c1))] )
+    fi;
+    st1 := time();
+    if i <= iprocs[1] then
+	 if printlevel >= 3 then printf( 'New %s\n', procs[i] ) fi;
+	 s := procs[i]();
+	 lin := {};
+	 orank := (length(Pop)+1)/2;
+    elif i <= iprocs[2] then
+	 if length(Pop) < 1 then next fi;
+	 if type(procs[i],UseOnlyOnBest(procedure)) then j := 1
+	 elif PreserveDiversity then
+	      j := RandomSelection( [seq(w[3],w=Pop)] )
+	 else j := ceil( length(Pop)*Rand()^SelectionExponent ) fi;
+	 if printlevel >= 3 then printf( 'Mutate: %s Pop[%d]=%.9g\n',
+		If( type(procs[i],structure), procs[i,1], procs[i]),
+		j, Pop[j,1] ) fi;
+	 if type(procs[i],UseOnlyOnBest(procedure)) then
+	      s := procs[i,1](Pop[j,2])
+	 else s := procs[i](Pop[j,2]) fi;
+	 lin := {[j,Signature(Pop[j,2])]};
+	 orank := j;
+	 if s='FAIL' then Pop[j,3] := Pop[j,3]*(1-1/N) fi;
+    else # Merge two existing ones
+	 if length(Pop) < 2 then next fi;
+	 js := {};
+	 if PreserveDiversity then
+	      lives := [seq(w[3],w=Pop)];
+	      while length(js) < 2 do js := js union {RandomSelection(lives)} od
+	 else while length(js) < 2 do
+	          js := js union {ceil( length(Pop)*Rand()^SelectionExponent )}
+	      od
+	 fi;
+	 if printlevel >= 3 then printf( 'Merge: %s Pop[%d]=%.9g and Pop[%d]=%.9g\n',
+	     procs[i], js[1], Pop[js[1],1], js[2], Pop[js[2],1] ) fi;
+	 s := procs[i]( Pop[js[1],2], Pop[js[2],2] );
+	 lin := {[js[1],Signature(Pop[js[1],2])], [js[2],Signature(Pop[js[2],2])]};
+	 orank := (js[1]+js[2])/2;
+    fi:
+    tused := time()-st1;
+    if tused > 7200 then lprint( '# Warning: possible error, more than two hours to compute single operation') fi;
+    times[i] := times[i] + tused;
+    c1[i] := c1[i]+1;
+    if s = 'FAIL' then action[i] := max(action0[i],action[i]*alpha);  next
+    elif type(s,Finished(anything)) then
+	 Pop := Pop union {[Functional(s[1]),s[1],1]};
+	 s := Finished;
+	 break;
+    elif s = 'Finished' then break fi;
+
+    ss := Signature(s);
+    if DejaVu[ss] then
+	if N > max(Nfin,5) then N := N-1/16 fi;
+	action[i] := max(action0[i],action[i]*alpha);
+	c2 := c2+1;
+	next
+    fi;
+    DejaVu[ss] := true;
+
+    fs := Functional(s);
+    if length(Pop) > 0 and fs < Pop[1,1] then
+	 win[i] := win[i]+1;  action[i] := action[i]+1 fi;
+    if length(Pop) < round(N) or fs < Pop[-1,1] then
+	 action[i] := action[i]+1;
+	 action2[i] := action2[i]+1;
+	 lastimprov := iter;
+	 if i <= iprocs[1] then nlife := 1
+	 elif i <= iprocs[2] then nlife := Pop[j,3] := Pop[j,3]/2
+	 else nlife := (Pop[js[1],3] + Pop[js[2],3]) / 3;
+	      Pop[js[1],3] := Pop[js[1],3]*2/3;
+	      Pop[js[2],3] := Pop[js[2],3]*2/3;
+	 fi;
+	 lpop := length(Pop);
+	 Pop := Pop union {[fs,s,nlife]};
+	 for j to length(Pop) while Pop[j,1] <> fs do od;
+	 if j < orank then
+	      adv[i] := adv[i] + orank-j;
+	      action[i] := action[i] + 0.5*(orank-j)
+	 fi;
+	 # Remove at most two, allowing for a larger initial population
+	 to 2 while length(Pop) > round(N) do
+		c3 := c3+1;  Pop := Pop minus {Pop[-1]} od;
+
+	 if printlevel >= 3 then
+	     if PreserveDiversity then
+	         lprint( 'lives:', seq(Pop[k,3],k=1..min(length(Pop),4)),
+		     '...', seq(Pop[k,3],k=-min(length(Pop),5)..-1) ) fi;
+	     if length(Pop) < 8 then
+	          lprint( iter, seq(w[1],w=Pop) )
+	     else printf( '%d %.7g %.7g %.7g %.7g %.7g ... %.7g, range: %.7g, |Pop|=%d, min(life)=%g\n',
+		    iter, seq(Pop[j,1],j=1..5), Pop[-1,1], Pop[-1,1]-Pop[1,1],
+		    length(Pop), min(seq(w[3],w=Pop)) )
+	     fi
+	 fi;
+	 EvolutionaryOptimization_lineage :=
+	      append(EvolutionaryOptimization_lineage,[lin,procs[i],ss]);
+    else action[i] := max(action0[i],action[i]*alpha)
+    fi:
+
+od:
+
+if printlevel >= 3 then
+    printf( 'EvolutionaryOptimization statistics: reached %s\n',
+	If( s='Finished', 'function signaling Finished',
+	If( time()-st2 >= MaxTime, 'time limit',
+	If( iter > MaxIter, 'maximum number of iterations',
+	    sprintf( '%d iterations without improvement', MaxNoImprov) ))));
+    printf( '\t%d iter, %d deja vu, %d discarded, final population size %d\n',
+	iter, c2, c3, length(Pop) );
+    printf( '\t    uses success advancs winners minutes function\n' );
+    for i to length(procs) do
+	printf( '\t%8d%8d%8d%8d%8.2f  %s\n', c1[i], action2[i],
+	    round(adv[i]), win[i], times[i]/60,
+	    If( type(procs[i],structure), procs[i,1], procs[i]) )
+    od;
+    if sum(win)=0 then printf( '\tno winners\n' ) fi;
+fi;
+
+[ seq( Pop[i,2], i=1..min(length(Pop),round(Nfin))) ]
+end:
+
+
+#########################################
+# Analyze and print lineage information #
+#########################################
+PrintLineage := proc( lin:list([set,symbol,numeric]) ; best:set )
+if not type(best,set) then best := {min( seq(w[3],w=lin) )} fi;
+for i from length(lin) by -1 to 1 do
+    w := lin[i];
+    if member(w[3],best) then
+	best := best minus {w[3]} union {seq(v[2],v=w[1])};
+	printf( '%a,\n', w );
+    fi
+od:
+end:
+

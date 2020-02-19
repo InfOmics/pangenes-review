@@ -1,0 +1,70 @@
+
+
+#	View function - try to show on the screen in a visual way
+
+View := proc(a) option polymorphic;
+if nargs=1 and type(a,symbol) and length(a) < 30 and
+     type(eval(symbol(a.'_View')),procedure) then symbol(a.'_View')()
+elif nargs=0 then ViewPlot()
+else error(args,'unable to view object') fi
+end:
+
+
+Plot_View := plot_View := proc() option internal;  ViewPlot() end:
+
+
+HTML_View := proc( a ) option internal;
+if nargs=0 then
+     # assume there was something useful in out.html
+     SystemCommand( 'HTML', 'out.html' );
+     NULL
+elif nargs=1 and type(a,string) then
+     OpenWriting( 'out.html' );
+     printf( '%s\n', a );
+     OpenWriting( terminal );
+     procname()
+elif nargs > 1 then
+     for z in args do procname(z) od
+elif type(a,structure(anything,HTML)) then
+     procname( string(a) )
+else procname( string(HTML(a)) )
+     fi
+end:
+
+
+string_View := proc( s ) option internal;
+if SearchTag(HTML,uppercase(s)) <> '' then HTML_View( s )
+elif SearchString('\\documentclass',s) > -1 then LaTeX_View( s )
+else printf( '%s\n', s ) fi
+end:
+
+
+Histogram_View := proc( h ) option internal;
+fn := Set(plotoutput='histogram.ps');
+DrawHistogram( op(h) );
+ViewPlot();
+Set(plotoutput=fn);
+NULL
+end:
+
+
+#
+#  Purpose:  Show a LaTeX document on the screen using xdvi
+#  started:  Tue Apr 22 10:58:32 CEST 2003
+#  Author:   Peter von Rohr
+#  ##########
+LaTeX_View := proc( a ) option internal;
+  ### # cannot be called w/out an argument, because that defaults to 
+  ### #  HTML_View. 
+  ### # LaTeX documents are viewed by first converting them into ps 
+  ### #  and then using gv to show the ps-files
+  if nargs = 1 then
+    OpenWriting( 'temp.tex' ):
+    printf('%s\n', a):
+    OpenWriting( terminal ):
+    SystemCommand( 'latex' );
+    NULL:
+  else
+    error('Invalid number of arguments: ', nargs, ' Usage: View(LaTeX(a))'):
+  fi:
+end:

@@ -1,0 +1,38 @@
+#
+#   Function to transform a positive integer into a roman number
+#	(in uppercase)
+#
+#				GhG (Feb 26, 2002)
+
+Roman := proc( n:posint )
+ntho := floor(n/1000);
+nhun := floor( mod(n,1000)/100 );
+nten := floor( mod(n,100)/10 );
+nun := mod(n,10);
+CreateString( ntho, 'M' ) .
+op( nhun+1, [ '', 'C', 'CC', 'CCC', 'CD', 'D', 'DC', 'DCC', 'DCCC', 'CM' ] ) .
+op( nten+1, [ '', 'X', 'XX', 'XXX', 'XL', 'L', 'LX', 'LXX', 'LXXX', 'XC' ] ) .
+op( nun+1, [ '', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX' ] )
+end:
+
+Alphabetical := proc( n:posint )
+if n <= 26 then ABCDEFGHIJKLMNOPQRSTUVWXYZ[n]
+else Alphabetical( floor((n-1)/26) ) . Alphabetical( mod(n-1,26)+1 ) fi
+end:
+
+module external Alphanumerical;
+ch := 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ123456789';
+lch := length(ch);
+Alphanumerical := proc( n:posint )
+  if n <= lch then ch[n]
+  else procname( floor((n-1)/lch) ) . ch[ mod(n-1,lch)+1 ] fi
+  end:
+end:
+
+# return the character string that identifies the ordinal number n,
+# eg. 1 --> st, 2 --> nd, 3 --> rd
+Ordinal := proc( n:integer ) option internal;
+if n < 0 then Ordinal(-n)
+elif member( mod(n,10), {0,4,5,6,7,8,9} ) or mod(floor(n/10),10) = 1 then 'th'
+else op( mod(n,10), ['st','nd','rd']) fi
+end:

@@ -1,0 +1,621 @@
+#
+#  LinearClassify
+#
+#	Find a good linear approximation to classify a property
+#
+#	LinearClassify( A, accept, mode [, WeightNeg] )
+#
+#	Gaston H. Gonnet (Aug 17, 2001)
+#
+module external LinearClassify, LinearClassification_refine;
+local A, b, m, n, sb, wneg, wpos;
+
+#	### this is an external entry point ###
+LinearClassify := proc( AA:matrix(numeric), accept:AcceptCriteria, mode,
+	WeightNeg:positive )
+external A, b, m, n, sb, wneg, wpos, ComputeSensitivity,
+	BestLinearClassifications;
+local j;
+
+
+if nargs=2 then return( procname( args, Svd )) fi;
+A := AA;
+n := length(A);
+m := length(A[1]);
+oldCompSen := ComputeSensitivity;  ComputeSensitivity := false;
+
+# create arbitrary names for SvdAnalysis, not used elsewhere
+names := [ seq('var'.i,i=1..m) ];
+
+b := MakeAccept(accept);
+sb := sum(b);
+if sb<1 or sb>=n then
+     error(sb,'out of',n,'selected, impossible to classify') fi;
+
+wpos := 1;
+wneg := If( nargs>=4, WeightNeg, sb/(n-sb) );
+
+w := CreateArray(1..n,wneg) + (wpos-wneg)*b:
+wm := WeightObservations(A,b,w);
+
+
+if mode=BestBasis or type(mode,BestBasis(integer)) then
+     svr := SvdBestBasis( op(wm), n, names,
+	If( type(mode,BestBasis(integer)), mode[1], 10 ), 1e-5, 100 );
+     X := svr[SolutionVector];
+
+elif mode=Svd or type(mode,Svd({numeric,First(posint)})) then
+     svr := SvdAnalysis( op(wm), n, names,
+	If( type(mode,Svd({numeric,First(posint)})), mode[1], 1e-5 ) );
+     X := svr[SolutionVector];
+
+elif mode=CenterMass then
+     centpos := b*A;
+     centneg := sum(A[i],i=1..n) - centpos;
+     X := centpos/sb - centneg/(n-sb);
+
+elif mode=Variance then
+     if sb < 2 or n-sb < 2 then error('not enough data points for method') fi;
+     centpos := b*A;
+     centneg := sum(A[i],i=1..n) - centpos;
+     m0 := centneg/(n-sb);
+     m1 := centpos/sb;
+     X := CreateArray(1..m);
+     Pr := proc( m0, sigm0, m1, sigm1, x )
+	 1/2*(erf((x-m1)/(sqrt(2)*sigm1))+2-erf((x-m0)/(sqrt(2)*sigm0))) end;
+     for i to m do
+	 Ai := [seq(A[j,i],j=1..n)];
+	 if min(Ai)=max(Ai) then X[i] := 0;  next fi;
+	 sigm0 := sqrt( sum( (1-b[j])*(Ai[j]-m0[i])^2, j=1..n ) / (n-sb-1));
+	 sigm1 := sqrt( sum( b[j]*(Ai[j]-m1[i])^2, j=1..n ) / (sb-1));
+	 if sigm0=0 then sigm0 := 1e-6/(n-sb-1) fi;
+	 if sigm1=0 then sigm1 := 1e-6/(sb-1) fi;
+	 #
+	 # Maple code
+	 #  P := y -> 1/2*(erf(y/sqrt(2))+1);  # Abr&Stegun 26.2.29
+	 #  Pr := P( (x-m1)/sigm1 ) + 1-P( (x-m0)/sigm0 );
+	 #  plot( subs(m0=0,m1=0.01,sigm0=10,sigm1=1,Pr), x=-10..10 );
+	 #  s := [solve(diff(Pr,x),x)];
+	 #  lprint( codegen[optimize]( [root1=s[1],root2=s[2]], tryhard ));
+	 if abs(sigm1-sigm0) > 1e-7*(sigm0+sigm1) then
+	      t6 := sigm1^2;
+	      t10 := ln(sigm0/sigm1)*t6;
+	      t5 := sigm0^2;
+	      t9 := t6*m0[i]-t5*m1[i];
+	      t2 := 1/(t6-t5);
+	      t1 := ((m0[i]^2+(m1[i]-2*m0[i])*m1[i]-2*t10)*t6+2*t10*t5)*t5;
+	      if t1 < 0 then X[i] := 0;  next fi;
+	      t1 := sqrt(t1);
+	      if m0[i] < m1[i] then
+		   t3 := min( Pr(m0[i],sigm0,m1[i],sigm1, t2*(t9+t1) ),
+			      Pr(m0[i],sigm0,m1[i],sigm1, t2*(t9-t1) ));
+		   X[i] := -ln(t3)
+	      else t3 := min( Pr(m1[i],sigm1,m0[i],sigm0, t2*(t9+t1) ),
+			      Pr(m1[i],sigm1,m0[i],sigm0, t2*(t9-t1) ));
+		   X[i] := ln(t3)
+		   fi
+	 #  sigm1 := sigm0+eps; # choose the root near (m0+m1)/2
+	 #  simplify( series( s[1], eps, 4 ), symbolic);
+	 #  simplify( series( s[2], eps, 4 ), symbolic);
+	 elif abs(m0[i]-m1[i]) > 1e-3*abs(m0[i]+m1[i]) then
+	      eps := sigm1-sigm0;
+	      t2 := m1[i] - m0[i];
+	      t1 := (m0[i]+m1[i])/2 + ( sigm0/t2 - t2/(4*sigm0) ) * eps +
+		  ( 0.5/t2 + t2/(8*sigm0*sigm0) ) * eps*eps;
+	      if m0[i] < m1[i] then
+		   t3 := Pr(m0[i],sigm0,m1[i],sigm1,t1);
+		   X[i] := -ln(t3)
+	      else t3 := Pr(m1[i],sigm1,m0[i],sigm0,t1);
+		   X[i] := ln(t3)
+		   fi
+	 else X[i] := 0
+	      fi;
+	 od;
+
+elif mode=Fisher then
+     centpos := b*A;
+     centneg := ( sum(A[i],i=1..n) - centpos ) / (n-sb);
+     centpos := centpos/sb;
+     Sw := CreateArray(1..n);
+     for i to n do Sw[i] := A[i] - If( b[i]=0, centneg, centpos ) od:
+     Sw := transpose(Sw) * Sw;
+     # X := Sw^(-1) * (centpos - centneg);
+     #  use Svd to solve the above system as Sw may be singular
+     #  due to constant columns
+     m1m2 := centpos - centneg;
+     svr := SvdAnalysis( transpose(Sw) * Sw, m1m2 * Sw, m1m2*m1m2,
+	n, names, 1e-10 );
+     X := svr[SolutionVector];
+
+elif mode=Logistic then
+     #  Maple code:
+     # logistic := x -> 1/(1+exp(-x));
+     # E := Sum( (logistic( A[i,1]*x[1] + A[i,2]*x[2] ) - b[i] )^2, i=1..n );
+     # GR := diff(E,x[1]);
+     # codegen[optimize]( [energy=E,gradient=GR], tryhard );
+     f := proc( x:list(numeric) )
+	 Ax := A*x;
+	 eps := ln(10*DBL_EPSILON);
+	 Ax := zip( max(eps,min(-eps,Ax)) );
+	 t4 := zip( exp(-Ax) );
+	 t3 := zip( 1+t4 );
+	 t2 := zip( 1/t3 ) - b;
+	 t6 := zip( 2*t2*t4/t3^2 );
+	 [ t2*t2, t6*A ]
+	 end:
+     maxabs := abs(A[1]);
+     for i from 2 to n do maxabs := zip( max(maxabs,A[i]) ) od;
+     t := MinimizeSD( f, [seq(Rand(Normal)/100/max(maxabs[i],1),i=1..m)],
+	0.01, A, b );
+     X := t[1];
+
+elif mode=CrossEntropy then
+     #  Maple code:
+     # logistic := x -> 1/(1+exp(-x));
+     # Ax := A[i,1]*x[1] + A[i,2]*x[2];
+     # E := Sum( -b[i]*ln(logistic(Ax))-(1-b[i])*ln(1-logistic(Ax)), i=1..n );
+     # GR := diff(E,x[1]);
+     # codegen[optimize]( [energy=E,gradient=GR], tryhard );
+     f := proc( x:list(numeric) )
+	 Ax := A*x;
+	 eps := ln(10*DBL_EPSILON);
+	 Ax := zip( max(eps,min(-eps,Ax)) );
+	 t7 := b;
+	 t5 := zip(1-t7);
+	 t4 := zip( exp(-Ax) );
+	 t3 := zip( 1+t4 );
+	 t2 := zip( 1/t3 );
+	 t1 := zip( 1-t2 );
+	 t8 := zip( (-t7*t2+t5/t3^2/t1)*t4 );
+	 [ sum( -t7[i]*ln(t2[i])-t5[i]*ln(t1[i]), i=1..length(t1) ), t8*A ]
+	 end;
+     maxabs := abs(A[1]);
+     for i from 2 to n do maxabs := zip( max(maxabs,A[i]) ) od;
+     t := MinimizeSD( f, [seq(Rand(Normal)/100/max(maxabs[i],1),i=1..m)],
+	0.01, A, b );
+     X := t[1];
+
+elif mode=Best or type(mode,Best(posint)) then
+     ns := If( mode=Best, 10, mode[1] );
+     LC2 := LinearClassify(A,b,Svd(1e-8),wneg);
+     LC := LinearClassification_refine4(copy(LC2),'normal');
+     Sigs := {LinearClassify_X0_i0};
+     BestLinearClassifications := [LC];
+     to 4*ns/10 do
+	LC1 := LinearClassification_refine4(copy(LC2),'normal');
+	if member(LinearClassify_X0_i0,Sigs) then next fi;
+	to 3*ns/10 do
+	    LC1 := LinearClassification_refine2(LC1,'normal');
+	    if member(LinearClassify_X0_i0,Sigs) then break fi;
+	    LC1 := LinearClassification_refine2(LC1,'random');
+	    if member(LinearClassify_X0_i0,Sigs) then break fi;
+	    od;
+	if member(LinearClassify_X0_i0,Sigs) then next fi;
+	if LC[WeightedFalses] > LC1[WeightedFalses] then LC := LC1 fi;
+	if LC[WeightedFalses] < 0.99*min(wpos,wneg) then break fi;
+	Sigs := Sigs union {LinearClassify_X0_i0};
+	BestLinearClassifications := append(BestLinearClassifications,LC1)
+	od;
+     X := LC['X'];
+     v := max(max(X),-min(X));
+     X := 10/If(v=0,1,v) * X;
+
+else error(mode,'is an invalid mode of approximation') fi;
+
+# remove any constant term, it will be included in the a0
+At := transpose(A);
+for i to m do if min(At[i])=max(At[i]) then X[i] := 0 fi od;
+
+ComputeSensitivity := oldCompSen;
+LinearClassification_complete(
+	LinearClassification( X, 0, wpos, wneg, sb, n-sb, 0, [], [] ), A*X );
+end:
+
+#  transform input argument in 0/1 vector
+MakeAccept := proc(accept)
+if type(accept,procedure) then
+     b := CreateArray(1..n);
+     for i to n do b[i] := If( accept(i), 1, 0 ) od;
+elif length(accept) <> n then
+     error('accept list has incorrect length')
+else vs := {op(accept)};
+     if vs={0,1} then b := accept
+     elif vs={true,false} then b := [seq(If(accept[i],1,0),i=1..n)]
+     else error('invalid values in accept list') fi
+     fi;
+b
+end:
+
+
+
+#
+#  polymorphic dispatcher for the refinements
+#	### this is an external entry point ###
+#
+#					Gaston H. Gonnet (Feb 9, 2003)
+LinearClassification_refine := proc( LC:LinearClassification,
+	Ab:{[matrix,AcceptCriteria],[matrix,AcceptCriteria,anything]} ) ->
+	LinearClassification;
+external A, b, m, n, sb, wneg, wpos, ComputeSensitivity;
+
+# preliminaries
+A := Ab[1];
+n := length(A);
+m := length(A[1]);
+if m <> length(LC['X']) then
+     error(m,length(LC['X']),'dimensions of LC and A do not coincide' ) fi;
+if m <= 1 or n <= m then return( LC ) fi;
+wpos := LC[WeightPos];  wneg := LC[WeightNeg];
+b := MakeAccept(Ab[2]);
+sb := sum(b);
+if sb<1 or sb>=n then
+     error(sb,'out of',n,'selected, impossible to refine LC') fi;
+oldCompSen := ComputeSensitivity;  ComputeSensitivity := false;
+
+if length(Ab)=2 or Ab[3]='Swath' then LinearClassification_refine2( LC )
+elif type(Ab[3],Swath(anything)) then
+     LinearClassification_refine2( LC, op(Ab[3]) )
+elif Ab[3]='Midpoint' then LinearClassification_refine0( LC )
+elif Ab[3]='Random' then LinearClassification_refine3( LC )
+elif Ab[3]='Progressive' then LinearClassification_refine4( LC )
+elif type(Ab[3],Progressive(anything)) then
+     LinearClassification_refine4( LC, op(Ab[3]) )
+else error(Ab[3],'is an invalid mode of refinement for LC') fi;
+ComputeSensitivity := oldCompSen;
+""
+end:
+
+
+#
+#  Refine a LinearClassification by exploring the
+#  neighbourhood of each variable
+#
+#					Gaston H. Gonnet (Aug 23, 2001)
+LinearClassification_refine0 := proc( LC:LinearClassification )
+
+At := transpose(A):
+LC2 := copy(LC);
+S := LC2['X'];
+AX := A * S:
+
+todo := {seq(i,i=1..m)};
+while todo <> {} do
+  i := todo[ round( Rand()*length(todo) + 0.5 ) ];
+  todo := todo minus {i};
+
+  if S[i] <> 0 then
+    Ati := At[i]:
+
+    if min(Ati) = max(Ati) then
+	 AX := AX - S[i]*Ati;
+	 S[i] := 0;
+	 t := LinearClassify_X0( AX, wneg, wpos, sb, b );
+	 LC2[WeightedFalses] := t[1];
+	 next
+    else
+	 t := LinearClassify_X0( AX-S[i]*Ati, wneg, wpos, sb, b );
+	 if t[1] <= LC2[WeightedFalses] then
+	     AX := AX - S[i]*Ati;
+	     S[i] := 0;
+	     LC2[WeightedFalses] := t[1];
+	     if printlevel > 3 then
+		  printf( 'new lower score: %g, S[%d]=%g\n', t[1], i, S[i] ) fi;
+	     todo := {seq(i,i=1..m)};
+	     next
+	     fi;
+
+	 t2 := LinearClassification_DirOpt( AX, Ati );
+	 t := t2[1];
+	 incr := (t2[2]+t2[3]) / 2;
+	 S[i] := S[i] + incr;
+	 AX := AX + incr*Ati;
+	 if t[1] < LC2[WeightedFalses]-1e-9 then
+	      if |LC2[WeightedFalses] - t[1]| > 1e-10*t[1] then
+		   todo := {seq(i,i=1..m)} fi;
+	      LC2[WeightedFalses] := t[1];
+	      if printlevel > 3 then
+		   printf( 'new lower score: %g, S[%d]=%g\n', t[1], i, S[i] ) fi
+	      fi;
+
+	 if printlevel > 3 then printf( 'S[%d]=%g, |todo|=%d\n', i, S[i],
+	      length(todo) ) fi
+	 fi
+    fi od;
+
+LinearClassification_complete( LC2, AX )
+end:
+
+
+#
+#  Compute X0, HighestNeg, LowestPos and WeightedFalses for a
+#	LinearClassification
+#
+LinearClassification_complete := proc( LC2:LinearClassification, AX:list )
+local ind;
+n := length(AX);
+t := LinearClassify_X0( AX, wneg, wpos, sb, b, ind );
+if |t[1]| < DBL_EPSILON * n^2 * (LC2[WeightPos]+LC2[WeightNeg]) then
+     LC2[WeightedFalses] := 0
+elif |t[1]| < 0.99 * min(LC2[WeightPos],LC2[WeightNeg]) then
+     error('weight error too high')
+else LC2[WeightedFalses] := t[1] fi;
+LC2[X0] := t[2];
+
+highn := lowp := [];
+for i to n while length(lowp) < 20 and ind[i,1] < t[2] do
+    if b[ind[i,2]] = 1 then lowp := append( lowp, ind[i] ) fi od;
+for i from n by -1 to 1 while length(highn) < 20 and ind[i,1] > t[2] do
+    if b[ind[i,2]] = 0 then highn := append( highn, ind[i] ) fi od;
+LC2[HighestNeg] := highn;
+LC2[LowestPos] := lowp;
+LC2
+end:
+
+
+# This function is now in the kernel
+#LinearClassify_X0 := proc( AX:list(numeric), ind0:name )
+#
+#ind := sort( [ seq( [AX[i],i], i=1..n ) ]);
+#
+#Falses := minFalses := wneg*(n-sb);  a0 := ind[1,1]-1;
+#if wpos*sb < minFalses then minFalses := wpos*sb;  a0 := ind[n,1]+1 fi;
+#for i to n-1 do
+#    if b[ind[i,2]]=0 then Falses := Falses - wneg else Falses := Falses+wpos fi;
+#    if Falses < minFalses then
+#	minFalses := Falses;
+#	a0 := ( ind[i,1] + ind[i+1,1] ) / 2;
+#	fi
+#    od;
+#
+#if minFalses < 0 then
+#    if -minFalses > DBL_EPSILON*(wpos+wneg)*n*n then
+#	error('negative score') fi;
+#    minFalses := 0 fi;
+#
+#if nargs=2 then ind0 := ind fi;
+#r1 := LinearClassify_X1( AX, wneg, wpos, sb, b );
+#if r1 <> [minFalses,a0] then error('they differ', r1, [minFalses,a0] ) fi;
+#[minFalses,a0]
+#end:
+
+
+
+
+#
+#  Refine a LinearClassification using an Svd analysis of
+#  the best move for the points around the transition
+#
+#					Gaston H. Gonnet (Aug 24, 2001)
+#
+LinearClassification_refine2 := proc( LC:LinearClassification, WeightMode ) ->
+	LinearClassification;
+option internal;
+SetWeightMode( args[2..nargs] );
+LinearClassification_refine_prog( LC, false ) end:
+
+
+#
+#  Refine a LinearClassification using Svd analysis of
+#  the best move for the points around the transition, for
+#  decreasing size (by 10%) swaths of points.
+#
+LinearClassification_refine4 := proc( LC:LinearClassification, WeightMode ) ->
+	LinearClassification;
+option internal;
+SetWeightMode( args[2..nargs] );
+LinearClassification_refine_prog( LC, true ) end:
+
+
+# function to decide the weight of the points in the hyperswath.
+#  dev is the normalized deviation (between -1..1) from the centre line
+#  of the hyperswath
+SwathWeightMode := 'unassigned';
+SetWeightMode := proc( fun )
+external SwathWeightMode;
+if nargs=0 or fun='triangular' then SwathWeightMode := 'triangular'
+elif member(fun,{'uniform','normal','random'}) then SwathWeightMode := fun
+else error(fun,'is an invalid hyperswath weighting function (must be one of triangular, uniform, random or normal)') fi;
+end:
+
+
+LinearClassification_refine_prog := proc( LC:LinearClassification,
+	Progressive ) -> LinearClassification;
+local i;
+
+LC2 := copy(LC);
+vars := [ seq('var'.i,i=1..m) ];
+n1 := n;
+prevwf := LC2[WeightedFalses]+1;
+
+do
+    if Progressive then
+	 if prevwf <= LC2[WeightedFalses]+1e-9 then
+	     n1 := min( round( (0.85+0.15*Rand())*n1 ), n1-1 ) fi;
+	 if n1 < m then break fi
+    else n1 := min(n,m+round(2*m*Rand()+0.5)) fi;
+    prevwf := LC2[WeightedFalses];
+    LC2 := LinearClassify_refine_swath( LC2, n1, vars );
+    if not Progressive and prevwf <= LC2[WeightedFalses]+1e-9 then break fi
+    od:
+
+LinearClassification_complete( LC2, A * LC2['X'] )
+end:
+
+
+
+LinearClassify_refine_swath := proc(
+	LC:LinearClassification, n1:posint, vars:list(string) ) ->
+	LinearClassification;
+local ind;
+
+    S := copy(LC['X']);
+    AX := A * S:
+    t := LinearClassify_X0( AX, wneg, wpos, sb, b, ind );
+
+    eps := DBL_MAX;
+    for i from 2 to n-n1+1 do
+	if max( t[2]-ind[i,1], ind[i+n1-1,1]-t[2] ) < eps then
+	     j := i;  eps := max( t[2]-ind[i,1], ind[i+n1-1,1]-t[2] ) fi od:
+    if eps >= DBL_MAX then return(LC)
+    elif eps <= 0 then eps := 1 fi;
+    # group is from ind[j] ... ind[j+n1-1]
+     
+    iind := [seq(ind[i+j-1,2],i=1..n1)];
+    A2 := zip( A[iind] );
+    b2 := zip( 2*b[iind]-1 );
+    if SwathWeightMode = 'triangular' then w2 := zip( 1-|(AX[iind]-t[2])/eps| )
+    elif SwathWeightMode = 'uniform' then w2 := CreateArray(1..n1,1)
+    elif SwathWeightMode = 'random' then w2 := [seq(Rand(0..1),i=1..n1)]
+    elif SwathWeightMode = 'normal' then
+	 w2 := zip( (AX[iind]-t[2])/eps );
+	 w2 := zip( exp(-1.9208*w2^2) )
+    else error('internal error: SwathWeightMode not set' ) fi;
+    for i to n1 do w2[i] := w2[i] * If(b2[i]=1,wpos,wneg) od;
+
+    wm2 := WeightObservations(A2,b2,w2):
+    svr := traperror(SvdAnalysis( op(wm2), n, vars, 1.0e-8 ));
+    if svr = lasterror then return(LC) fi;
+
+    ASvd := A * svr[SolutionVector]:
+    t2 := LinearClassification_DirOpt( AX, ASvd );
+    if t2[1,1] >= t[1] then return(LC) fi;
+
+    if printlevel > 3 then
+	printf( 'new lower score %g, n1=%d\n', t2[1,1], n1 ) fi;
+
+    S := S + (t2[2]+t2[3])/2 * svr[SolutionVector];
+    v := max( max(S), -min(S) );
+    LC['X'] := 10 * S / If(v=0,1,v);
+    AX := A * LC['X'];
+    LC[X0] := t2[1,2];
+    LC[WeightedFalses] := t2[1,1];
+
+    LC
+end:
+
+
+
+#
+#  Refine a LinearClassification using random directions
+#
+#					Gaston H. Gonnet (Sep 4, 2001)
+#
+LinearClassification_refine3 := proc( LC:LinearClassification) ->
+	LinearClassification;
+
+LC2 := copy(LC);
+S := LC2['X'];
+d := CreateArray(1..m);
+AS := A * S;
+t := LinearClassify_X0( AS, wneg, wpos, sb, b );
+
+do
+    for i to m do d[i] := Rand(Normal) od;
+    Ad := A * d:
+    t2 := LinearClassification_DirOpt( AS, Ad );
+    if t2[1,1] >= t[1]-1e-9 then break fi;
+    if printlevel > 0 then printf( 'new lower score %g\n', t2[1,1] ) fi;
+
+    S := S + (t2[2]+t2[3])/2 * d;
+    S := 10*S / max( max(S), -min(S) );
+    AS := A * S;
+    t := t2[1];
+    od:
+
+LC2['X'] := S;
+LinearClassification_complete( LC2, AS )
+end:
+
+
+
+
+
+#
+#	LinearClassification_DirOpt optimizes score in a given direction
+#
+#	returns: [ [WeightedFalses,X0], low, hi ]
+#
+#	where the score and splitting value are for Ax + (low+hi)/2*Adx
+#	(the same score holds for all the range low..hi)
+#
+#
+LinearClassification_DirOpt := proc( Ax:list(numeric), Adx:list(numeric) )
+r4 := LinearClassification_DirOpt4(args, wneg, wpos, sb, b);
+if r4[1,1] < 0 then r4[1,1] := 0 fi;  # should be fixed in the kernel
+r4
+end:
+
+
+end: # end of module
+
+LinearClassification := proc( X:list(numeric),
+	X0:numeric,
+	WeightPos:positive, WeightNeg:positive,
+	NumberPos:posint, NumberNeg:posint,
+	WeightedFalses:nonnegative,
+	HighestNeg:list([numeric,posint]),
+	LowestPos:list([numeric,posint]) )
+noeval( procname(args) )
+end:
+
+
+LinearClassification_type := noeval( LinearClassification( list(numeric),
+	numeric, numeric, numeric, posint, posint, numeric,
+	list([numeric,posint]), list([numeric,posint]) ) ):
+
+
+LinearClassification_print := proc( LC:LinearClassification )
+printf( 'solution vector is X = %a\n', LC['X'] );
+printf( '  discriminator is A[i] * X > %g\n',  LC['X0'] );
+printf( '%d data points, %d positive, %d negative\n',
+	LC[NumberPos] + LC[NumberNeg], LC[NumberPos], LC[NumberNeg] );
+printf( 'positives weigh %g, negatives %g, overall misclassifications %g\n',
+	LC[WeightPos], LC[WeightNeg], LC[WeightedFalses] );
+printf( 'Highest negative scores: %a\n', LC[HighestNeg] );
+printf( 'Lowest positive scores: %a\n', LC[LowestPos] );
+end:
+
+
+#
+#       LinearClassification_NoiseSensitivity
+#
+#       Compute the expected number of misclassifications when
+#       the data is added random-normal noixe proportional to
+#       the standard deviation of each column and the given constant
+#       and the given constant.
+#
+#       For an independent column Aj, the noise added is
+#       Rand(Normal) * std(Aj) * noisstd
+#
+#       Gaston H. Gonnet (Tue Jan 19 17:18:30 CET 2016)
+#
+
+
+LinearClassification_NoiseSensitivity := proc(
+        Ak : matrix(numeric),
+        b : { list({0,1}), list(boolean) },
+        lc : LinearClassification,
+        noistd : nonnegative )
+
+if noistd=0 then return( lc[WeightedFalses] ) fi;
+stds := [ seq( std(x), x=transpose(Ak)) ];
+x := lc['X'];
+x0 := lc['X0'];
+assert( length(Ak) = length(b) );
+assert( length(Ak[1]) = length(x) );
+
+stdn := noistd * sqrt( 2 * zip( x*stds )^2 );
+miscl0 := miscl1 := 0;
+for i to length(Ak) do
+    Aix := (Ak[i]*x - x0) / stdn;
+    if b[i]=true or b[i]=1 then
+         miscl1 := miscl1 + erfc(Aix)
+    else miscl0 := miscl0 + erfc(-Aix)
+    fi;
+od;
+0.5 * ( lc[WeightPos] * miscl1 + lc[WeightNeg] * miscl0 )
+end:
+
+
+AcceptCriteria_type := {procedure,list(integer),list(boolean)}:
+refine := proc( x:identical(nothing) ) option polymorphic; end:

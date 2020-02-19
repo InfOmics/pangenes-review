@@ -1,0 +1,201 @@
+module external TcoffeeMSA, ProbconsMSA, ProbalignMSA, MummalsMSA, MSAProbsMSA;
+
+
+# /home/darwin/MSAprograms/tcoffee/T-COFFEE_5.72/doc/t_coffee_tutorial.htm
+#
+# t_coffee fn_in -matrix=<for OPAs> -outfile fn -output=fasta
+#
+TcoffeeMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string, gtree:Tree, 'binary'=((binary=''):string))
+    
+    selection := GetWrapperChoice('MSA/T-COFFEE_5.72/bin/t_coffee', 
+                                                't_coffee', binary);
+    if selection = BINARY_HARDCODED then
+        TcoffeeFn := binary;
+    elif selection = BINARY_IN_PATH then
+        TcoffeeFn := 't_coffee';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        TcoffeeFn := GetWrapperDir().'/MSA/T-COFFEE_5.72/bin/t_coffee';
+    fi;
+    
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+    ogtfn := GetTmpDir().'t'.pid.'.dnd';
+    
+    gtree_cmd := '';
+    if type(gtree,Tree) then
+        t_newick := GetTmpDir().'/newick'.pid;
+        gcp := Set(printgc=false);
+        OpenWriting(t_newick);
+        printf('%s;',  Tree_Newick(gtree));
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        gtree_cmd := ' -usetree '.t_newick.' ';
+    fi;
+    
+    WriteFasta(seqs, [seq(string(i),i=1..length(seqs))], seqin);
+    if seqtype = 'AA' then
+        sst := 'PROTEIN';
+    elif seqtype = 'DNA' then
+        sst := 'DNA';
+    else
+        error('unsupported data type');
+    fi;
+    cmd := sprintf('%s %s -outfile %s -output=fasta -newtree=%st%d.dnd -type %s %s', 
+           TcoffeeFn, seqin, seqout, GetTmpDir(), pid, sst, gtree_cmd);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if mod(res[1],256) <> 0 then error('could not run tcoffee: '.res[2].'; code='.res[1]) fi;
+    aSeqs := ReadFastaWithCheck(seqout, [seq(string(i),i=1..length(seqs))]);
+    
+    DeleteFiles([seqin, seqout, GetTmpDir().'tmp'.getpid()]);
+    
+    if type(gtree,Tree) then ogt := gtree;
+    else ogt := ParseNewickTree(ReadRawFile(ogtfn)); fi;
+    
+    return(MAlignment(seqs, aSeqs, labels, 'tree'=ogt, 'Time'=cputime));
+end:
+ 
+# /home/darwin/MSAprograms/probcons/probcons_1_12/manual.pdf
+# probcons --matrixfile <fn> <infile> > <outfile>
+ProbconsMSA := proc(seqs:list(string), labels:list(string) ; (t=0):numeric, 'binary'=((binary=''):string))    
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+    
+    selection := GetWrapperChoice('MSA/probcons_1_12/probcons', 
+                                                'probcons', binary, 
+                                                'relPath32'='MSA/probcons_1_12/probcons_32');
+    if selection = BINARY_HARDCODED then
+        ProbconsFn := binary;
+    elif selection = BINARY_IN_PATH then
+        ProbconsFn := 'probcons';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        ProbconsFn := GetWrapperDir().'/MSA/probcons_1_12/probcons';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then        
+        ProbconsFn := GetWrapperDir().'/MSA/probcons_1_12/probcons_32';
+    fi;
+    
+    WriteFasta(seqs, labels, seqin);
+    
+    if t <> 0 then
+        error('use of imported matrix not implemented yet');
+        WriteProbMatrixProbcons(matfile, t);
+        cmd := sprintf('%s -m %s %s > %s', 
+                       ProbconsFn, matfile, seqin, seqout);
+    else
+        cmd := sprintf('%s %s > %s', ProbconsFn, seqin, seqout);    
+    fi;
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run probcons: '.res[2].'; code='.res[1].' cmd = '.cmd) fi;
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+ProbalignMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string, 'binary'=((binary=''):string))
+    
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+    
+    selection := GetWrapperChoice('MSA/probalign_beta_1.1/probalign', 
+                                                'probalign', binary, 
+                                                'relPath32'='MSA/probalign_beta_1.1/probalign_32');
+    if selection = BINARY_HARDCODED then
+        ProbalignFn := binary;
+    elif selection = BINARY_IN_PATH then
+        ProbalignFn := 'probcons';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        ProbalignFn := GetWrapperDir().'/MSA/probalign_beta_1.1/probalign';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then        
+        ProbalignFn := GetWrapperDir().'/MSA/probalign_beta_1.1/probalign_32';
+    fi;
+    
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s %s %s > %s', ProbalignFn, 
+         If(seqtype='DNA','-nuc',''),seqin, seqout);
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run probalign: '.res[2]) fi;
+    
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    DeleteFiles([seqin, seqout]);
+    
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+MummalsMSA := proc(seqs:list(string), labels:list(string) ; 
+                   dm:DayMatrix)
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := seqin.'.mummals.aln';
+    matfile := GetTmpDir().'matfile.'. pid:
+    gcp := Set(printgc=false);
+    
+    MummalsFn := GetWrapperDir().'/MSA/mummals1.01/run_mummals.py';
+    MummalsDir := GetWrapperDir().'/MSA/mummals1.01';
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented yet');
+    fi;
+    
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('python %s %s -wdir %s', MummalsFn, seqin, MummalsDir);
+    
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then error('could not run mummals: '.res[2]) fi;
+    
+    # Mummals produces an output where we have to igonre the first line
+    # (i.e. cut at 46 by [46..-1]).
+    tmp := ReadRawFile(seqout)[46..-1];
+    OpenWriting(seqout); prints(tmp); OpenWriting(previous);
+    aSeqs := ReadGCGWithCheck(seqout, labels);
+    
+    DeleteFiles([seqin, seqout]);
+    
+    Set(printgc=gcp);
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+MSAProbsMSA := proc(seqs:list(string), labels:list(string); (seqtype='AA'):string, 'binary'=((binary=''):string))
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa'.pid;
+    gcp := Set(printgc=false);
+    
+    MSAProbsFn := GetWrapperDir().'/MSA/MSAProbs-0.9.4/MSAProbs/msaprobs';
+    WriteFasta(seqs, labels, seqin);
+    cmd := MSAProbsFn.' -num_threads 1 '.seqin.' > '.seqout;
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    
+    if res[1] <> 0 then error('could not run MSAprobs: '.res[2]) fi;
+    
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    
+    CallSystem('rm -f '.seqin.' '.seqout);
+    
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime));
+end:
+
+end:

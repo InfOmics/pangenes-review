@@ -1,0 +1,189 @@
+#
+#	Cumulative distributions
+#
+#			Gaston Gonnet (May 12, 2002)
+#
+Cumulative := proc( distr:structure, value:numeric ) option polymorphic;
+cd := symbol(op(0,distr) . '_Cumulative');
+if type(cd,procedure) then return( cd(args) )
+else std := traperror(CumulativeStd(args));
+     if std=lasterror then error(args,'invalid arguments') fi;
+     if std > 0 then 0.5+0.5*erf(std/sqrt(2))
+     else 0.5*erfc(-std/sqrt(2)) fi
+     fi
+end:
+
+
+
+CumulativeStd := proc( distr:structure, value:numeric ) option polymorphic;
+cd := symbol(op(0,distr) . '_CumulativeStd');
+if type(cd,procedure) then return( cd(args) )
+else std := traperror(Cumulative(args));
+     if std=lasterror then error(args,'invalid arguments') fi;
+     if std >= 1 then DBL_MAX
+     elif std <= 0 then -DBL_MAX
+     else -sqrt(2)*erfcinv(2*std) fi
+     fi
+end:
+
+
+# erfcinvLn( x ) == erfcinv( exp(x) )
+#  useful for very small probabilities, which can only be
+#  represented by their log
+#
+#  Maple code:
+#  erfcinvLn(x) = r;
+#  erfcinv(exp(x)) = r;
+#  exp(x) = erfc(r);
+#  z := x - ln(erfc(r));
+#  eq := asympt(z,r,16);
+#  rinc := eq / diff(eq,r);
+#  codegen[optimize]( [incr = eval(rinc,O=0)], tryhard );
+#
+#			GhG (May 13, 2002)
+erfcinvLn := proc( x:numeric )
+if x > -ln(DBL_MAX)+10 then erfcinv( exp(x) )
+elif x < -sqrt(DBL_MAX) then error(x,'argument too small')
+else r := sqrt(-x-ln(Pi)/2);
+     to 4 do
+	 t1 := r^2;
+	 t2 := r*t1;
+	 t5 := t2^2;
+	 t16 := 1/t5;
+	 t3 := t1^2;
+	 t15 := 1/t3^2;
+	 t4 := r*t3;
+	 t14 := 1/t4^2;
+	 t13 := 1/t5^2;
+	 incr := (t1+x+1/2*ln(Pi)+ln(r)+1/2/t1-5/8/t3+37/24*t16-353/64*t15+
+		4081/160*t14-55205/384*t13)/(2*r-1/t2+5/2/t4+
+		(1-37/4*t16+353/8*t15-4081/16*t14+55205/32*t13)/r);
+	 r := r - incr
+	 od;
+     r
+     fi
+end:
+
+
+Binomial_CumulativeStd := proc( distr:Binomial(integer,numeric), val:integer )
+option internal;
+n := distr[1];
+p := distr[2];
+if n<0 or p<0 or p>1 then error(distr,'is an invalid distribution')
+elif n=0 or p=0 then return( If( val<0, -DBL_MAX, If( val=0, 0, DBL_MAX )) )
+elif val < 0 then -DBL_MAX
+elif val > n then DBL_MAX
+elif p>1/2 then return( - procname( Binomial(n,1-p), n-val ) )
+elif n*p > 310000 then return( (val-n*p) / sqrt(n*p*(1-p)) )
+elif val > n*p then
+     pr1 := 1;
+     pr2 := 0.5;
+     lnpr1 := LnGamma(n+1) - LnGamma(n-val+1) - LnGamma(val+1) + val*ln(p) +
+	(n-val)*ln1x(-p);
+     p1p := p/(1-p);
+     for i from val+1 to n while pr1 > pr2*DBL_EPSILON do
+	 pr1 := pr1 * (n-i+1) / i * p1p;
+	 pr2 := pr2 + pr1 od;
+     sqrt(2) * erfcinvLn( lnpr1 + ln(2*pr2) )
+else pr1 := 1;
+     pr2 := 0.5;
+     lnpr1 := LnGamma(n+1) - LnGamma(n-val+1) - LnGamma(val+1) + val*ln(p) +
+	(n-val)*ln1x(-p);
+     p1p := (1-p)/p;
+     for i from val-1 by -1 to 0 while pr1 > pr2*DBL_EPSILON do
+	 pr1 := pr1 / (n-i) * (i+1) * p1p;
+	 pr2 := pr2 + pr1 od;
+     -sqrt(2) * erfcinvLn( lnpr1 + ln(2*pr2) )
+     fi
+end:
+
+
+Normal_CumulativeStd := proc( distr:Normal(numeric,positive), val:numeric )
+option internal;
+(val-distr[1]) / sqrt(distr[2])
+end:
+
+
+U_Cumulative := proc( distr:U(numeric,numeric), val:numeric )
+option internal;
+if val <= distr[1] then 0
+elif val >= distr[2] then 1
+else (val-distr[1]) / (distr[2]-distr[1]) fi
+end:
+
+
+ChiSquare_CumulativeStd := proc( distr:ChiSquare(nonnegative), chi2:numeric )
+if chi2 <= 0 then return( -DBL_MAX ) fi;
+nu := distr[1];
+# Abramowitz & Stegun 26.4.19
+if chi2 > nu then
+     sqrt(2) * erfcinvLn( LnGamma(nu/2,chi2/2) - LnGamma(nu/2) + ln(2) )
+else -sqrt(2) * erfcinvLn( Lngamma(nu/2,chi2/2) - LnGamma(nu/2) + ln(2) ) fi
+end:
+
+
+# Cumulative of the log(probability) of independent events.
+# A list of independent events, e1, e2, ... have probabilities ps[1], ps[2],..
+# If e1 happens we add ln(ps[1]), if e1 does not happen we add ln(1-ps[1]),
+# This is the logarithm of the combined probability of all the events
+# happening/not happening.
+LogIndepEvents_Cumulative := proc( distr:LogIndepEvents(list(positive)),
+	x:numeric ) option internal;
+ps := distr[1];
+if x >= 0 then 1
+elif ps=[] or x <= sum( min(ln(p),ln(1-p)), p=ps ) then 0
+else j := 1;
+     for i from 2 to length(ps) do
+        if min(ps[i],1-ps[i]) < min(ps[j],1-ps[j]) then j := i fi
+        od;
+     nps := [op(1..j-1,ps),op(j+1..length(ps),ps)];
+     ps[j]*procname( LogIndepEvents(nps), x-ln(ps[j]) ) +
+     (1-ps[j])*procname( LogIndepEvents(nps), x-ln(1-ps[j]) )
+     fi
+end:
+
+
+
+#
+# Conversion between standard deviations and scores
+#	trying to avoid numerical problems (with large and
+#	small arguments)
+#
+#   A Score is defined as - 10 * log10( prob ).
+#   To convert a standard deviation, s, we assume the
+#   probability is that of:
+#
+#	Score = -10 * log10( Prob{ Normal(0,1) < s } )
+#
+#			Gaston H Gonnet (June 2nd, 2008)
+#
+###############################################################
+#  relevant Maple code
+#	log10 := x -> ln(x)/ln(10);
+#	Score := -10*log10(erfc(-s/sqrt(2))/2);
+#	Score1 := asympt( ln(10)*subs(s=-s,Score), s, 20 );
+#	Digits := 25;
+#	a1 := op(1,Score1);  a2 := op(2,Score1);  a3 := op(3,Score1);
+#	Score1 := eval( Score1-a1-a2-a3, O=0 );
+#	lprint( convert( subs(s=is2^(-1/2),Score1), horner ));
+#
+#	Tests:
+#	Std_Score(-38)-3155.397897039625078947290;
+#	Std_Score(-37)-2992.421811786099216715270;
+#	Std_Score(-7)-118.9285363747548983681163;
+#	Std_Score(0)-3.010299956639811952137389;
+#	Std_Score(3)-.005866493137900666910233622;
+#	Std_Score(3.0001)-.005864566098394282175317031;
+#	Std_Score(13)-.265665074361953155416200657e-37;
+#
+Std_Score := proc( s:numeric )
+if s < -37 then
+     s2 := s^2;
+     is2 := 1/s2;
+     (5*s2 + 9.1893853320467274178 + 10*ln(-s) + (10+(-25+(370/3+
+	(-1765/2+(8162+(-276025/3+(8541970/7-74380165/4*is2)*is2)*is2)*
+	is2)*is2)*is2)*is2)*is2) / 2.302585092994045684;
+elif s > 3 then
+     -4.34294481903251827651 * ln1x( -erfc(s/sqrt(2))/2 )
+else -10*log10(erfc(-s/sqrt(2))/2) fi
+end:

@@ -1,0 +1,44 @@
+Thank you for downloading ALF V1.0. This distribution consists of the following
+files and directories
+
+install.sh install script (instructions below)
+
+bin/       - binaries of the darwin engine for Mac OS X and Linux
+	   - starter scripts for darwin and ALF
+
+lib/       - the darwin library
+	   - the entire ALF source code is located in lib/simulator
+
+params/    - sample parameter sets to reproduce some of the results from the
+publication
+
+
+
+INSTALLATION To run ALF it is not required to install the software, but we
+think it will be more convenient.
+
+To install ALF for your system, run the script install.sh. By default, this
+will install the binary and script files in /usr/local/bin and the lib
+directory in /usr/local/share/alfdarwin (this will require super user
+privileges). If you wish to install in a different location, pass the location
+to install.sh. For example, if you want to install ALF in your home directory,
+use "./install.sh /home/your_username". This will create the directories
+/home/your_username/bin and /home/your_username/share/alfdarwin if they don't
+exist already.
+
+RUNNING SIMULATIONS If you did not install ALF, run it with the following
+command: bin/alfsim [path to parameter file]
+
+If you did install ALF and the script is on your PATH, then this reduces to
+alfsim [path to parameter file]
+
+When no paramater file is given, ALF will look for the file parameters.drw in
+the current working directory.
+
+The example parameter file parameters.drw contains an explanation of all
+available parameters. An easy way to create parameter files is the usage of the
+ALF web service at http://www.alfsim.org This is also the place to get
+the most recent version of ALF
+
+CONTACT INFORMATION If you have a question or want to report a but, please send
+me an email to d.dalquen@ucl.ac.uk. 

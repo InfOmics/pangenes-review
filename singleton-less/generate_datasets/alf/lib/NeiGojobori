@@ -1,0 +1,116 @@
+#########################################
+# Computation of dN and dS following 	#
+# Nei and Gojobori, 1986		#
+#		Adrian, 7 May 2008	#
+#########################################
+
+module external EstimateNG86;
+
+stops := {op(AToCodon('$'))};
+siteTypes := CreateArray(1..64,1..2);
+diffTypes := CreateArray(1..64,1..64,1..2):
+usepaths := [ [[1]], 
+	      [[1,2],[2,1]], 
+	      [[1,2,3],[2,1,3],[1,3,2],[2,3,1],[3,1,2],[3,2,1]] ];
+
+# precompute matrix of syn/nonsyn diffs for all pairs of codons
+for A to 64 do  
+    c1 := CIntToCodon(A);
+    if member(c1,stops) then next fi;
+    for B from A+1 to 64 do 
+	c2 := CIntToCodon(B);
+	if member(c2,stops) then next fi;
+ 	diff := [seq(If(c1[i]=c2[i],NULL,i),i=1..3)];
+	if length(diff)=1 then
+	    # use this to count the site types
+	    if CIntToInt(A)=CIntToInt(B) then
+		siteTypes[A,1] := siteTypes[A,1]+1;
+		siteTypes[B,1] := siteTypes[B,1]+1;
+	    else
+		siteTypes[A,2] := siteTypes[A,2]+1;
+		siteTypes[B,2] := siteTypes[B,2]+1;
+	    fi;
+	fi;
+ 	paths := []:
+	for pi in usepaths[length(diff)] do
+	    pathi := [string(c1[1].c1[2].c1[3])];
+	    for ci in pi do
+		cx := copy(string(pathi[-1]));
+		cx[diff[ci]] := c2[diff[ci]];
+	 	pathi := append(pathi,cx);
+	    od:
+	    if {op(pathi)} intersect stops<>{} then next fi;
+	    paths := append(paths,pathi);
+	od;
+	# count the syn and nonsyn differences along all paths
+        syndiff := nsdiff := 0:
+	for pi in paths do
+	    for i from 2 to length(pi) do
+		if CodonToInt(pi[i-1])=CodonToInt(pi[i]) then
+		    syndiff := syndiff+1;
+		else
+		    nsdiff := nsdiff+1;
+		fi;
+	    od:
+	od:
+	np := length(paths);
+	if np <> 0 then
+	   diffTypes[A,B] := diffTypes[B,A] := [syndiff/np,nsdiff/np];
+        fi:
+od od:
+for A to 64 do
+    if CIntToA(A)='$' then next fi;
+    siteTypes[A] := siteTypes[A]*3/sum(siteTypes[A]);
+od:
+
+
+EstimateNG86 :=proc(seq1:string, seq2:string)
+    if length(seq1)<>length(seq2) then
+	error('not same length') fi;
+    N := synSites1 := synSites2 := 0:
+    synDiffs := nsDiffs := 0:
+    for i to length(seq1) by 3 do
+	c1 := CodonToCInt(seq1[i..i+2]);
+	c2 := CodonToCInt(seq2[i..i+2]);
+	if c1=0 or c2=0 then next fi;
+	N := N+3;
+	synSites1 := synSites1+siteTypes[c1,1];
+	synSites2 := synSites2+siteTypes[c2,1];
+	synDiffs := synDiffs+diffTypes[c1,c2,1];
+	nsDiffs := nsDiffs+diffTypes[c1,c2,2];
+    od:
+    synSites := (synSites1+synSites2)/2;
+    nsSites := N-synSites;
+
+    if synSites=0 then
+	Ps := dS := -1;
+    else 
+    	Ps := synDiffs/synSites;
+	if (1-4/3*Ps > 0) then dS := -3/4*log(1-4/3*Ps)
+    	else dS := -1 fi:
+    fi;
+
+    if nsSites=0 then
+	Pn := dN := -1;
+    else
+    	Pn := nsDiffs/nsSites;
+    	if (1-4/3*Pn > 0) then dN := -3/4*log(1-4/3*Pn)
+    	else dN := -1 fi:
+    fi;
+
+    return([dN,dS,nsSites,synSites]);
+end:
+
+NULL
+end: # module
+
+
+
+
+
+
+
+
+
+
+

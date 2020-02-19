@@ -1,0 +1,1483 @@
+#
+#	New version of DrawTree
+#					Gaston H Gonnet (March 25, 2003)
+#
+#	The new version of DrawTree is a single interface
+#	for many different drawing styles and many different options.
+#
+#	The behaviour is classified according to the
+#	following phases:
+#
+#	method:			short comment
+#
+#	Mode of tree display:
+#		<default>	Vertical
+#		Vertical	equally spaced leaves horiz, height preserving
+#		Unrooted	planar representation - Splat trees
+#		UnrootedNB	planar representation - Using NBody to separate
+#		Radial		all leaves in equally spaced directions
+#		RadialLines	like Radial, with arcs indicating distances
+#		Phylogram	left to right horizontal branches
+#		Cladogram	left to right horizontal branches, aligned right
+#		Bisect		Like Radial, but parent is on bisector line
+#		BisectLines	like Bisect, with arcs indicating distances
+#		Split		Dress' thick edges model of trees
+#               ArcRadial       a Cladogram drawn with polar coordinates
+#
+#	Reordering of leaves:
+#		<default>	use the ordering in the Tree
+#		OrderLeaves=<sel> permute the left-right subtrees to make the
+#				clusters as contiguous as possible
+#		OrderLeaves=LeftHeavy  permute the left-right subtrees to
+#				make the left subtrees the largest
+#		OrderLeaves=Random  randomly permute the left-right subtrees
+#				to (possibly) obtain better looking trees
+#
+#	Branch labelling:
+#		<default>	Adaptive, 2-digit precision, branch labelling
+#		LengthFormat=<format>  A string which is interpreted as a
+#				format of an sprintf call with the length of
+#				the branch.  If set to the empty string, no
+#				branch labelling will happen.
+#		LengthFormat=<proc> (Length) -> string.  A procedure which
+#				takes the branch length as an argument and
+#				produces the string to be placed on the branch.
+#		BranchDrawing=<proc>  A procedure that will do all the branch
+#				drawing.  (x1,y1, x2,y2, l) -> list( drawing
+#				commands).  The branch spans from (x1,y1) to
+#				(x2,y2) and has a branch length l. The Subtree
+#				Leaf at the end of the branch will be given
+#				as the 5th argument, but normally not used.
+#
+#	Internal Nodes:
+#		<default>	no labelling happens for internal nodes.
+#		InternalNodes=<proc>  This is a procedure (Tree,x,y) -> list(
+#				drawing commands) which will be invoked every
+#				time that an internal node (identified by Tree),
+#				is drawn at position (x,y).
+#
+#	Leaf display information:
+#		<default>	circle with leaf[Label] written.
+#				If the Leaf contains additional arguments of
+#				the form:
+#				Shape = sss or
+#				Color = ccc, then the Leaf is displayed using
+#				the shape sss and color ccc.
+#		Legend		leaf[Label] written (no circle)
+#		LeafDrawing=<proc> (Leaf,x,y) -> list of Drawing commands
+#				to display the Leaf centred at (x,y).
+#		Clusters=<sel>	color and shape according to cluster
+#               RadialLabels    leaf labels radial (with respect to root)
+#
+#	Cross referencing:
+#		<default>	all labelling is done with leaf[Label]
+#		CrossReference	all labelling is done with an alphanumeric
+#				character and leaf[Label] is crossreferenced
+#				on the right
+#
+#	Title:
+#		Title=anything  will print a title centered at the bottom
+#
+#	MinBranchLength = xx	Force every branch to be at least of length xx.
+#
+#       TextSize = p            Set all text to size p points
+#
+#	In all cases, <sel> provides the definition of the clusters, or
+#	groups of leaves.  This can be done as:
+#	list(anything) - the numbering in the leaves is used as an index
+#			 in this list, and the value is the cluster name.
+#			 Clustering will be done on equal values.
+#	procedure - as above, but the value is obtained by running the
+#		    procedure on the Leaf.
+#
+#	A list of drawing commands is composed of the objects (as defined
+#	in ?DrawPlot) LTEXT, CTEXT, RTEXT, LINE, POLYGON and CIRCLE.
+
+
+module external DrawTree, DrawTree_Phylogram, DrawTree_Cladogram,
+	DrawTree_Radial, DrawTree_RadialLines, DrawTree_Unrooted,
+	DrawTree_Vertical, DrawTree_Bisect, DrawTree_BisectLines,
+	DrawTree_UnrootedNB, DrawTree_ArcRadial;
+local lli, HeightRoot, LeafList, m, n, LengthForm, LineProc, INodesProc, 
+  MaxINHei, lgtlist;
+
+# The use of optional arguments has been introduced by Adrian Schneider
+# on August 22, 2005
+#
+# Radial Lables by Manuel Gil Jun 2006
+#
+
+DrawTree := proc( t0:Tree ;
+	(meth0='Vertical') : {'Vertical', 'Unrooted', 'UnrootedNB', 'Radial',
+			      'RadialLines', 'Phylogram', 'Cladogram',
+			      'Bisect', 'BisectLines', 'Split', 'ArcRadial'},
+	'OrderLeaves' = ( (OrdLeaves=[]):{'LeftHeavy', 'Random' ,list,procedure} ),
+	'LengthFormat' = ( LengthFormArg : {string,procedure} ),
+	'BranchDrawing' = ( LineProcArg : procedure ),
+	'InternalNodes' = ( INodesProcArg : procedure ),
+	'LeafDrawing' = ( (LeafLab=LeafLabelWithCircle) : procedure ),
+	LegendOption : 'Legend',
+        LeafRotOption : 'RadialLabels',
+	XRefOption : 'CrossReference',
+	'Clusters' = ( ClusterArg : {list,procedure} ),
+	'Title' = ( (Title='') : anything ),
+        'TextSize' = ((TextSize=10):posint),
+	'MinBranchLength' = (MinBranchLength:positive),
+	(other=[])  : list(structure(anything,{LTEXT,CTEXT,RTEXT,LINE,POLYGON,CIRCLE}))
+) 
+external INodesProc, LeafList, LengthForm, LineProc, n;
+
+
+# this is just to prevent the 'procedure reassigned' warnings
+INodesProc := noeval(INodesProc);
+LengthForm := noeval(LengthForm);
+LineProc := noeval(LineProc);
+if length(other) >= 10 then other := copy(other) fi; # do not destroy by appends later
+
+# some arguments still have to be post-processed:
+
+# the tree
+t := t0;
+
+# LengthFormat
+if not assigned(LengthFormArg) then
+     LengthForm := proc( l:numeric )
+  	if l > 10 then sprintf( '%d', round(l) ) else sprintf( '%.2g', l ) fi
+     end;
+elif type(LengthFormArg,procedure) then
+     LengthForm := LengthFormArg
+elif type(LengthFormArg,string) then
+     LengthForm := x -> sprintf( LengthFormArg, x )
+fi;
+
+# MinBranchLength
+if type(MinBranchLength,positive) then
+    BasicLengthForm := op(LengthForm);
+    LengthForm := noeval(LengthForm);
+    LengthForm := proc( l:numeric ) BasicLengthForm( LengthTable[l] ) end;
+    r := ConvBranchLength( t, MinBranchLength );
+    t := r[1];
+    LengthTable := r[2]
+fi;
+
+# BranchDrawing
+if not assigned(LineProcArg) then
+    LineProc := proc( x1,y1, x2,y2, v )
+       # Because we allow the drawing of trees with leaves that have no heights,
+       # and the length of the branches to those leaves are denoted by 'NA', we
+       # have to allow strings to be printed as the variable v.
+       v2 := If(type(v,string),v,LengthForm(v));
+       if v2='' then [ LINE( x1,y1, x2,y2 ) ]
+       else [ LINE( x1,y1, x2,y2 ),
+             CTEXT((x1+x2)/2, (y1+y2)/2 +
+		If(nargs>5 and type(args[6],numeric), args[6],0),
+                v2, 'points'=TextSize) ] fi
+    end:
+else
+    LineProc := LineProcArg
+fi;
+
+# LeafDrawing
+if LegendOption='Legend' then LeafLab := LeafLabelNoCircle fi;
+if meth0 = 'ArcRadial' and LegendOption <> 'Legend' then 
+    LegendOption := 'Legend';
+    print('''ArcRadial'' set, enforcing ''Legend'' option.');
+fi;
+if meth0 = 'ArcRadial' then LeafLab := LeafLabelNoCircle fi;
+
+
+# Title
+if not type(Title,string) then Title := string(Title) fi;
+
+# Clusters
+if assigned(ClusterArg) then
+    if type(ClusterArg,procedure) then
+	 LeafClusters := [];
+	 for z in Leaves(t) do
+	     LeafClusters := append(LeafClusters, ClusterArg(z));
+	 od;
+	 LeafLab := (L) -> DrawColorShape(L,LeafClusters)
+    elif type(ClusterArg,list) then
+	 LeafLab := (L) -> DrawColorShape(L,ClusterArg)
+    fi
+fi;
+
+# InternalNodes
+if assigned(INodesProcArg) then INodesProc := INodesProcArg fi;
+
+# end argument processing
+
+# (remark: the following has NOT been converted
+# to the new optional arguments:
+#    else pars := pars, z fi
+#    od;
+# PlotArgs := PlotArguments( pars );
+
+
+# Reorder tree if necessary
+if OrdLeaves <> [] then
+     if type(OrdLeaves,procedure) then
+	  r := [];
+	  for z in Leaves(t) do r := append( r, OrdLeaves(z) ) od;
+	  t := Reorder( t, r )
+     elif OrdLeaves='LeftHeavy' then
+	  t := LeftHeavy(t)[2]
+     elif OrdLeaves='Random' then
+	  RandSwap := proc( t )
+		if type(t,Leaf) then t
+		elif Rand() < 0.5 then
+		     Tree(procname(t[1]),t[2],procname(t[3]),op(4..length(t),t))
+		else Tree(procname(t[3]),t[2],procname(t[1]),op(4..length(t),t))
+		     fi end:
+	  t := RandSwap(t);
+     else n := 0;
+	  for z in Leaves(t) do n := n+1 od;
+	  if length(OrdLeaves) <> n then
+		error( OrdLeaves,
+		    'the list for OrderLeaves has an incorrect length') fi;
+	  t := Reorder( t, OrdLeaves )
+	  fi;
+     fi;
+
+
+# Build list of leaves
+LeafList := [];
+for z in Leaves(t) do LeafList := append(LeafList,z) od;
+n := length(LeafList);
+
+
+# if crossreferencing then change the LeafList
+rightmargin := 0;
+if XRefOption='CrossReference' then
+	if min( seq( length(i), i=LeafList )) >= 3 and
+	    { seq( i[3], i=LeafList ) } = { seq( i, i=1..n ) } then
+	    # use the third position as order
+	    other := CreateArray(1..n);
+	    for i to n do
+                LeafList[i] := copy(LeafList[i]);
+                lbl := Alphanumerical(LeafList[i,3]);
+                other[LeafList[i,3]] := LTEXT(103, 0, 
+                    sprintf('%s - %a', lbl, LeafList[i,1]), 'points'=TextSize);
+                LeafList[i,1] := lbl
+            od
+	else # use the LeafList order
+            for i to n do
+                LeafList[i] := copy(LeafList[i]);
+                lbl := Alphanumerical(i);
+                other := append(other, LTEXT(103, 0, 
+                    sprintf('%s - %a', lbl, LeafList[i,1]), 'points'=TextSize));
+                LeafList[i,1] := lbl
+            od
+        fi;
+	rightmargin := max( seq( length(i[3]), i=other ));
+fi;
+
+
+# for trees with leaves that have only one field, insert
+#  'NA' as the height. the method of drawing will be fixed 
+#  to cladograms, because it is the only sensible way to 
+#  draw these trees.
+if min( seq( length(i), i=LeafList )) < 2 then
+	t := InsertLeafHeight( t );
+	meth := 'Cladogram';
+	if assigned(LeafClusters) then
+		LeafClusters := NULL;
+		LeafLab := LeafLabelWithCircle;
+	fi:
+	lprint('Warning: some leaves have no height, reverting to method Cladogram');
+else
+	meth := meth0;
+fi:
+
+#   The method functions do the following
+#
+#   (a) Are called with DrawTree_Method( t:Tree )
+#   (b) Are allowed to use/modify LeafList
+#	  The LeafList is initially a list of Leaf() structures,
+#	  the drawing method is responsible for adding the x,y
+#	  coordinates, making every entry a [Leaf(),x,y].
+#   (c) Add the coordinates of the center of where each Leaf will be drawn
+#   (d) Return a list of DrawPlot objects which will normally be the
+#	 internal branches of the tree.  Branch lines should be drawn with
+#	 the procedure LineProc( x1,y1, x2,y2, v ) which also draws the length
+#	 information as required.
+#   (e) Scale the coordinates so that the x values are in 0..100 and
+#	 the y values in 0...?
+f := symbol( DrawTree_ . meth );
+if not type(f,procedure) then
+     error(meth,'is an unknown method or not implemented yet') fi;
+branches := f(t);
+
+# Draw the leaves
+leaves := [];
+for z in LeafList do
+    leaves := append(leaves, op(LeafLab(z, branches, LeafRotOption, TextSize)));
+od:
+
+# add y coordinates to CrossRefs, if any
+if XRefOption='CrossReference' then
+    mm := MinMaxCoord( [op(branches),op(leaves)] );
+    if n <= 40 then dy := (mm[4]-mm[3]) / 40
+    else dy := (mm[4]-mm[3]) / (n-1) fi;
+    for i to n do other[i,2] := mm[4] - dy*(i-1) od
+    fi;
+
+# process title, if any
+if Title <> '' then
+   mm := MinMaxCoord( [op(branches),op(leaves),op(other)] );
+   other := append( other, If( length(Title) > 70,
+	LTEXT( mm[1], 1.05*mm[3]-0.05*mm[4],Title, 'points'=TextSize),
+	CTEXT( (mm[1]+mm[2])/2, 1.05*mm[3]-0.05*mm[4],Title, 'points'=TextSize) ))
+   fi;
+
+plo := [op(branches), op(leaves), op(other)]; 
+DrawPlot(plo, proportional,
+	'rightmargin'=rightmargin );
+
+end:
+
+
+### # Leaf label procedures
+LeafLabelWithCircle := proc( L, branches, LeafRotOption, TextSize )
+l := L[1]; x := L[2]; y := L[3];
+col := [0,0,0];
+for i from 4 to length(l) do
+    if type(l[i],'Shape'=procedure) then sha := op(2,l[i])
+    elif type(l[i],'Shape'=string) then
+	 j := SearchArray(op(2,l[i]),ShapeProcs);
+	 if j < 1 then error(l[i],'is an unknown shape') fi;
+	 sha := ShapeProcs[j]
+    elif type(l[i],'Color'=[nonnegative,nonnegative,nonnegative]) then 
+	 col := op(2,l[i])
+    elif type(l[i],'Color'=anything) then col := string_RGB(op(2,l[i])) fi
+    od;
+if assigned(sha) then
+    [ op(sha(x,y,col)), op(LeafLabelNoCircle(args)) ]
+else 
+    [ CIRCLE(x,y,8,'color'=col), op(LeafLabelNoCircle(args)) ]
+fi
+end:
+
+LeafLabelNoCircle := proc( L, branches, LeafRotOption, TextSize )
+l := L[1]; x := L[2]; y := L[3]; t := l[Label];
+if type(t,Color([nonnegative,nonnegative,nonnegative],anything)) then
+	clr := t[1]; lab := t[2]
+elif type(t,Color(anything,anything)) then
+    clr := string_RGB(t[1]); lab := t[2]
+else
+    clr := [0,0,0]; lab := t;
+fi;
+if LeafRotOption = 'RadialLabels' then
+    xr := branches[1,1]; yr:= branches[1,2];
+    phi := arctan(y-yr, x-xr)*180/Pi;
+    prc := TextSize/10;
+    dphi := prc/180*Pi;
+    xgxr := x > xr;
+    if xgxr then dphi := -dphi fi;
+    xn := x-xr; yn := y-yr;
+    xp := xn*cos(dphi) - yn*sin(dphi); yp := yn*cos(dphi) + xn*sin(dphi);
+    x := xp+xr; y := yp+yr;
+    if xgxr then
+        [LTEXT(x,y, string(lab), 'points'=TextSize, 'angle'= phi, 'color'=clr)]
+    else
+        [RTEXT(x,y, string(lab), 'points'=TextSize, 'angle'= phi + 180, 'color'=clr)]
+    fi;
+else
+    [CTEXT(x,y-0.45, string(lab), 'points'=TextSize, 'color'=clr)]
+fi;
+end:
+
+
+#
+#	Reorder the nodes so that a tour of the tree will
+#	give a minimum number of changes of the clustering value.
+#
+#					Gaston H. Gonnet (June 4th, 2003)
+#
+
+Reorder := proc( t:Tree, val:list ) -> Tree;
+external m;
+
+# determine the number of different clustering values
+cval := [op({op(val)})];
+m := length(cval);
+if m = length(val) then return( t ) fi; # all different, any order is good
+
+# This version uses (m x m) matrices
+forw := ReorderR( t, val, cval );
+minc := min(forw[2]);
+for i to m do for j from i to m do if forw[2,i,j]=minc then
+	return( ReorderB( t, forw, i, j )) fi od od
+end:
+
+
+
+ReorderR := proc( t, val, cval ) #option trace;
+external m;
+if type(t,Leaf) then
+	r := CreateArray(1..m,1..m,1e6);
+	if length(t) >= 3 and type(t[3],posint) then v := val[t[3]]
+	elif type(t[1],posint) then v := val[t[1]]
+	else error(t,'Leaf does not contain node information') fi;
+	v := SearchArray( v, cval );
+	r[v,v] := 0;
+	return( Leaf2(t,r) )
+else	ll := procname( t[Left], val, cval );  rl := ll[2];
+	lr := procname( t[Right], val, cval );  rr := lr[2];
+	r := CreateArray(1..m,1..m,1e6);
+	for i to m do for j to m do
+	    r[i,j] := r[j,i] := min(
+		min(rl[i]+rr[j]), min(rl[i])+min(rr[j])+1,
+		min(rl[j]+rr[i]), min(rl[j])+min(rr[i])+1 )
+	    od od;
+	Tree2(ll,r,lr)
+	fi
+end:
+
+
+# Rotate the tree so that it goes from i to j
+ReorderB := proc( t, forw, i, j )
+external m;
+c := forw[2,i,j];
+
+if c=0 then t	# no changes required, leave subtree as is
+
+elif type(t,Leaf) or type(forw,structure(anything,Leaf2)) then
+     error(t,forw,'internal inconsistency')
+
+else rl := forw[1,2];
+     rr := forw[3,2];
+
+     for k to m do
+	 if rl[i,k]+rr[j,k] = c then
+	      return( Tree( ReorderB( t[Left], forw[1], i, k ),
+		 t[2], ReorderB( t[Right], forw[3], k, j ) ))
+	      fi
+	 od;
+
+     if min(rl[i])+min(rr[j])+1 = c then
+	 for k1 to m while rl[i,k1] > min(rl[i]) do od;
+	 for k2 to m while rr[j,k2] > min(rr[j]) do od;
+	 return( Tree( ReorderB( t[Left], forw[1], i, k1 ),
+	     t[2], ReorderB( t[Right], forw[3], k2, j ) )) fi;
+
+     for k to m do
+	 if rl[j,k]+rr[i,k] = c then
+	      return( Tree( ReorderB( t[Right], forw[3], i, k ),
+		 t[2], ReorderB( t[Left], forw[1], k, j ) ))
+	      fi
+	 od;
+
+     if min(rl[j])+min(rr[i])+1 = c then
+	 for k1 to m while rl[j,k1] > min(rl[j]) do od;
+	 for k2 to m while rr[i,k2] > min(rr[i]) do od;
+	 return( Tree( ReorderB( t[Right], forw[3], i, k2 ),
+	     t[2], ReorderB( t[Left], forw[1], k1, j ) )) fi;
+
+     error('should not happen')
+     fi
+end:
+
+
+#
+#	Reorder the tree so that the left subtree is heavier,
+#	i.e. it has not fewer leaves than the right subtree.
+#	Some trees will look better after this rearrangement.
+#
+#	returns:  [ num_nodes, rearranged_tree ]
+#
+#					Gaston H Gonnet (June 22, 2003)
+LeftHeavy := proc( t:Tree )
+if type(t,Leaf) then [1,t]
+else l := procname( t[Left] );
+     r := procname( t[Right] );
+     nt := copy(t,1);
+     if l[1] < r[1] then nt[Left] := r[2];  nt[Right] := l[2] 
+     else nt[Left] := l[2];  nt[Right] := r[2] fi;
+     [ l[1]+r[1], nt]
+fi
+end:
+
+
+#
+#	DrawColorShape(Leaf,x,y,LeafClusters)
+#
+#	produces a list of drawing commands to draw a particular
+#	shape for the given Leaf.
+#
+#
+ShapeProcs := [ Circle, Square, Triangle, UTriangle, Rombus,
+	DCircle, DSquare, DTriangle, DUTriangle, DRombus ];
+Colors := [ [0,0,0], [1,0,0], [0,1,0], [0,0,1], [1,1,0], [1,0,1], [0,1,1] ];
+
+DrawColorShape := proc( LeafList:list, LeafClusters:list )
+cl := [ op({op(LeafClusters)}) ];
+if length(cl) > length(ShapeProcs) * length(Colors) and printlevel > 0 then
+     printf( 'too many different cluster values, cannot label uniquely\n') fi;
+t := LeafList[1];  x := LeafList[2];  y := LeafList[3];
+
+if length(t) < 3 or not type(t[3],posint) or t[3] > length(LeafClusters) then
+     error(t,'does not have a correct Leaf number to cluster') fi;
+k := SearchArray(LeafClusters[t[3]],cl);
+procn := mod( k-1, length(ShapeProcs) ) + 1;
+coln := mod( floor( (k-1) / length(ShapeProcs) ), length(Colors)) + 1;
+
+[ op( ShapeProcs[procn]( x, y, Colors[coln] )), op(LeafLabelNoCircle(args)) ]
+end:
+
+
+
+#
+#	Drawing procedures
+#
+H := 1.65;  # H should be like the radius of the shape
+H2 := H*3/4;
+
+OneSquare := proc(x,y,h,col)
+   g := h/sqrt(2);
+   POLYGON( x-g,y+g, x+g,y+g, x+g,y-g, x-g,y-g, fill=1 ),
+   LINE( x-g,y+g, x+g,y+g, 'color'=col ),
+   LINE( x-g,y-g, x+g,y-g, 'color'=col ),
+   LINE( x-g,y+g, x-g,y-g, 'color'=col ),
+   LINE( x+g,y+g, x+g,y-g, 'color'=col ) end:
+
+OneTriangle := proc(x,y,h,col)
+   g := 2*h / sqrt(3);
+   POLYGON( x,y+g, x+h,y-g/2, x-h,y-g/2, fill=1 ),
+   LINE( x,y+g, x+h,y-g/2, 'color'=col ),
+   LINE( x+h,y-g/2, x-h,y-g/2, 'color'=col ),
+   LINE( x-h,y-g/2, x,y+g, 'color'=col ) end:
+
+OneUTriangle := proc(x,y,h,col)
+   g := 2*h / sqrt(3);
+   POLYGON( x,y-g, x+h,y+g/2, x-h,y+g/2, fill=1 ),
+   LINE( x,y-g, x+h,y+g/2, 'color'=col ),
+   LINE( x+h,y+g/2, x-h,y+g/2, 'color'=col ),
+   LINE( x-h,y+g/2, x,y-g, 'color'=col ) end:
+
+OneRombus := proc(x,y,h,col)
+   POLYGON( x,y+h, x+h,y, x,y-h, x-h,y, fill=1 ),
+   LINE( x,y+h, x+h,y, 'color'=col ),
+   LINE( x+h,y, x,y-h, 'color'=col ),
+   LINE( x,y-h, x-h,y, 'color'=col ),
+   LINE( x-h,y, x,y+h, 'color'=col ) end:
+
+Circle := proc( x, y, col ) [CIRCLE(x,y,8,'color'=col)] end:
+DCircle := proc( x, y, col )
+	[CIRCLE(x,y,8,'color'=col), CIRCLE(x,y,6,'color'=col)] end:
+Square := proc( x, y, col ) [ OneSquare(x,y,H,col) ] end:
+DSquare := proc( x, y, col )
+   [ OneSquare(x,y,H,col), OneSquare(x,y,H2,col) ] end:
+Triangle := proc( x, y, col ) [ OneTriangle(x,y,H,col) ] end:
+DTriangle := proc( x, y, col )
+   [ OneTriangle(x,y,H,col), OneTriangle(x,y,H2,col) ] end:
+UTriangle := proc( x, y, col ) [ OneUTriangle(x,y,H,col) ] end:
+DUTriangle := proc( x, y, col )
+    [ OneUTriangle(x,y,H,col), OneUTriangle(x,y,H2,col) ] end:
+Rombus := proc( x, y, col ) [ OneRombus(x,y,H,col) ] end:
+DRombus := proc( x, y, col )
+    [ OneRombus(x,y,H,col), OneRombus(x,y,H2,col) ] end:
+
+
+
+#  DrawTree_ArcRadial:
+#  Draw Radial Cladograms, i.e. Cladograms with polar coordinates.
+#  
+#  Manuel Gil, Jun 2006
+#
+
+DrawArc := proc(x1, y1, x2, y2)
+    arc := [];
+    phi1 := arctan(y1, x1);
+    phi2 := arctan(y2, x2);
+    phi1 := If(phi1<0, phi1+2*Pi, phi1);
+    phi2 := If(phi2<0, phi2+2*Pi, phi2);
+    r := sqrt(x1^2+y1^2);
+    phi := min(phi1, phi2);
+    pxo := r*cos(phi);
+    pyo := r*sin(phi);
+    step := 0.1/180*Pi;
+    for phi from min(phi1, phi2)+step to max(phi1, phi2) by step do
+        px := r*cos(phi);
+        py := r*sin(phi);
+        arc := append(arc, LINE(pxo, pyo, px, py));
+        pxo := px;
+        pyo:= py;
+    od;
+    return(arc);
+end:
+
+DrawDottedLine := proc(x1, y1, x2, y2, stepFac, omitStep) 
+    line := [];
+    dx := x2 - x1; dy := y2 - y1;
+    steps := If(|dx| > |dy|, |dx|, |dy|)*stepFac;
+    if steps = 0 then return([]) fi;
+    x_inc := dx/steps; y_inc := dy/steps;
+    x0:=x1+omitStep*x_inc; y0:=y1+omitStep*y_inc;
+    for i to steps-omitStep do
+        x := x0 + x_inc;
+        y := y0 + y_inc;
+        if mod(i,5) = 1 then line := append(line, LINE(x0, y0, x, y)) fi;
+        x0 := x; y0 := y;
+    od;
+    return(line);
+end:
+
+MakeRootHeight0 := proc(t: Tree, rootH:numeric)
+    if type(t, Leaf) then
+        h := If(length(t) > 3 and type(t[4],'LeafHeight=NA'), 
+                'NA', t[Height]-rootH);
+        Leaf(t[Label], h)
+    else    
+        Tree(procname(t[Left], rootH), t[Height]-rootH, 
+             procname(t[Right], rootH))
+    fi
+end:
+
+
+DrawTree_ArcRadial := proc(ti: Tree)
+external LeafList, leafi, LeafLab, lgtlist;
+    t := If(ti[Height] <> 0, MakeRootHeight0(ti, ti[Height]), ti);    
+    leafi := 0;
+    hmax := 0;
+    lgtlist := [];
+    for l in Leaves(t) do hmax := max(hmax, |l[Height]|-|t[Height]|) od;
+    r := DrawTree_ArcRadialR(t, hmax, |t[Height]|);
+    if length(lgtlist) > 0 then
+        current_id := '';
+        for i in sort(lgtlist) do
+           if i[1,1..-2] <> current_id then
+               current_id := i[1,1..-2];
+               coord := copy(i[2..4]);
+           else
+               r[2] := append(r[2],LINE(i[2],i[3],coord[1],coord[2],
+                              'color'=i[5]));
+               
+               v := [coord[1]-i[2], coord[2]-i[3]];
+               v := hmax * 0.05 * v/sqrt(sum(zip(v^2)));
+               w1 := v+0.3*[v[2],-v[1]];
+               w2 := v+0.3*[-v[2],v[1]];
+
+               r[2] := append(r[2],LINE(coord[1],coord[2],coord[1]-w1[1],
+                              coord[2]-w1[2],'color'=i[5]));
+               r[2] := append(r[2],LINE(coord[1],coord[2],coord[1]-w2[1],
+                              coord[2]-w2[2],'color'=i[5]));
+           fi;
+        od;
+    fi;
+    NormalizeCoordinates([r[2,1], op(r[2,3..-1])]);
+end:
+
+DrawTree_ArcRadialR := proc( t:Tree, hmax:numeric, hparent:numeric )
+external LeafList, leafi, lgtlist;
+if type(t,Leaf) then
+    leafi := leafi+1;
+    phi := leafi*2*Pi/length(LeafList);
+    cosphi := cos(phi); sinphi := sin(phi);
+    xe := hmax*cosphi; ye := hmax*sinphi;
+    xa := hparent*cosphi; ya := hparent*sinphi;
+    xm := |t[Height]|*cosphi; ym := |t[Height]|*sinphi;
+    sig := If(xe < 0, 1, -1);
+    #xl := hmax*cos(phi+sig*0.7/180*Pi); yl := hmax*sin(phi+sig*0.7/180*Pi);
+    xl := hmax*cos(phi+sig*1/180*Pi); yl := hmax*sin(phi+sig*1/180*Pi);
+    LeafList[leafi] := [LeafList[leafi],  xe, ye];#xl, yl];
+    # leaves with a 4th field of type 'LeafHeight=NA' have an
+    # artificially inserted height. Insertion was done by proc InsertLeafHeight.
+    # for those leaves with inserted height, 'NA' is printed instead of the
+    # branch length.
+    lenlab := If(length(t) > 3 and type(t[4],'LeafHeight=NA'), 
+                 'NA', |t[Height]|-hparent);
+    if length(t) = 3 and type(t[3],array(array)) then
+        for k in t[3] do
+            if not member(k[2],{'start','end'}) then
+               error('the second field of an LGT endpoint must be '
+                      .'either ''start'' or ''end''.');
+            fi;
+            lgt := |t[Height]|-k[3];
+            x_lgt := lgt*cosphi;
+            y_lgt := lgt*sinphi;
+            myColor := If(length(k)=4,k[4],string_RGB('red'));
+            lgtlist := append(lgtlist,[k[1].k[2,1],x_lgt,y_lgt,phi,myColor]);
+        od;
+    fi;
+    [[xa, ya], [op(LineProc(xa, ya, xm, ym, lenlab, t)),
+     op(DrawDottedLine(xm, ym, xe, ye, 1000/length(LeafList), 10))]]
+else
+    resl := DrawTree_ArcRadialR(t[Left], hmax, |t[Height]|);
+    resr := DrawTree_ArcRadialR(t[Right], hmax, |t[Height]|);
+ 
+    if resl[1] = resr[1] then
+        if resl[1] <> [0,0] then error('internal error, should not happen') fi;
+        [[0,0], [op(resl[2]), op(resr[2])]]
+    else
+        xla := resl[1,1]; yla := resl[1,2];
+        xra := resr[1,1]; yra := resr[1,2];
+
+        phi1 := arctan(yla, xla); phi1 := If(phi1<0, phi1+2*Pi, phi1);
+        phi2 := arctan(yra, xra); phi2 := If(phi2<0, phi2+2*Pi, phi2);
+        phimr := (phi1+phi2)/2;
+        cosi := cos(phimr); sini := sin(phimr);
+        xa := hparent*cosi; ya := hparent*sini;
+        xe := |t[Height]|*cosi; ye := |t[Height]|*sini;
+        
+        # collect info about LGT (we have to detect the format...)
+        if length(t) = 4 and type(t[4],array(array)) then
+            for k in t[xtra] do
+                if not member(k[2],{'start','end'}) then
+                error('the second field of an LGT endpoint must be '
+                        .'either ''start'' or ''end''.');
+                fi;
+                lgt := |t[Height]|-k[3];
+                x_lgt := lgt*cosi;
+                y_lgt := lgt*sini;
+                myColor := If(length(k)=4,k[4],string_RGB('red'));
+                lgtlist := append(lgtlist,[k[1].k[2,1],x_lgt,y_lgt,phimr,myColor]);
+            od;
+        fi;
+
+       [[xa,ya], [op(LineProc( xa, ya, xe, ye, |t[Height]|-hparent, t)),
+        op(DrawArc(xra , yra, xla, yla)),
+        If(assigned(INodesProc), op(INodesProc(t,xe,ye)),NULL),
+        op(resl[2]), op(resr[2])]]
+    fi
+fi
+end:
+
+
+
+#
+# DrawTree_Phylogram and DrawTree_Cladogram
+#  drawing trees as phylograms and cladograms, resp.
+#
+#					Gaston H. Gonnet (June 4th, 2003)
+#					Peter von Rohr ( June 11th, 2003)
+#
+#
+
+DrawTree_Phylogram := proc( t:Tree ) option internal;
+  DrawTree_Cladogram( t, 'Phylogram' );
+end;
+
+
+### # common function that does the work starts here ### #
+DrawTree_Cladogram := proc( t:Tree )
+external LeafList, ylevel, LeafLab;
+option internal;
+
+  ylevel := 0;
+  hei := 0;
+  ### # for phylograms, we want hei to remain 0, for Cladograms we
+  ### #  want it to be the maximum height.  This determines where
+  ### #  the label is placed in the x-axis
+  for l in Leaves(t) do hei := max( hei, |t[Height]-l[Height]| ) od;
+
+  r := DrawTree_CladogramR( t, |t[Height]|-hei/100, If(nargs=1,hei,0) );
+  NormalizeCoordinatesX( r[2] )
+
+end:
+
+
+
+#
+#	DrawTree_CladogramR returns a list of two objects:
+#
+#	[ y, [pieces] ]
+#
+#	The first components has the y coordinate of the leftmost point
+#
+#	the second component contains all the DrawPlot objects needed
+#	to plot the tree.
+#
+#	This function draws:
+#
+#                 l            |
+#	      -----------------------|
+#                              |
+#                              |
+#       lx                     rx
+#
+DrawTree_CladogramR := proc( t:Tree, lx:numeric, rx:numeric )
+global LeafList, ylevel;
+
+### # ycorr: small arbitrary distance between length labels and lines
+ycorr := 0.075; 
+
+if type(t,Leaf) then
+
+   ylevel := ylevel+1;
+   y := ylevel*70/length(LeafList);
+   x := max( |t[Height]|, rx );
+   LeafList[ylevel] := [ LeafList[ylevel], x, y ];
+	 ### # leaves with a 4th field of type 'LeafHeight=NA' have an 
+	 ### # artificially inserted height. Insertion was done by proc InsertLeafHeight.
+	 ### # for those leaves with inserted height, 'NA' is printed instead of the 
+	 ### # branch length.
+   [ y, LineProc( lx,y, x,y, 
+	If(length(t) > 3 and type(t[4],'LeafHeight=NA'),'NA',|t[Height]|-lx), ycorr,
+	t ) ]
+
+
+else 
+   line1 := DrawTree_CladogramR( t[Left], |t[Height]|, rx );
+   line2 := DrawTree_CladogramR( t[Right], |t[Height]|, rx );
+   y := (line1[1]+line2[1]) / 2;
+
+   [ y, [ op( LineProc( lx, y, |t[Height]|, y, |t[Height]|-lx, ycorr,t )),
+	  LINE( |t[Height]|, line1[1], |t[Height]|, line2[1] ),
+	  If( assigned(INodesProc), op(INodesProc(t,|t[Height]|,y)),NULL),
+	  op(line1[2]), op(line2[2]) ] ]
+   fi
+end:
+
+
+#
+#	DrawTree_Radial
+#
+#	Each Leaf is assigned a constant sector.
+#	Each Leaf is positioned at its distance from the root
+#	Each internal node is positioned at its distance from the root
+#		and such that the angles are to its descendants are equal
+#
+#					Gaston H Gonnet (June 10, 2003)
+
+
+DrawTree_Radial := proc( t:Tree, Lines:boolean )
+external lli, LeafList, HeightRoot;
+option internal;
+n := length(LeafList);
+HeightRoot := t[Height];
+
+# decide on spanning angle:
+#	n<20 --> 90 deg
+#	20 <= n <= 100 --> between 90 and 360 deg
+#	n > 100 --> 360 deg
+if n < 20 then span := 90
+elif n <= 100 then span := 90 + 270*(n-20)/(100-20)
+else span := 360 fi;
+
+# place the leaves in their final position
+maxh := 0;
+for i to n do
+    if span < 360 then
+         th := 2*Pi * ( (i-1)*span/(n-1) - span/2 - 90 ) / 360
+    else th := 2*Pi * ( i*span/n - span/2 - 90 ) / 360 fi;
+    r := | LeafList[i,Height] - t[Height] |;
+    maxh := max(maxh,r);
+    LeafList[i] := [ LeafList[i], r*cos(th), r*sin(th) ]
+    od;
+
+lli := 0;
+r := DrawTree_RadialR( t );
+if lli <> n then error(lli,n,'should not happen') fi;
+if nargs=2 and Lines then
+     r := r[2];
+     nrm := 10 ^ floor( log10(maxh/4) );
+     for i to 4 do
+	 rad := round( maxh*i/4/nrm ) * nrm;
+	 nl := round( span*i/5 );
+	 th := 2*Pi*(-span/2-93)/360;
+	 r := append( r, CTEXT( rad*cos(th), rad*sin(th), LengthForm(rad),
+                      'points'=TextSize ));
+	 for j to nl do
+	     th := th + 2*Pi*span/360/nl;
+	     r := append( r, CTEXT( rad*cos(th), rad*sin(th), '.' ))
+	     od;
+	 od;
+     NormalizeCoordinates( r )
+else NormalizeCoordinates( r[2] ) fi
+
+end:
+
+
+
+DrawTree_RadialLines := proc( t ) option internal;
+DrawTree_Radial( t, true )
+end:
+
+
+DrawTree_RadialR := proc( t:Tree )
+external lli;
+if type(t,Leaf) then
+     lli := lli+1;
+     return( [ LeafList[lli,2..3], [] ] )
+else lr := DrawTree_RadialR( t[Left] );
+     rr := DrawTree_RadialR( t[Right] );
+     ii := PlaceInode( op(lr[1]), op(rr[1]), | t[Height] - HeightRoot | );
+     [ ii, [
+	op(LineProc( op(ii), op(lr[1]), | t[Height] - t[Left,Height] |, t[Left] )),
+	op(LineProc( op(ii), op(rr[1]), | t[Height] - t[Right,Height]|, t[Right] )),
+	If( assigned(INodesProc), op(INodesProc(t,op(ii))),NULL),
+	op(lr[2]), op(rr[2]) ] ]
+     fi
+end:
+
+
+
+#
+#	DrawTree_Bisect
+#
+#	Each Leaf is assigned a constant sector.
+#	Each Leaf is positioned at its distance from the root
+#	Each internal node is positioned at its distance from the root
+#		and at an angle that bisects the angle of its two
+#		descendants
+#
+#					Gaston H Gonnet (June 22, 2003)
+
+
+DrawTree_Bisect := proc( t:Tree, Lines:boolean )
+external lli, LeafList, HeightRoot;
+option internal;
+n := length(LeafList);
+HeightRoot := t[Height];
+
+# spanning angle is fixed at 120
+span := 120;
+
+# place the leaves in their final position
+maxh := 0;
+for i to n do
+    if span < 360 then
+         th := 2*Pi * ( (i-1)*span/(n-1) - span/2 - 90 ) / 360
+    else th := 2*Pi * ( i*span/n - span/2 - 90 ) / 360 fi;
+    r := | LeafList[i,Height] - t[Height] |;
+    maxh := max(maxh,r);
+    LeafList[i] := [ LeafList[i], r*cos(th), r*sin(th) ]
+    od;
+
+lli := 0;
+r := DrawTree_BisectR( t );
+if lli <> n then error(lli,n,'should not happen') fi;
+if nargs=2 and Lines then
+     r := r[2];
+     nrm := 10 ^ floor( log10(maxh/4) );
+     for i to 4 do
+	 rad := round( maxh*i/4/nrm ) * nrm;
+	 nl := round( span*i/5 );
+	 th := 2*Pi*(-span/2-93)/360;
+	 r := append( r, CTEXT( rad*cos(th), rad*sin(th), LengthForm(rad),
+                      'points'=TextSize ));
+	 for j to nl do
+	     th := th + 2*Pi*span/360/nl;
+	     r := append( r, CTEXT( rad*cos(th), rad*sin(th), '.' ))
+	     od;
+	 od;
+     NormalizeCoordinates( r )
+else NormalizeCoordinates( r[2] ) fi
+
+end:
+
+
+DrawTree_BisectLines := proc( t ) option internal;
+DrawTree_Bisect( t, true )
+end:
+
+
+DrawTree_BisectR := proc( t:Tree )
+external lli;
+if type(t,Leaf) then
+     lli := lli+1;
+     return( [ LeafList[lli,2..3], [] ] )
+else lr := DrawTree_BisectR( t[Left] );
+     rr := DrawTree_BisectR( t[Right] );
+     r := | t[Height] - HeightRoot |;
+     theta := ( arctan(lr[1,2],lr[1,1]) + arctan(rr[1,2],rr[1,1]) ) / 2;
+     ii := [r*cos(theta),r*sin(theta)];
+     [ ii, [
+	op(LineProc( op(ii), op(lr[1]), | t[Height]-t[Left,Height] |,t[Left] )),
+	op(LineProc( op(ii), op(rr[1]), | t[Height]-t[Right,Height]|,t[Right] )),
+	If( assigned(INodesProc), op(INodesProc(t,op(ii))),NULL),
+	op(lr[2]), op(rr[2]) ] ]
+     fi
+end:
+
+
+
+# Place origin at (0,0)
+#  Nodes a (ax,ay) and b (bx,b_y), we want to position node i at
+#   distance r and such that the angle a-i-o = b-i-o
+#
+#	Maple code to compute the program
+#
+#	kernelopts( gcfreq=10^7 );
+#	oa := (ax^2+ay^2) ^ (1/2);
+#	ob := (bx^2+b_y^2) ^ (1/2);
+#
+#	ia := ( (ax-ix)^2 + (ay-iy)^2 ) ^ (1/2);
+#	ib := ( (bx-ix)^2 + (b_y-iy)^2 ) ^ (1/2);
+#
+#	eqn := (ib^2+r^2-ob^2) / (2*ib*r) - (r^2+ia^2-oa^2) / (2*r*ia);
+#	eqn := factor( numer(subs( ix=r*cos(t), iy=r*sin(t), eqn ) ));
+#	eqn := factor( subs( cos(t)^2=1-sin(t)^2, eqn )) / (2*r);
+#
+#	test1 = ax^2+ay^2 >= r^2,  test2 = bx^2+b_y^2 >= r^2;
+#
+#	der := normal(diff(eqn,t));
+#	der := factor( subs( cos(t)^2=1-sin(t)^2, der ));
+#	codegen[optimize]( [incr = normal(-eqn/der)], tryhard );
+#
+
+PlaceInode := proc( ax:numeric, ay:numeric, bx:numeric, b_y:numeric, r:numeric )
+
+if ax^2+ay^2 < r^2 or bx^2+b_y^2 < r^2 then
+     error(args,'negative branch length') fi;
+
+aa := arctan(ay,ax);
+ab := arctan(b_y,bx);
+t := ( arctan(ay,ax) + arctan(b_y,bx) ) / 2;
+if |aa-ab| > Pi then t := t+Pi fi;
+
+to 10 do
+    t4 := sin(t);
+    t22 := -3*t4^2;
+    t26 := r*(t22+2);
+    t25 := r*(1+t22);
+    t24 := 3*r;
+    t5 := cos(t);
+    t19 := ax*t5;
+    t18 := ay*t4;
+    t17 := bx*t5;
+    t16 := b_y*t4;
+    t15 := 2*r;
+    t10 := r^2;
+    t14 := -t10-bx^2-b_y^2;
+    t13 := ay^2+ax^2+t10;
+    t12 := -t19-t18;
+    t11 := -t17-t16;
+    t2 := sqrt(t12*t15+t13);
+    t1 := sqrt(t11*t15-t14);
+    incr := -((r+t11)*t2+(-r-t12)*t1)*t2*t1/(((b_y*t5-bx*t4)*t10+
+	(-bx*t26+(-t16*t24-t14)*t5)*ay+(-b_y*t25+(t17*t24+t14)*t4)*ax)*t2+
+	((-ay*t5+ax*t4)*t10+(ax*t26+(t18*t24-t13)*t5)*b_y+(ay*t25+
+	(-t19*t24+t13)*t4)*bx)*t1);
+    t := t+incr;
+    if |incr| < 1e-6*|t| then return( [ r*cos(t), r*sin(t) ] ) fi;
+    od;
+error(args,'did not converge')
+end:
+
+
+
+
+#
+#	DrawTree_Unrooted -- corresponds to the old DrawUnrootedTree
+#		and/or SplatTree
+#
+#					Gaston H Gonnet (June 21, 2003)
+#
+DrawTree_Unrooted := proc( t:Tree )
+external lli;
+option internal;
+
+lli := 0;
+r1 := [DrawTree_UnrootedR( t, 0, 2*Pi, 0, 0, t[Height], true ), 
+	copy(CIRCLE(0,0,2))];
+if lli <> n then error('internal inconsistency') fi;
+
+NormalizeCoordinates( r1 )
+end:
+
+DrawTree_UnrootedR := proc( t:Tree, a:numeric, b:numeric, x:numeric, y:numeric,
+	prevheight:numeric; (isroot=false):boolean )
+external LeafList, lli;
+
+theta := (a+b)/2;
+r := | t[Height]-prevheight |;
+newx := x + r*cos(theta);
+newy := y + r*sin(theta);
+res := If(isroot,NULL,op(LineProc(x,y,newx,newy, r,t)));
+
+if type(t,Leaf) then
+    lli := lli+1;
+    LeafList[lli] := [ LeafList[lli], newx, newy, x, y ];
+    return( res ) fi;
+
+# compute how much we can deviate back from a (or forward on b)
+#  so that the farthest node still falls in the given sector.
+#  This requires the computation of the extra deviation angle (deva)
+#  using the sines law:  r / sin(deva) = maxheight / sin((b-a)/2)
+
+na := 0;  maxh := 0;
+for z in Leaves(t[Left]) do
+    na := na+1;
+    maxh := max( maxh, | t[Height]-z[Height] | ) od;
+if maxh=0 then deva := 0
+else v := r * sin((b-a)/2) / maxh;
+     if v > sqrt(2)/2 then deva := 0 else deva := arcsin(v) fi fi;
+
+nb := 0;  maxh := 0;
+for z in Leaves(t[Right]) do
+    nb := nb+1;
+    maxh := max( maxh, | t[Height]-z[Height] | ) od;
+if maxh=0 then devb := 0
+else v := r * sin((b-a)/2) / maxh;
+     if v > sqrt(2)/2 then devb := 0 else devb := arcsin(v) fi fi;
+
+mid := ( (a-deva)*nb + (b+devb)*na ) / (na+nb);
+
+res, DrawTree_UnrootedR( t[Left], a-deva, mid, newx, newy, t[Height] ),
+     If( assigned(INodesProc), op(INodesProc(t,newx,newy)),NULL),
+     DrawTree_UnrootedR( t[Right], mid, b+devb, newx, newy, t[Height] )
+
+end:
+
+
+
+
+#
+#	DrawTree_UnrootedNB -- Use NBody to produce an unrooted tree
+#
+#					Gaston H Gonnet (Jan 28, 2005)
+#
+DrawTree_UnrootedNB := proc( t:Tree )
+external LeafList, lli;
+option internal;
+
+if n<3 then return(DrawTree_Unrooted(t)) fi;
+dist := CreateArray(1..2*n-2,1..2*n-2);
+var := CreateArray(1..2*n-2,1..2*n-2);
+subtrees := CreateArray(1..2*n-2);
+
+# Fill the matrix dist with distances between nodes and descendants
+BuildDist := proc( t:Tree )
+external dist, k, subtrees;
+i := k := k+1;
+subtrees[i] := t;
+if not type(t,Leaf) then
+     i1 := procname( t[1] );
+     dist[i,i1] := |t[Height]-t[1,Height]|;
+     i3 := procname( t[3] );
+     dist[i,i3] := |t[Height]-t[3,Height]|;
+     fi;
+i
+end:
+
+k := 0;
+k1 := BuildDist( t[1] );
+k2 := BuildDist( t[3] );
+dist[k1,k2] := |t[Height]-t[1,Height]| + |t[Height]-t[3,Height]|;
+
+# fill the dist and var matrices
+for i1 to 2*n-2 do for i2 from i1+1 to 2*n-2 do if dist[i1,i2] > 0 then
+    dist[i2,i1] := dist[i1,i2];
+    var[i1,i2] := var[i2,i1] := 1;
+fi od od;
+ave := sum(sum(dist)) / (2*n-2);
+
+bestpot := DBL_MAX;
+to 4 do
+    xy := NBody(dist,var,4,2,ave^6/1e4,0);
+    if NBodyPotential < bestpot then
+	bestpot := NBodyPotential;
+	bestxy := xy
+    fi
+od;
+
+# build all the branches
+res := [];
+for i1 to 2*n-2 do for i2 from i1+1 to 2*n-2 do if dist[i1,i2] > 0 then
+    res := append( res,
+	op(LineProc(op(bestxy[i1]),op(bestxy[i2]),dist[i1,i2]),
+		subtrees[i2]) )
+fi od od;
+
+# assign coordinates to leaves in LeafList
+for i1 to 2*n-2 do if type(subtrees[i1],Leaf) then
+    i2 := SearchArray(subtrees[i1],LeafList);
+    if i2=0 then error('internal error') fi;
+    LeafList[i2] := [ LeafList[i2], op(bestxy[i1]) ]
+fi od;
+
+NormalizeCoordinates( res )
+end:
+
+
+
+
+#
+#	DrawTree_Vertical -- leaves equally spaced on x axis,
+#		y axis reflects height accurately.
+#		x-coordinate of internal nodes is at split of leaves
+#
+#					Gaston H Gonnet (June 21, 2003)
+#
+DrawTree_Vertical := proc( t:Tree )
+external lli;
+option internal;
+
+lli := 0;
+r := DrawTree_VerticalR( t );
+if lli <> n then error(lli,n,'internal inconsistency') fi;
+
+NormalizeCoordinatesY( r[3] )
+end:
+
+DrawTree_VerticalR := proc( t:Tree )
+external LeafList, lli;
+
+y := -|t[Height]|;
+if type(t,Leaf) then
+     x := lli/(length(LeafList)-1)*100;
+     lli := lli+1;
+     LeafList[lli] := [ LeafList[lli], x, y ];
+     [x,y,[]]
+
+else l := DrawTree_VerticalR( t[Left] );
+     r := DrawTree_VerticalR( t[Right] );
+     nr := 0;  for z in Leaves(t[Right]) do nr := nr+1 od;
+     x := (lli-nr-.5)/(length(LeafList)-1)*100;
+     [ x, y, [
+	op( LineProc( x,y, l[1], l[2], |y-l[2]| ,t[Left])),
+	op( LineProc( x,y, r[1], r[2], |y-r[2]| ,t[Right])),
+	If( assigned(INodesProc), op(INodesProc(t,x,y)),NULL),
+	op(l[3]), op(r[3]) ]]
+     fi
+
+end:
+
+
+
+#
+# Normalizing x-coordinates to 0..100 and y-ccordinates accordingly, 
+# keeping the same ratio. It also changes the LeafList using the same 
+# normalization procedure. This function is used at the end of each of
+# the DrawTree_ methods. 
+#
+#	BEWARE: this functions modifies data structures.  If you use
+#	a constant structure, like CIRCLE(0,0,2), this will be modified
+#	(if it is computed, it will be ok).
+#
+#            Peter von Rohr (June 11th, 2003)
+#
+NormalizeCoordinates := proc( drpl:list )
+  external LeafList;
+ 
+  mm := MinMaxCoord( drpl );
+
+  ### transformations are:
+  ###  x --> a1*x + a0
+  ###  y --> a1*y + b0
+  a1 := 100/(mm[2]-mm[1]);
+  a0 := -mm[1]*a1;
+  b0 := -mm[3]*a1;
+
+  ### # re-scale x-coordinates of LeafList, which are the second 
+  ### #  component of each LeafList entry
+  for l in LeafList do l[2] := a1*l[2] + a0;  l[3] := a1*l[3] + b0; 
+      if length(l) > 3 then l[4] := a1*l[4] + a0;  l[5] := a1*l[5] + b0 fi;
+  od;
+
+  ### # re-scale draw plot objects to fit between 0..100
+  for z in drpl do
+      if type(z,structure(anything,{LTEXT,RTEXT,CTEXT,CIRCLE})) then
+	   z[1] := a1*z[1] + a0;
+	   z[2] := a1*z[2] + b0;
+      elif type(z,structure(anything,{LINE,POLYGON})) then
+	   for i by 2 to length(z) do
+	       if type(z[i],numeric) and type(z[i+1],numeric) then
+		   z[i] := a1*z[i] + a0;
+		   z[i+1] := a1*z[i+1] + b0 fi od
+	   fi
+      od;
+  return(drpl);
+end:
+
+# same as above, but just do the x coordinates
+NormalizeCoordinatesX := proc( drpl:list )
+  external LeafList;
+  
+  mm := MinMaxCoord( drpl );
+
+  ### transformations are:
+  ###  x --> a1*x + a0
+  a1 := 100/(mm[2]-mm[1]);
+  a0 := -mm[1]*a1;
+
+  ### # re-scale x-coordinates of LeafList, which are the second 
+  ### #  component of each LeafList entry
+  for l in LeafList do l[2] := a1*l[2] + a0 od;
+
+  ### # re-scale draw plot objects to fit between 0..100
+  for z in drpl do
+      if type(z,structure(anything,{LTEXT,RTEXT,CTEXT,CIRCLE})) then
+	   z[1] := a1*z[1] + a0;
+      elif type(z,structure(anything,{LINE,POLYGON})) then
+	   for i by 2 to length(z) do
+	       if type(z[i],numeric) and type(z[i+1],numeric) then
+		   z[i] := a1*z[i] + a0 fi od
+	   fi
+      od;
+  return(drpl);
+end:
+
+# just as above but on y coordinates only
+NormalizeCoordinatesY := proc( drpl:list )
+  external LeafList;
+  
+  mm := MinMaxCoord( drpl );
+
+  ### transformations are:
+  ###  y --> a1*y + b0
+  a1 := 70/(mm[4]-mm[3]);
+  b0 := -mm[3]*a1;
+
+  ### # re-scale x-coordinates of LeafList, which are the second 
+  ### #  component of each LeafList entry
+  for l in LeafList do l[3] := a1*l[3] + b0 od;
+
+  ### # re-scale draw plot objects to fit between 0..100
+  for z in drpl do
+      if type(z,structure(anything,{LTEXT,RTEXT,CTEXT,CIRCLE})) then
+	   z[2] := a1*z[2] + b0;
+      elif type(z,structure(anything,{LINE,POLYGON})) then
+	   for i by 2 to length(z) do
+	       if type(z[i],numeric) and type(z[i+1],numeric) then
+		   z[i+1] := a1*z[i+1] + b0 fi od
+	   fi
+      od;
+  return(drpl);
+end:
+
+
+MinMaxCoord := proc( drpl:list );
+  #  compute the [ minx, maxx, miny, maxy ] values from a list of
+  #	drawing commandws
+  minx := miny := DBL_MAX;
+  maxx := maxy := -DBL_MAX;
+  for z in drpl do
+      if type(z,structure(anything,{LTEXT,RTEXT,CTEXT,CIRCLE})) then
+	   minx := min(minx,z[1]);  maxx := max(maxx,z[1]);
+	   miny := min(miny,z[2]);  maxy := max(maxy,z[2]);
+      elif type(z,structure(anything,{LINE,POLYGON})) then
+	   for i by 2 to length(z) do
+	       if type(z[i],numeric) and type(z[i+1],numeric) then
+		   minx := min(minx,z[i]);  maxx := max(maxx,z[i]);
+		   miny := min(miny,z[i+1]);  maxy := max(maxy,z[i+1]);
+		   fi od
+      else error(z,'should not happen') fi
+      od;
+  [minx,maxx,miny,maxy]
+end:
+
+#
+#   InsertLeafHeight inserts artificial heights to Leaves, whenever 
+# the heights are missing. The height corresponds to 125% of the 
+# height of the leaf's parent node. Each leaf that does not have 
+# a height gets a 4th field with the string 'LeafHeight=NA' which 
+# marks the leaf as having an inserted and not a real height. This 
+# 4th field will be checked for in proc DrawTree_CladogramR.
+MaxINHei := 0:
+InsertLeafHeight := proc( t0:Tree ) 
+	global MaxINHei;
+	option internal;
+	# for trees with leaves that have no height insert 'NA' in 
+	# the second field of Leaf and return the modified tree
+	t := t0:
+	if type(t,Leaf) then
+		if length(t) < 2 then
+			t := append(t,1.25*MaxINHei,t[1], 'LeafHeight=NA'):
+		fi:
+		return(t);
+	else
+		if t[2] > MaxINHei then MaxINHei := t[2] fi:
+		return(Tree(InsertLeafHeight(t[1]), t[2], InsertLeafHeight(t[3])));
+	fi:
+end:
+
+
+#
+#	Function to convert the tree to have a MinBranchLength
+#	It also prepares a table that will convert the new branch
+#	lengths into the original ones for proper edge labelling.
+#
+#	It returns a list with the new tree and the table.
+#
+ConvBranchLength := proc( t:Tree, MinBranchLength:positive )
+MBL := MinBranchLength;
+tab := table( x->x );
+len0 := len1 := 0;
+for z in indets(t,Tree) do if not type(z,Leaf) then
+    for i in [1,3] do
+	len0 := len0 + 1;
+	len1 := len1 + |z[Height]-z[i,Height]|
+    od
+fi od;
+pow := 40 - ilogb(len1/len0);
+# lengths times 2^pow should be integers
+
+[ proc( t, oldh:numeric ) external tab;
+r := copy(t);
+r[Height] := scalb( round( scalb(r[Height],pow)), -pow );
+if not type(t,Leaf) then
+     for i in [1,3] do
+	h := |oldh-r[i,Height]|;
+	if h < MBL then
+	    h2 := scalb( round(scalb(MBL,pow)) + Rand(1..1e8), -pow );
+	    tab[h2] := h;
+	    h := h2
+	fi;
+     r[i,Height] := r[Height]-h;
+     r[i] := procname( r[i], t[i,Height] );
+     od;
+fi;
+r
+end(t,t[Height]), tab]
+end:
+
+end:  # end module
+
+
+# old functions for drawing trees, still used by other packages
+labeled_line := proc (x1,y1,x2,y2,label,xpts,ypts,col,rgb)
+  option internal;
+
+  if x1=x2 and y1=y2 then return() fi;
+  dx := (x2-x1)/xpts; dy := (y2-y1)/ypts;
+  r := 4 / sqrt(dx^2+dy^2);
+  if nargs > 7 and col <> {} then
+    res := NULL;
+    for i to length (col) do
+      t := ((length (col) + 1) / 2 - i) * r;
+      res := res, LINE(x1-xpts*dy*t,y1+ypts*dx*t,
+		       x2-xpts*dy*t,y2+ypts*dx*t,'color'=rgb[col[i]],
+		       'width'=3)
+    od;
+    r := 2 * r
+  else res := LINE(x1,y1,x2,y2)
+  fi;
+  if label > 9.5 then
+	res := res,CTEXT((x1+x2)/2-0.5*xpts*dy*r,
+			 (y1+y2)/2+0.5*ypts*dx*r, ''.round(label),8)
+  elif label > 0.95 then
+	res := res,CTEXT((x1+x2)/2-0.5*xpts*dy*r,
+			 (y1+y2)/2+0.5*ypts*dx*r, sprintf('%.1f',label), 8 )
+  elif label > 0.095 then
+	res := res,CTEXT((x1+x2)/2-0.5*xpts*dy*r,
+			 (y1+y2)/2+0.5*ypts*dx*r, '.'.round(label*100), 8 )
+  fi;
+  res  
+end:
+
+circled_text := proc (x, y, ypts, t, col)
+  option internal;
+
+  if type(t, string) and t[1] = '_' then
+       res := CIRCLE(x,y,9), CIRCLE(x,y,7), CTEXT(x,y-ypts*1,t[2..-1])
+  elif type(t, string) and t[1] = '!' then
+       res := TRIANGLE(x,y,10), CTEXT(x,y-ypts*1,t[2..-1])
+  elif type(t, string) and t[1] = ':' then
+       res := SQUARE(x,y,9), CTEXT(x,y-ypts*1,t[2..-1])
+  else res := CIRCLE (x,y,7), CTEXT(x,y-ypts*1,t) fi;
+
+  if nargs > 4 then
+    for i to length ([res]) do
+      if op (0, res[i]) <> CTEXT then
+	res[i] := append (res[i], 'color'=col)
+      fi
+    od
+  fi;
+  res
+end:
+
+
+

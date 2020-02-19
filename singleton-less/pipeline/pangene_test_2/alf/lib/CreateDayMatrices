@@ -1,0 +1,172 @@
+#
+#  CreateDayMatrices() Compute a Dayhoff matrix named DM and an array of
+#	    Dayhoff matrices named DMS suitable for working with
+#	    Align.
+CreateDayMatrices := proc( ; count:matrix(numeric), freqs:array(numeric),
+		mapping:procedure, 'type'=(DMtype:string), name:string )
+  global AF, DM, DMS, logPAM1, _IsGBCmatrix;
+  
+  if nargs = 1 and type(args[1],string) then
+    lcname := lowercase(args[1]):
+    if lcname = 'gcb' then return(procname()) fi:
+    if lcname <> 'jtt' and lcname <> 'wag' and lcname <> 'lg' and lcname <> 'ord' and lcname <> 'dis' then error(name, 'unknown matrix!') fi:
+    r := LoadMatrixFile(libname.'/mats/'.lcname.'.dat');
+    return(procname(op(r))):
+  fi:
+
+  if assigned(count) then
+    n := length(count);
+
+    diag := [seq(count[i,i],i=1..n)]:
+    if min(diag)<0 and max(diag)<=0 then # count is a rate matrix
+
+	if not assigned(freqs) then
+	    error('missing argument: frequencies (required when using a rate matrix)') fi;
+	if length(freqs)<>n then
+	    error('frequencies should have same dimension as rate matrix',n,length(freqs)) fi;
+	if |sum(freqs)-1|>1e-6 then
+	    error('frequencies should add up to 1') fi;
+
+	# several checks to verify rate matrix
+	for i to n do for j to n do if i=j then next fi;
+	    if count[i,j]<0 then 
+		error('negative off-diagonal not allowed in a rate matrix, check cell',i,j) fi;
+	od od;
+	t := sum(count);
+	if max(t)>1e-6 or min(t)<-1e-6 then
+    	    error('columns of rate matrix should sum to 0') fi;
+	t := count*freqs;
+	if max(t)>1e-6 or min(t)<-1e-6 then
+            error('Q*f should be zero, but is',t) fi;
+	M := exp(count);
+	t := M*freqs-freqs;
+	if max(t)>1e-6 or min(t)<-1e-6 then
+            error('M*f should be f, but is',t) fi;
+	
+	logPAM1 := count;
+	AF := freqs;
+
+
+    else # count is a matrix of counts
+	if not type(count,array(nonnegative,n,n)) then
+	     error(count,'is not a valid count matrix')
+	elif transpose(count) <> count then
+	     error('count matrix should be symmetric') fi;
+	AF := [seq( sum(z), z=count )];
+
+	# calculate the mutation matrix
+	M := CreateArray(1..n,1..n);
+	for i to n do for j to n do M[i,j] := count[i,j] / AF[j] od od;
+	AF := AF / sum(AF);
+
+	# find the exponent that will make M a 1-PAM mutation matrix
+	logPAM1 := traperror(log(M));
+	if logPAM1=lasterror then
+
+	    # try to compute the logarithm using the series:
+	    # ln(x) = (x-1) - 1/2*(x-1)^2 + 1/3*(x-1)^3....
+	    # grouping two terms at a time.  This is emergency code,
+	    # 
+
+	    X := M - Identity(n):
+	    logPAM1 := CreateArray(1..n,1..n):
+	    s2i := X:
+	    X2 := X^2:
+	    for i to 1e5 do
+	        t := -X/(2*i);
+	        for k to n do t[k,k] := t[k,k]+1/(2*i-1) od;
+	        logPAM1 := logPAM1 + s2i*t;
+	        s2i := s2i*X2;
+		err := max(s2i,0)-min(s2i,0);
+	        if err < i*DBL_EPSILON/10000 or err > 1e5 then break fi;
+	    od:
+
+	    if err > i*DBL_EPSILON/10000 then
+	      printf('The count matrix could not be used to compute a 1-PAM\n');
+	      printf('mutation matrix.  This may be due to zero or negative\n');
+	      printf('entries, or some particular combination of values.\n');
+	      error('cannot compute Dayhoff matrices')
+	    fi;
+	fi;
+
+	if printlevel > 0 then
+	  for i to n do for j to n do if i<>j and logPAM1[i,j] < -1e-10 then
+	    lprint( 'logPAM1 matrix contains negative off-diagonal entries' );
+	    lprint( 'This means that the count matrix may be too sparse or' );
+	    lprint( 'not representative of markovian evolution' );
+	    lprint( 'Try collecting larger samples from shorter distances' );
+	    i := j := n
+	fi od od fi;
+
+    fi; # M, logPAM1 and AF are now assigned (rate matrix) or computed (count matrix)
+
+    do  d := sum( AF[i]*(1-M[i,i]), i=1..n );
+	if |d-0.01| < DBL_EPSILON then break fi;
+	logPAM1 := logPAM1 * 0.01/d;
+	M := exp(logPAM1)
+    od;
+    _IsGBCmatrix := false;
+  
+  # if no count matrix is given
+  else if not type(NewLogPAM1,array(numeric,20,20)) then
+	    error('NewLogPAM1 should be assigned log(PAM1) matrix') fi;
+	logPAM1 := NewLogPAM1;
+	AF := CreateArray(1..20);
+	for i to 20 do AF[i] := NewLogPAM1[i,1]/NewLogPAM1[1,i] od;
+	AF := AF/sum(AF);
+	_IsGBCmatrix := true;
+  fi;
+
+  DM := CreateDayMatrix(logPAM1,250);
+  DMS1 := CreateDayMatrix(logPAM1,1..1000);
+  ilower := 310;
+  DMS := CreateArray(1..length(DMS1)+ilower-45+1);
+#
+# Lower distribution of pam values
+#
+#   To achieve a smooth distribution of lower pam values we
+#   use an approach based on an exponential distribution of
+#   pam values that has a ratio (1+1/45) up to pam=45 (or 46) and
+#   thereafter a unit increase.  This is spread from DMS[1] to DMS[311]
+#
+#   DMS[1] -- pam=0.049449...
+#   DMS[2] -- pam=0.050548...
+#   ...
+#   DMS[309] -- pam=43.064744...
+#   DMS[310] -- pam=44.021739...
+#   DMS[311] -- pam=45
+#   DMS[312] -- pam=46
+#   DMS[313] -- pam=47
+#   ...
+#
+#	Let a be the pam for DMS[1], then a*(1+1/45)^310=45 or
+#	a = 0.049449734348559203348.  The other pams are computed
+#	as a*(1+1/45)^i
+#
+  pam := 0.049449734348559203348;
+  for i to ilower do
+	DMS[i] := CreateDayMatrix(logPAM1,pam);
+	pam := (1+1/45)*pam
+  od;
+  for i from 45 to length(DMS1) do DMS[i+ilower-45+1] := DMS1[i] od;
+
+  if assigned(mapping) then
+	DM['Mapping'] := mapping;
+	for z in DMS do z['Mapping'] := mapping od
+  fi;
+  if assigned(DMtype) then
+	DM[type] := DMtype;
+	for z in DMS do z[type] := DMtype od
+  fi;
+  NULL
+end:
+
+
+DayMatrix := proc( pam:positive )
+if type(DMS,list(DayMatrix)) then
+     dm := SearchDayMatrix(pam,DMS);
+     if |dm[PamDistance]-pam| <= 0.00005 * pam then return( dm ) fi
+fi;
+if type(logPAM1,matrix(numeric)) then CreateDayMatrix(logPAM1,pam)
+else error('logPAM1 not assigned, cannot create DayMatrix') fi
+end:

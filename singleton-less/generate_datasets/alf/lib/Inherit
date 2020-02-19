@@ -1,0 +1,447 @@
+
+
+Inherit := proc(newclass: symbol, oldclass: symbol)
+
+# We are not going to change type old_method to include new_method,
+# as this will break any use of integer selectors of the old_method.
+  
+  # assign methods  
+  methods := GetMethods(oldclass);
+
+  RandNew := traperror( Rand(newclass) );
+  if RandNew=lasterror then
+	ex := eval(symbol(Examples . '_' . newclass)) ;
+	if type(ex,list(newclass)) and length(ex) > 0 then RandNew := ex[1]
+	else AllSelectorsExist := false fi
+	fi;
+
+  for i to length(methods) do
+      method := methods[i];
+
+      # type has to identify the new type, it cannot be inherited
+      if method=type then next fi;
+      newmethod := symbol(newclass.'_'.method);
+      if type(newmethod,procedure) then next fi;
+      oldmethod := symbol(oldclass.'_'.method);
+      if not type(oldmethod,procedure) then next fi;
+
+      # determine the 4 inheritance modes:
+      #
+      #  We will name the classes: old and new.
+      #
+      #  mode 1 - (a) old_meth: old -> old
+      #		  (b) We can insure that all the selectors exist
+      #		   in the new class.
+      #		  The new function is:
+      #           temp_namex := proc( a:new ) body_of_old_meth end
+      #           new_meth := proc( a:new ) old_new( temp_namex( a ) ) end
+      #		   (This could be done in a single function, left for later)
+      #
+      #
+      #  mode 2 - (a) old_meth: old -> old
+      #		  (b) We cannot insure that all the selectors exist
+      #		   in the new class.
+      #		  The new function is:
+      #           new_meth := proc( a:new )
+      #			old_new( old_meth( new_old(a) ) ) end
+      #
+      #
+      #  mode 3 - (a) old_meth: old -> other
+      #		  (b) We can insure that all the selectors exist
+      #		   in the new class.
+      #		  The new function is:
+      #           new_meth := proc( a:new ) body_of_old_meth end
+      #
+      #
+      #  mode 4 - (a) old_meth: old -> other
+      #		  (b) We cannot insure that all the selectors exist
+      #		   in the new class.
+      #		  The new function is:
+      #           new_meth := proc( a:new ) old_meth( new_old(a) ) end
+      #
+	OldReturnType := op(5,eval(oldmethod));
+
+	oldbody := disassemble(eval(oldmethod));
+
+	AllSelectorsExist := type(RandNew,newclass);
+
+	for j to length(op(1,oldbody)) while AllSelectorsExist do
+	   z := op(j,op(1,oldbody));
+	   if not ArgumentCanBe(z,oldclass) then next fi;
+	   for w in indets( oldbody, structure(anything,select)) do
+		if length(w) > 0 and op(1,w) <> Param(j) then next
+		elif length(w) <> 2 or
+		     type( op(2,w), {integer, integer..integer} ) or
+		     traperror( RandNew[op(2,w)] ) = lasterror then
+			AllSelectorsExist := false;  break fi;
+		od
+
+	   od;
+
+	if OldReturnType=oldclass and AllSelectorsExist then
+	#
+	#  mode 1 - (a) old_meth: old -> old
+	#	    (b) We can insure that all the selectors exist
+	#		   in the new class.
+	#	 The new function is:
+	#        temp_namex := proc( a:new,... ) body_of_old_meth end
+	#        new_meth := proc( a:new,... ) old_new( temp_namex( args ) ) end
+	#	    (This could be done in a single function, left for later)
+	     conv := symbol( oldclass . '_' . newclass );
+	     if not type(conv,procedure) then
+		  error( 'conversion from', oldclass, 'to', newclass,
+			'i.e.', conv, 'is not available') fi;
+	     temp_namex := symbol( newmethod . '_temp' );
+	     newargs := NULL;
+	     for z in [op(op(1,oldbody))] do
+		 newargs := newargs, subs(oldclass=newclass,copy(z))
+		 od;
+	     assign( temp_namex, assemble( procedure( expseq(newargs),
+		op(2..6,oldbody) )));
+	     assign( newmethod, assemble( procedure( expseq(newargs),
+		expseq(), expseq(), expseq(), expseq(),
+		structure( conv,structure(temp_namex,Param(-1)))) ))
+	elif OldReturnType=oldclass then
+	#
+	#  mode 2 - (a) old_meth: old -> old
+	#	    (b) We cannot insure that all the selectors exist
+	#	     in the new class.
+	#	  The new function is:
+	#           new_meth := proc( a:new )
+	#		old_new( old_meth( new_old(args) ) ) end
+	#
+	     conv := symbol( oldclass . '_' . newclass );
+	     if not type(conv,procedure) then
+		  error( 'conversion from', oldclass, 'to', newclass,
+			'i.e.', conv, 'is not available') fi;
+	     conv2 := symbol( newclass . '_' . oldclass );
+	     if not type(conv2,procedure) then
+		  error( 'conversion from', newclass, 'to', oldclass,
+			'i.e.', conv2, 'is not available') fi;
+	     newargs := NULL;
+	     newparms := NULL;
+	     for j to length(op(1,oldbody)) do
+		 z := op(j,op(1,oldbody));
+		 newargs := newargs, subs(oldclass=newclass,copy(z));
+		 z1 := assemble(z);
+		 if type(z1,colon) and op(2,z1)=oldclass then
+		      newparms := newparms, structure(conv2,Param(j))
+		 elif type(z1,colon) and type(z1[1],symbol) and
+		      type(z1[2],set) and member(oldclass,op(2,z1)) then
+		      newparms := newparms, structure( If,
+			structure(type,Param(j),newclass),
+			structure(conv2,Param(j)),
+			Param(j))
+		 else newparms := newparms, Param(j) fi
+		 od;
+	     assign( newmethod, assemble( procedure( expseq(newargs),
+		 expseq(), expseq(), expseq(), expseq(),
+		 structure( conv, structure( oldmethod, newparms))) ))
+	elif AllSelectorsExist then
+	#
+	#  mode 3 - (a) old_meth: old -> other
+	#	    (b) We can insure that all the selectors exist
+	#	     in the new class.
+	#	  The new function is:
+	#           new_meth := proc( a:new ) body_of_old_meth end
+	     newargs := NULL;
+	     for z in [op(op(1,oldbody))] do
+		 newargs := newargs, subs(oldclass=newclass,copy(z))
+		 od;
+	     assign( newmethod, assemble( procedure( expseq(newargs),
+		op(2..6,oldbody) )));
+	else
+	#
+	#  mode 4 - (a) old_meth: old -> other
+	#	    (b) We cannot insure that all the selectors exist
+	#	     in the new class.
+	#	  The new function is:
+	#           new_meth := proc( a:new ) old_meth( new_old(a) ) end
+	     conv2 := symbol( newclass . '_' . oldclass );
+	     if not type(conv2,procedure) then
+		  error( 'conversion from', newclass, 'to', oldclass,
+			'i.e.', conv2, 'is not available') fi;
+	     newargs := NULL;
+	     newparms := NULL;
+	     for j to length(op(1,oldbody)) do
+		 z := op(j,op(1,oldbody));
+		 newargs := newargs, subs(oldclass=newclass,copy(z));
+		 z1 := assemble(z);
+		 if type(z1,colon) and op(2,z1)=oldclass then
+		      newparms := newparms, structure(conv2,Param(j))
+		 elif type(z1,colon) and type(z1[1],symbol) and
+		      type(z1[2],set) and member(oldclass,op(2,z1)) or
+		      not type(z1,colon) then
+		      newparms := newparms, structure( If,
+			structure(type,Param(j),newclass),
+			structure(conv2,Param(j)),
+			Param(j))
+		 else newparms := newparms, Param(j) fi
+		 od;
+	     assign( newmethod, assemble( procedure( expseq(newargs),
+		 expseq(), expseq(), expseq(), expseq(),
+		 structure( oldmethod,newparms)) ))
+	     fi;
+  od;  
+ 
+end:
+
+
+
+GetMethods := proc( class:symbol )
+typ := [];
+pat := class . '_';
+n := length(pat);
+for p in names(procedure) do
+    if length(p) > n and p[1..n]=pat then
+	r := p[n+1..-1];
+	if SearchString('_',r) = -1 then typ := append(typ,symbol(r)) fi
+    fi od;
+# types could just be assigned a value and not a procedure
+at := symbol( pat . 'type' );
+if not member(at,typ) and assigned(at) then typ := append(typ,at) fi;
+typ
+end:
+
+
+ArgumentCanBe := proc( z, class )
+z1 := assemble(z);
+type(z1,colon) and (op(2,z1) = class or
+    type(op(2,z1),set) and member(class,op(2,z1)) )
+end:
+
+
+
+Generate_Rand := proc( class:symbol )
+if not type(class,procedure) then error(class,'is not a data structure') fi;
+params := op(1,disassemble( eval(class) ));
+t := NULL;
+for z in params do
+   z1 := assemble(z);
+   if not type(z1,colon) then error(z1,'does not have type information') fi;
+   t := t, structure(Rand,disassemble(op(2,z1)))
+   od;
+assign( symbol(class.'_Rand'), assemble(
+procedure(
+  expseq(),
+  expseq(x),
+  expseq(internal),
+  'generate a random '.class,
+  class,
+  StatSeq(
+    ForLoop(
+      expseq(),
+      1,
+      1,
+      10,
+      true,
+      StatSeq(
+	Assign(Local(1),structure(traperror,structure(class,t))),
+	IfStat(unequal(Local(1),noeval(lasterror)),
+	    structure(return,Local(1))))),
+    structure(error,'cannot generate random '.class))) ));
+NULL;
+end:
+
+
+CompleteClass := proc( class:symbol )
+local s;
+
+if not type(class,procedure) then error(class,'is not a data structure') fi;
+params := op(1,disassemble( eval(class) ));
+
+if not assigned(symbol( class.'_type' )) then
+     #t := noeval( class() );
+     #for p in params do
+     #	 if type(p,structure(anything,colon)) then
+     #	      t := append(t,assemble(p[2]))
+     #	 else t := append(t,anything) fi
+     #	 od;
+     #assign( symbol( class.'_type' ), t ) fi;
+     # Since the objects are created with full type checking, here we
+     # will just do surface type checking (the full checking used to
+     # give catastrophically bad efficiencies).
+     assign( symbol( class.'_type' ), structure(anything,class) ) fi;
+
+if not assigned( symbol( class . '_Rand' )) then
+     traperror(Generate_Rand(class)) fi;
+
+if not assigned(symbol( class . '_string' )) then
+     assign( symbol( class . '_string' ), assemble(
+	procedure(
+	  expseq(s), expseq(), expseq(internal),
+	  'transform a '.class.' into a string', string,
+	  structure(sprintf,'%a',Param(1))) )) fi;
+#
+# consistency tests of the class (to be written)
+#
+NULL
+end:
+
+
+#
+#  The class is extended by adding the new fields at the end.
+#  The number of new fields must be constant and they are picked
+#   up from the class by counting backwards from the end (as the
+#   base class may have a variable number of fields)
+#
+#  Any references to the oldclass objects in the newclass (recursive
+#   definitions), will be transformed to the newclass
+#
+#					Gaston H. Gonnet (Dec 9, 2001)
+ExtendClass := proc( newclass:symbol, oldclass:symbol )
+
+# Check the additional fields
+for i from 3 to nargs do
+    if type(args[i],[symbol,type]) then next
+    elif type(args[i],[symbol,type,anything]) then
+	 if not type(args[i,3],args[i,2]) then
+	     error(args[i],'default value is not of the specified type') fi;
+	 next
+    else error(args[i],'invalid format for new field') fi
+    od;
+
+if type(newclass,procedure) then
+     error(newclass,'is already defined, cannot create a new one')
+elif not type(oldclass,procedure) then
+     error(oldclass,'is not defined as a class')
+elif nargs <= 2 then error(
+     'to extend a class at least an additional field must be specified') fi;
+
+nadd := nargs-2;
+oldcons := disassemble(eval(oldclass));
+
+#####################################################
+# Build new constructor  newclass := proc() ... end #
+#####################################################
+typetest := IfStat( less(Param(0),nadd),
+	    structure(error, sprintf(
+		'expecting fields for %s plus %d new fields, found:',
+		oldclass,nadd),Param(-1)));
+newparams := subs( oldclass=newclass, oldcons[1]);
+for i to nadd do
+    if args[nargs-nadd+i,2] <> anything then
+	typetest := append( typetest,
+	    Not(structure(type,select(Param(-1),plus(Param(0),i-nadd)),
+		disassemble(args[nargs-nadd+i,2]))),
+		structure(error, sprintf(
+		'argument %d, is expected to be of type %a but found:',
+		nargs-nadd+i, args[nargs-nadd+i,2]),
+		select(Param(-1),plus(Param(0),i-nadd))) )
+	fi;
+    newparams := append( newparams, If( args[nargs-nadd+i,2] = anything,
+	args[nargs-nadd+i,1], colon(args[nargs-nadd+i,1],
+	disassemble(args[nargs-nadd+i,2])) ) )
+    od;
+
+assign( newclass, assemble( procedure( newparams,
+	expseq(), expseq(), expseq(), expseq(),
+    StatSeq( typetest,
+	structure(noeval,structure(newclass,
+	    structure(op,structure(oldclass, select(Param(-1),
+	    range(1,plus(Param(0),-nadd))))),
+	    select(Param(-1),range(-nadd,-1))))
+    )) ));
+
+###########################################################################
+# Build new selector  newclass_select := proc( s, selector, val ) ... end #
+###########################################################################
+old_select := disassemble(eval(oldclass.'_select'));
+typetest := IfStat( less(Local(1),3),
+    structure(error,Param(1),'does not have enough fields for a DisTree'));
+for i to nadd do
+    typetest := append( typetest, equal(Param(2),args[nargs-nadd+i,1]),
+	IfStat( equal(Param(0),3),
+	    StatSeq(
+		IfStat(Not(structure(type,Param(3),
+		    disassemble(args[nargs-nadd+i,2]))),
+		    structure(error, sprintf(
+			'attempting to assign %s:%a in %s, found:',
+			args[nargs-nadd+i,1], args[nargs-nadd+i,2], newclass),
+		    Param(3))),
+		Assign(select(Param(1),plus(Local(1),-nadd+1)),Param(3))),
+	    select(Param(1),plus(Local(1),-nadd+1))) )
+    od;
+newclass_sel := procedure(
+    expseq(s,selector,val),expseq(n,oldnargs),expseq(),expseq(),expseq(),
+    StatSeq(
+	Assign(Local(1),structure(length,Param(1))),
+	append( typetest, StatSeq(
+	    Assign(Local(2),plus(Local(1),-3)),
+	    body_of_oldclass_select))
+	));
+
+NULL
+end:
+
+
+
+MakeProtectedName := proc( n:symbol ) option internal;
+assemble(procedure(expseq(),expseq(n),expseq(),expseq(),expseq(),Local(1)))()
+end:
+
+
+Protect := proc( classname:symbol )
+global printlevel;
+
+if not type(classname,procedure) then
+     error(classname,'is not a class or data structure') fi;
+
+dis := disassemble(eval(classname));
+fields := NULL;
+for z in dis[1] do
+    fields := fields, If( type(z,structure(anything,colon)), z[1], z ) od;
+fields := [fields];
+
+spat := NULL;
+if nargs=1 then 
+     for z in fields do if sequal( z, symbol(''.z) ) then
+	 spat := spat, z=MakeProtectedName(z) fi od
+else for i from 2 to nargs do
+	 if not type(args[i],symbol) then
+	      error(args[i],'must be a field of the class') fi;
+	 j := SearchArray(args[i],fields);
+	 if j<1 then error( args[i],
+		'does not appear in the field list of the class')
+	 elif not sequal(args[i],fields[j]) then
+	      error(args[i],'has already been protected') fi;
+	 spat := spat, args[i]=MakeProtectedName(args[i])
+	 od
+     fi;
+
+pl := printlevel;  printlevel := -1;
+for meth in GetMethods(classname) do
+     meth := symbol(classname.'_'.meth);
+     assign( meth, assemble( subs( spat, disassemble(eval(meth)) )) )
+     od;
+
+# add option NoIndexing to disallow access/modification by indices
+opts := {op(dis[3]),NoIndexing};
+dis[3] := expseq(op(opts));
+
+assign( classname, assemble( subs( spat, dis )) );
+printlevel := pl;
+NULL
+
+end:
+#
+#	Return all the names and types of an object
+#
+#	(or all the parameters and types of a procedure)
+#
+#	Gaston H. Gonnet (Oct 14, 2012)
+#
+Introspection := proc( a:procedure )
+da := disassemble(eval(a));
+r := [];
+for ar in op(1,da) do
+    if type(ar,symbol) then r := append(r,ar)
+    elif type(ar,colon(symbol,anything)) then
+	 r := append(r,[ar[1],assemble(ar[2])])
+    else error(ar,'is an unexpected argument/type')
+    fi
+od:
+r
+end:
+
+

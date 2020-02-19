@@ -1,0 +1,12 @@
+#
+# determine version and date compiled
+#
+version := proc()
+  if traperror(Set(debug=false))=lasterror then
+    t := ReadRawFile( libname . '/ProductionCompiled' );
+    t := 'Production version compiled on ' . t
+  else t := ReadRawFile( libname . '/DebugCompiled' );
+    t := 'Debug version compiled on ' . t
+  fi;
+  'Version 2.1 ', t[1..-2]
+end:

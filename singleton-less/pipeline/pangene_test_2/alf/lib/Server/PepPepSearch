@@ -1,0 +1,389 @@
+# Purpose: SearchPepAll server (ParExecuteIPC version)
+# Author:  CompBioResGrp (L.J. Knecht)
+# Created: 25 May 1994
+#
+# Changed: May 2002 (G.A. Signorell) -> old version PepPepSearch.old
+
+Title := 'No title specified';
+Database := 'SwissProt 39.18';
+#ReadProgram('~cbrg/GetMachine'):
+
+ParseMsg := proc (msg: string)
+  global minSimil, limit, Title, Database;
+  description
+  'Parses incoming message for SearchPepAll and returns
+  - a sequence if there is a correct amino acid sequence to be searched
+  - an error message preceded by a ? if there is an error we should reply to
+  - a 0 if there is no valid message to reply to.
+  The global variables minSimil and limit can be set by appropriate commands
+  before the actual sequence.';
+  
+  minSimil := 80; limit := 30;
+  if length (msg) < 10 or msg[1..5] <> 'From ' then
+    lprint ('Invalid incoming message');
+    return (0, 0)
+  fi;
+  first := CaseSearchString ('\n\n', msg);
+  if first < 0 then
+    lprint ('Start of message body not found');
+    return (0, 0)
+  fi;
+  last := CaseSearchString ('\n\n', first + 2 + msg);
+  if last < 0 then
+    return ('?there is no message body.', 0)
+  fi;
+  do
+    skip := CaseSearchString ('\n\n', first + 4 + last + msg);
+    if skip < 0 then break fi;
+    last := last + skip + 2
+  od;
+  body := msg[first+3..first + 2 + last];
+
+  p := SearchString('title:', body);
+  if p>-1 then
+     p1 := SearchString('&', body[p+1..-1])+p+2;
+     p2 := SearchString('&', body[p1+1..-1])+p1;
+     if p2-p1>0 then 
+      Title := body[p1..p2];
+      body:= body[1..p].body[p2+2..-1];
+     fi;
+  fi;
+  
+  p := SearchString('Database:',body);
+  if p>-1 then
+     p1 := SearchString('&', body[p+1..-1])+p+2;
+     p2 := SearchString('&', body[p1+1..-1])+p1;
+     if p2-p1>0 then 
+      Database := body[p1..p2];
+      body:= body[1..p].body[p2+2..-1];
+     fi;
+  fi;
+  
+  token := sscanf (body, '%s');
+  token := If (length (token) = 0, '', token[1]);
+  if length (token) < 6 or SearchString (token, 'PepPepSearch') <> 0 and
+    SearchString (token, 'TestNewFunction') <> 0 then
+    return (sprintf ('?"%s" is not a valid server command.', token), 0)
+  fi;
+  body := CaseSearchString (token, body) + length (token) + 1 + body;
+  do
+    cmd := sscanf (body, '%s %g');
+    if length(cmd) < 2 then break fi;
+    if cmd[1] = 'minSimil' then minSimil := cmd[2]
+    elif cmd[1] = 'limit' then limit := round(cmd[2])
+    else break fi;
+    cmd := sscanf(body, '%s %s');
+    body := CaseSearchString(cmd[1], body) + length(cmd[1]) + 1 + body;
+    body := CaseSearchString(cmd[2], body) + length(cmd[2]) + 1 + body
+  od;
+  sequ := '';
+  comm := '';
+  lower := upper := 0;
+  for p to length (body) do
+    if body[p] > ' ' then
+      i := CaseSearchString (lowercase(body[p]), 'abcdefghijklmnopqrstuvwxyz');
+      if i >= 0 then
+        lower := lower + 1;
+        aa := ABCDEFGHIJKLMNOPQRSTUVWXYZ[i+1];
+        if aa = 'B' or aa = 'Z' then aa := 'X' fi;
+        if AToInt (aa) > 0 then sequ := sequ.aa; fi;
+      fi;
+    fi
+  od;
+  if lower + upper < 3 then
+    return ('?the sequence is shorter than 3 amino acids.', comm)
+  fi;
+  if lower + upper > 6500 then
+    return ('?the sequence is longer than 6500 amino acids.', comm)
+  fi;
+  return (sequ, comm)
+end:
+
+ReadLibrary (print):
+#PrintHeader := proc (offs: integer)
+#  description
+#  'print information regarding a sequence given by its offsets into DB';
+#  t := [GetEntryInfo(offs,'AC','ID','DE','OS')];
+#  t1 := '';
+#  for i by 2 to length(t) do
+#    if t[i] = 'ID' then
+#      t1 := t1.sprintf('ID=%s   ',sscanf (t[i+1],'%s')[1])
+#    else
+#      t1 := t1.sprintf('%s=%s   ',t[i],t[i+1])
+#    fi
+#  od;
+#  if length (t1) > 0 then Paragraph_print (t1) fi
+#end:
+
+GetMatches := proc (sequ: string)
+  global minSimil, limit;
+  printf ('SearchPepAll of %d entries of %s release %s for the sequence\n',
+	  DB[TotEntries], SearchTag ('DBNAME', DB[string]),
+	  SearchTag ('DBRELEASE', DB[string]));
+  len := length (sequ);
+  for i by 50 to len do
+    printf ('%4d', i);
+    for j from i by 10 to min (i + 49, len) do
+      printf (' %s', sequ[j..min (j + 9, len)])
+    od;
+    printf ('\n')
+  od;
+  if len >= 30 then
+    goal := minSimil - 10
+  else
+    ByRefShake := Stat ();
+    pos := GetOffset (sequ);
+    for i to 100 do
+      RandEntry := round (Rand () * DB[TotEntries] + 0.5);
+      RandLen := length (string (Sequence (Entry (RandEntry))));
+      if RandLen < len then next fi;
+      RandSeq := CreateRandSeq (RandLen, AF);
+      m := LocalAlign (Match (pos, GetOffset (RandSeq)), DM);
+      UpdateStat (ByRefShake, m[Sim])
+    od;
+    goal := min (ByRefShake[Mean] + sqrt (2 * ByRefShake[Variance]) *
+		 erfcinv (20 / DB[TotEntries]), minSimil - 10);
+    maxGoal := 0;
+    for i to len do
+      maxGoal := maxGoal + DM[Sim,AToInt(sequ[i]),AToInt(sequ[i])]
+    od;
+    if goal > maxGoal * 0.8 then
+      printf ('Warning: similarity score interval too narrow (min = %.1f, max = %.1f)\n', goal, maxGoal);
+      if goal > maxGoal - 1 then
+        goal := maxGoal - 1;
+        printf ('         Resetting min to %.1f\n', goal)
+      fi
+    fi
+  fi;
+  ms := AlignOneAll (sequ, DB, DM, goal);
+  for i to length (ms) do
+    ms[i] := LocalAlignBestPam (ms[i])
+  od;
+  ms := sort (ms, x -> -x[Sim]);
+  for j to length (ms) while ms[j,Sim] >= minSimil do od;
+  j := j - 1;
+  printf ('\nFound %d matches with a similarity score greater than %.1f:\n',
+           j, minSimil);
+  printf ('ID           Sim   PAM  ID           Sim   PAM  ID           Sim   PAM\n');
+  printf ('------------------------  ------------------------  ------------------------\n');
+  for i to j do
+    e := Entry (GetEntryNumber (ms[i,Offset1]));
+    id := SearchTag ('ID', e);
+    sc := ''.id;
+    m := ms[i];
+     printf ('%-11s%7.1f %5.1f', sc, m[Sim], m[PamNumber]);
+    if mod (i, 3) = 0 then printf ('\n') else printf ('  ') fi
+  od;
+  if mod (j, 3) <> 0 then printf ('\n') fi;
+  printf ('\nAlignments:\n');
+  if j > limit then
+    lprint ('(limiting output to', limit, 'matches)')
+  fi;
+  Set(screenwidth=74);
+  for i to min (j, limit) do
+    m := ms[i];
+    pos1 := m[Offset1] - GetOffset(Sequence (Entry(GetEntryNumber (m[Offset1]))));
+    pos2 := m[Offset2] - GetOffset (sequ);
+    lprint();
+    printf ('aligned positions=%d-%d,%d-%d\n',
+            pos1 + 1, pos1 + m[Length1], pos2 + 1, pos2 + m[Length2]); 
+     print(m);
+  od;
+  printf ('\n\nEntrys in SGML format:\n');printf ('\n');
+  printf ('-----Complete body for the AllAll server-----\n');
+  printf ('---Delete undesired sequences and commands---\n');
+  printf ('----------------- cut  here -----------------\n');
+  printf ('AllAll\n');
+  for i to min (j, limit) do
+    e := Entry (GetEntryNumber (ms[i,Offset1])); 
+    printf(e);
+    if  i = (min (j, limit)) then
+      printf('.');
+    else
+      printf(',');
+    fi;
+  od; 
+  lprint ('PAMData');
+  lprint ('CreatePhyloTree');
+  lprint ('RootedTree');
+  lprint ('2DPlacement');
+  lprint ('SplitData');
+  lprint ('SplitGraph');
+  lprint ('MulAlignment');
+  lprint ('ProbAncestral');
+  lprint ('KWIndex');
+  lprint ('ProbIndex');
+  lprint ('ScaleIndex');
+  lprint ('SIAPrediction');
+  lprint ('ParsePrediction');  
+end:
+
+PM_offsets := false:
+
+init := proc ()
+  global DB:
+ # db_path := GetMachine():
+  db_path := '~darwin/DB/':
+  DB := ReadDb (db_path.'SwissProt.Z');
+  CreateDayMatrices ()
+end:
+
+job := proc ()
+  global msg, Title, Database;
+  prefix := '/tmp/'.getpid ().'.';
+  
+   # TEMPORARY FOR DEBUGGING
+ 
+  if false then
+    OpenWriting (tmpfile);
+    lprint('Dear user,');
+    lprint();
+    lprint('We are working on the server right now and so this program');
+    lprint('will not be available for the next few days.');
+    lprint('We apologize for the trouble');
+    lprint();
+    lprint('Greetings, the cbrg team');
+    OpenWriting (terminal);
+    res := ReadRawFile (tmpfile);
+    CallSystem ('rm '.prefix.'*');
+    return(res);
+  fi;
+  
+  wts := ParseMsg (msg);
+  sequ := wts[1];
+  comm := wts[2];
+  res := 'ERROR'; 
+  
+  db_path := '~darwin/DB/':
+  if ( Database = 'SwissProt 39.18' ) then
+    DB := ReadDb(db_path.'SP39.18/SwissProt39.18.Z');
+  elif( Database = 'Fusobacterium nucleatum' ) then
+    DB := ReadDb('/pub/home/darwin/DB/genomes/FUSNU/fus.nuc.genome.db');
+  elif ( Database = '15 Genomes' ) then
+    DB := ReadDb ('/pub/home/darwin/DB/genomes/DB15/db15');
+  elif ( Database = 'C. elegans' ) then
+    DB := ReadDb ('/pub/home/darwin/DB/genomes/CAEEL/wormpep/wormpep.db');
+  elif ( Database = 'C. albicans' ) then
+    DB := ReadDb ('/pub/home/darwin/DB/genomes/CANAL/canal.db');
+  elif( Database = 'Schizosaccharomyces pombe') then
+    DB := ReadDb('/pub/home/darwin/DB/genomes/SCHPO/schpo.db');
+  fi;
+  
+  if type (sequ, string) then
+    OpenWriting (tmpfile);
+    
+    printf ('\nTitle of your job: %s\n', Title);
+    printf ('\nDatabase specified: %s\n\n', Database);
+    if type(comm, string) and comm <> '' then
+       printf('\n%s\n', comm);
+    fi;
+    if sequ[1] = '?' then
+      lprint ('Sorry, your request could not be processed,');
+      printf ('because %s', sequ[2..-1]);
+      lprint ()
+    else
+      GetMatches (sequ);
+    fi;
+    OpenWriting (terminal);
+    res := ReadRawFile (tmpfile)
+  fi; 
+   OpenWriting(terminal);
+  CallSystem ('rm '.prefix.'*');
+  res
+end:
+
+#
+#  PrintHeader written by ?, modified by T.F. Jenny, Sept 93
+#PrintHeader := proc( offs:integer )
+#  option internal;  description
+#  'Print information regarding a sequence given by its offsets into DB.';
+#  if printlevel > 2 then lprint('PrintHeader called with ', offs); fi;
+#  t := [GetEntryInfo(offs,'ID','AC','DE','OS','RES')];
+#  t1 := '';
+# # lprint(length(t));
+#  for i by 2 to length(t) do 
+#    lprint('i=',i);
+#    t1 := t1.sprintf('%s=%s   ',t[i],t[i+1])
+#  od;
+#  lprint('length t1',length(t1));
+#  if length (t1) > 0 then Paragraph_print (t1) fi
+#end:
+
+
+#
+#  PrintMatch written by ?, modified by T.F. Jenny, Sept 93
+PrintMatch := proc( m:Match, dm:DayMatrix, optspm:[numeric,string,string] )
+  option internal;  description
+  'Print a Match in a readable format (used by print).';
+  if not type(DB,database) then error('DB not assigned correctly') fi;
+  if m[Sim] <= 0 or m[Length1]=0 or m[Length2]=0 or m[PamNumber]=0 then
+    m1 := traperror(GlobalAlign (m, dm))
+    
+  else
+    m1 := m
+  fi;
+  if not type(m1, string) then
+  spm := If( nargs=3, optspm, DynProgStrings (m1,dm) );
+  if dm[type] = 'Nucleotide' then
+    if type (PrintNMatch, procedure) then
+      PrintNMatch (m1, dm, spm)
+    else
+      print_NMatch (m1, dm, spm)
+    fi     
+  else 
+    sec:= PM_SecStrucMatch (m, spm);
+    ls := length(spm[2]);
+    sim := iden := 0;  mid := CreateString(ls);
+    for i to ls do
+      if spm[2,i]=spm[3,i] then
+        iden := iden+1;  mid[i] := '|'
+      elif AToInt(spm[2,i]) > 0 and AToInt(spm[2,i]) < 21 and
+        AToInt(spm[3,i]) > 0 and AToInt(spm[3,i]) < 21 then
+        c := dm[Sim,AToInt(spm[2,i]),AToInt(spm[3,i])];
+        if c >= 0 then
+          sim := sim + 1;
+          mid[i] := If( c > dm[MaxOffDiag]/2, '!', ':' )
+        elif c > dm[MinSim]/2 then
+	  mid[i] := '.'
+	fi
+      fi
+    od;
+    printf('lengths=%d,%d simil=%3.1f, PAM_dist=%g,',
+      m1[Length1], m1[Length2], spm[1],
+      If( m[PamNumber]=0, dm[PamNumber], m[PamNumber]));
+    if not assigned (PM_offsets) or PM_offsets then
+      printf (' offsets=%.0f,%.0f,', m1[Offset1], m1[Offset2])
+    fi;
+    printf ('\n  identity=%3.1f%%, similarity=%3.1f%%\n',
+            iden*100/ls, sim*100/ls );
+    PrintHeader(m1[Offset1]);  PrintHeader(m1[Offset2]);
+    width := Set(screenwidth=80);  Set(screenwidth=width);
+    for i by width to ls do
+      if sec[1] <> '' then lprint( sec[1,i..min(i+width-1,ls)] ) fi;
+      lprint( spm[2,i..min(i+width-1,ls)] );
+      lprint( mid[i..min(i+width-1,ls)] );
+      lprint( spm[3,i..min(i+width-1,ls)] );
+      if sec[2] <> '' then lprint( sec[2,i..min(i+width-1,ls)] ) fi;
+      if i+width <= ls then lprint() fi;
+    od
+  fi;
+  fi;
+end:
+
+testPepPepSerach := proc();
+   ReadProgram('~darwin/v2/lib/Server/PepPepSearch');
+   init();
+   ReadProgram('~cbrg/PepPepSearch/msg');
+   wts := ParseMsg (msg);
+   sequ := wts[1];
+  m := GetMatches (sequ);
+  printlevel := 50;
+  
+  print(m);
+
+end:
+
+# testPepPepSearch();
+
+
+

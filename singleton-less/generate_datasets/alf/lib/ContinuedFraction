@@ -1,0 +1,24 @@
+#
+#	ContinuedFraction( x:positive, maxconv )
+#
+#	Return the continued fraction and convergents of a number x
+#
+#	Gaston H. Gonnet (May 16th, 2013)
+#
+ContinuedFraction := proc( x:positive ; (maxconv=10):posint )
+dens := [floor(x)];
+x1 := 1;  x2 := x-dens[1];
+n1 := dens[1];  n2 := 1;
+d1 := 1;  d2 := 0;
+convs := [[n1,d1]];
+to maxconv while x2 > 0 do
+    d := floor(x1/x2);
+    dens := append(dens,d);
+    r := x1-d*x2;
+    x1 := x2;  x2 := r;
+    n := n1*d+n2;  n2 := n1;  n1 := n;
+    n := d1*d+d2;  d2 := d1;  d1 := n;
+    convs := append( convs, [n1,d1] )
+od:
+[ dens, convs] 
+end:

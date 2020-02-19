@@ -1,0 +1,146 @@
+module external ReadFastaWithCheck, ReadStockholmAlignment, WriteStockholmAlignment, Trim, ReadGCGWithCheck, ReadGCG;
+
+IsWhiteSpace := proc(char:string)
+    if length(char) <> 1 then error('was expecting a single character'); fi;
+
+    whiteSpaces := {' ','\t','\n'};
+    return(has(whiteSpaces,char));
+end;
+
+Trim := proc(str:string)
+    i := 1;
+    for i from 1 to length(str) while(IsWhiteSpace(str[i])) do
+    od;
+
+    if i > length(str) then
+        return('');
+    fi;
+
+    j := length(str);
+    for j from length(str) by -1 to 1 while(IsWhiteSpace(str[j])) do
+    od;
+
+    return(str[i..j]);
+end;
+
+ReadStockholmAlignment := proc(fileName:string; labels:list(string))
+    file := ReadRawFile(fileName);
+    lines := SplitLines(file);
+
+    labs := CreateArray(1..length(labels),'');
+    seqs := CreateArray(1..length(labels),'');
+    tree := NULL;
+    tree_id := '';
+    trees := table();
+
+    for i to length(lines) while lines[i][1] <> '/' do
+        lines[i] := Trim(lines[i]);
+        if lines[i][1..4] = '#=GF' then
+            words := ReplaceString('\t', ' ', Trim(lines[i]));
+            words := SearchDelim(' ', words);
+            if words[2] = 'TN' then
+               err := traperror(assign(noeval(tree_id),words[3]));
+               if err = lasterror then
+                  warning(err);
+               fi;
+            elif words[2] = 'NH' then
+               err := traperror(assign(noeval(tree),ParseNewickTree(words[3])));
+               if err = lasterror then
+                  warning(err);
+               fi;
+               trees[tree_id] := tree;
+            fi;
+        elif lines[i][1] <> '#' then
+            words := ReplaceString('\t', ' ', Trim(lines[i]));
+            words := SearchDelim(' ', words);
+            if length(words) < 2 then continues; fi;
+
+            words := [words[1], words[length(words)]];
+
+            if type(labels,list(string)) then
+                for j from 1 to length(labels) do
+                    if labels[j] = words[1] then
+                        labs[j] := words[1];
+                        seqs[j] := uppercase(ReplaceString('-','_',words[2]));
+                    fi;
+                od;
+            else
+                labs[i] := words[1];
+                seqs[i] := uppercase(ReplaceString('-','_',words[2]));
+            fi;
+        fi;
+    od;
+
+    if type(labels,list(string)) then
+        if {op(labels)} <> {op(labs)} then
+            error('not all labels found in stockhom file');
+        fi;
+    fi;
+
+    return(seqs, labs, trees);
+end;
+
+WriteStockholmAlignment := proc(fileName: string, seqs:list(string), labels:list(string); gtree:Tree)
+    n := length(seqs);
+    if length(labels) <> n then error('length missmatch btw seqs and labels') fi;
+    gcp := Set(printgc=false);
+    OpenWriting(fileName);
+    printf('# STOCKHOLM 1.0\n');
+    if type(gtree, Tree) then
+      printf('#=GF NH %s\n', Tree_Newick(gtree,'scale'=0.01,'printBootstrapInfo'=false));
+    fi;
+    for i to n do
+        printf('%s\t%s\n', labels[i], seqs[i]);
+    od;
+    OpenWriting(previous);
+    Set(printgc=gcp);
+end;
+
+ReadFastaWithCheck := proc(fn, labs)
+    n := length(labs);
+    msa := ReadFastaWithNames(fn); # msa = [seqs, labs]
+    if length(msa[2]) <> n then
+        error('length missmatch btw input and output');
+    fi;
+    seqs := CreateArray(1..n);
+    for i to n do
+        k := SearchArray(Trim(msa[2,i]), labs);
+        if k = 0 then error('label '.msa[2,i].' unknown'); fi;
+        seqs[k] := uppercase(ReplaceString('-', '_', msa[1,i]));
+    od;
+    return(seqs);
+end:
+
+ReadGCG := proc(fn:string)
+    RemoveChar := (s,c) -> MutChar(s,c,'');
+    MutChar := (s,c,m) -> string(seq(If(s[i]<>c, s[i], m), i=1..length(s)));
+
+    s := ReadRawFile(fn);
+    i := SearchString('//', s);
+    s := SearchDelim('\n', s[i+3..-1]);
+    S := table('');
+    for l in s do if l <> '' then
+        i1 := SearchString(' ', l);
+        lab := RemoveChar(l[1..i1], ' ');
+        aa := MutChar(RemoveChar(l[i1+1..-1], ' '), '.', '_');
+        S[lab] := S[lab].aa;
+    fi od;
+    return(S);
+end:
+
+ReadGCGWithCheck := proc(fn, labs)
+    n :=  length(labs);
+    msaT := ReadGCG(fn);
+    seqs := CreateArray(1..n);
+    cn := 0;
+    for lab in Indices(msaT) do
+        k := SearchArray(lab, labs);
+        if k = 0 then error('label '.lab.' unknown'); fi;
+        seqs[k] := uppercase(msaT[lab]);
+        cn := cn + 1;
+    od;
+    if cn <> n then error('length missmatch btw input and output'); fi;
+    return(seqs);
+end:
+
+end:

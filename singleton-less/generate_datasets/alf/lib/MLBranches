@@ -1,0 +1,235 @@
+#
+#	MLBranches - compute the Maximum-likelihood branch lengths
+#		for a given topology
+#
+#	MLBranches( t:Tree, msa:MAlignment, logPAM1:matrix ) -> Tree
+#
+#	returns the same topology as given but with the branch lengths
+#	fitted to give the maximum likelihood.  The value of the
+#	ln(likelihood) is stored in the global variable: MLBranches_LogL
+#
+#	The likelihood is evaluated on the basis of the rate matrix logPAM1,
+#	and on the assumption that deleted positions and X's are not
+#	considered, i.e. the model skips these positions.  In particular
+#	a tree with all X's or deletions will have likelihood 1.
+#
+#	Gaston H. Gonnet (July 16th, 2010)
+#
+MLBranches := proc( t:Tree, msa:MAlignment, logPAM1:matrix ) -> Tree;
+global MLBranches_LogL;
+
+t1 := copy(t);
+ls := [];
+for w in Leaves(t) do ls := append(ls,w[1]) od;
+if {op(ls)} <> {op(msa['labels'])} then
+     error( ls, msa['labels'], 'topology and MSA are not on the same leaves' )
+fi;
+alseqs := msa['AlignedSeqs'];
+ids := msa['labels'];
+N := length(ids);
+m := length(logPAM1);
+assert( m=20 );
+if not type(AF,array(positive,20)) then
+     error('frequency vector AF not assigned') fi;
+if type(MinLen,nonnegative) then minlen := MinLen
+else minlen := 0 fi;
+
+# positions with a single aa are not useful, discard them
+Usefulpos := [];
+for i to length(alseqs[1]) do
+    if sum( If( member(w[i],{'_','X'}), 0, 1 ), w=alseqs ) > 1 then
+	Usefulpos := append(Usefulpos,i) fi
+od:
+n := length(Usefulpos);
+aa_index := 3;
+nodata := 4;
+position := 5;
+
+#
+#                 o X=[......k....]
+#                / \ 
+#               /   \ 
+#              /     \ 
+#           dA/       \dB
+#            /         \ 
+#           /           \ 
+#   A=[...i...]      B=[...j...]
+#
+#   X[k] = sum(sum( A[i]*(M^dA)[i,k] * B[j]*(M^dB)[j,k], i=1..20), j=1..20 )
+#   X[k] = sum( A[i]*(M^dA)[i,k],i=1..20) * sum(B[j]*(M^dB)[j,k], j=1..20 )
+#
+#	(this is for every column of the MSA)
+#
+#	To evaluate the likelihood, the tree is extended in the following ways:
+#
+#	Leaf( <Leaf-name>, height, aa_index[n], nodata[n], <position> )
+#	Tree( <left-tree>, height, <right-tree>, nodata[n], <position> )
+#
+#	Where
+#	    nodata is a boolean array which marks that the position
+#		in the entire subtree is non-informative (X's or deletions).
+#
+#	    aa_index is an array which contains the aa index for each
+#		aa in the sequence (at a Leaf).  Indels or X's map to 21
+#
+#	    position is the index of this node's to parent distance in the
+#		distance array (0 indicates that it is the left descendant
+#		of the root and has no length, it is all on the right, -1
+#		indicates that it is the parent of the root, also inexistent)
+#
+#	Augment the tree
+indx := -1;
+t1 := proc( t:Tree ) external indx;
+      indx2 := indx;  # preserve it, recursive calls will change it
+      indx := indx+1;
+      if type(t,Leaf) then
+	   i := SearchArray(t[1],ids);
+	   alseq := alseqs[i];
+	   aaindex := [ seq( If( member(alseq[Usefulpos[j]],{'X','_'}), 21,
+		AToInt(alseq[Usefulpos[j]]) ), j=1..n )];
+	   Leaf( t[1], t[2], aaindex,
+		[seq( member(alseq[Usefulpos[j]],{'X','_'}), j=1..n )], indx2 );
+      else t1 := procname( t[1] );
+	   t3 := procname( t[3] );
+	   Tree( t1, t[2], t3, [seq(t1[4,j] and t3[4,j], j=1..n)], indx2 )
+      fi end( t1 );
+
+# now extract all the lengths from the tree into blen
+blen := CreateArray(1..2*N-3);
+proc( t:Tree, hei:numeric ) external blen;
+    if t[position] > 0 then blen[t[position]] := |hei-t[2]| fi;
+    if not type(t,Leaf) then
+	procname( t[1], t[2] );
+	procname( t[3], t[2] );
+    fi end( t1, 0 );
+blen[t1[3,position]] := |t1[2]-t1[1,2]| + |t1[2]-t1[3,2]|;
+iniblen := copy(blen);
+if max(blen) <= minlen then
+    # initial branch lengths are useless, create some arbitrary lengths
+    for i to length(blen) do iniblen[i] := minlen+10+Rand(Normal) od fi;
+
+IndsUnder := table({});
+proc( t:Tree ) external IndsUnder;
+if type(t,Leaf) then IndsUnder[t[position]] := {t[position]}
+else IndsUnder[t[position]] := {t[position]} union procname(t[1]) union
+	procname(t[3]) fi;
+end( t1 );
+
+zeros := CreateArray(1..m);
+Idenm := append(Identity(m),zeros);
+Xtable := table();
+
+Xarray := proc( t:Tree, deriv:list(posint) )
+external Xtable;
+
+k := t[position];
+# filter by the derivatives underneath
+inds := IndsUnder[k];
+if {op(deriv)} minus inds <> {} then
+    return( procname( t, [seq( If( member(w,inds), w, NULL ), w=deriv)] )) fi;
+
+# remember by table
+r := Xtable[[k,deriv]];
+if r <> unassigned then return(r) fi;
+
+# has to compute it
+if type(t,Leaf) then
+     # compute the mutation matrix associated with branch above
+     if k < 1 then M := Idenm
+     else M := exp( blen[k] * logPAM1 );
+          if deriv <> [] then M := M * logPAM1^length(deriv) fi;
+          M := append(M,zeros);
+     fi;
+     Xtable[[k,deriv]] := [ seq( M[w], w=t[3] )]
+else X1 := procname( t[1], deriv );
+     X3 := procname( t[3], deriv );
+     X := CreateArray(1..n,zeros);
+     nd1 := t[1,nodata];  nd3 := t[3,nodata];
+     nder1 := evalb( IndsUnder[t[1,position]] intersect {op(deriv)} = {} );
+     nder3 := evalb( IndsUnder[t[3,position]] intersect {op(deriv)} = {} );
+     for j to n do
+	 if nd1[j] then
+	      if not nd3[j] and nder1 then X[j] := X3[j] fi
+	 elif nd3[j] then if nder3 then X[j] := X1[j] fi
+	 else X[j] := zip( X1[j] * X3[j] ) fi
+     od;
+     # compute the mutation matrix associated with branch above
+     if k > 0 then
+	  M := exp( blen[k] * logPAM1 );
+	  expo := sum( If(w=k,1,0), w=deriv );
+          if expo > 0 then M := M * logPAM1^expo fi;
+          X := X * M;
+     fi;
+     # do not save tables that will not be used
+     if length(deriv) <= 1 then Xtable[[k,deriv]] := X fi;
+     X
+fi
+end:
+
+# functional to optimize (minimize, so -Log(likelihood) )
+LogLik := proc( xlen:list ) external blen, Xtable;
+for i to length(xlen) do xlen[i] := max(minlen,min(1000,xlen[i])) od;
+for i to length(xlen) do blen[i] := xlen[i] od;
+Xtable := table();
+X := Xarray( t1, [] );
+-sum( ln( w*AF ), w=X )
+end:
+
+# derivative of functional to optimize (minimize, so -Log(likelihood) )
+LogLik1 := proc( xlen:list ) external blen, Xtable;
+for i to length(xlen) do xlen[i] := max(minlen,min(1000,xlen[i])) od;
+if max(xlen)=minlen or min(xlen)=1000 then return(FAIL) fi;
+for i to length(xlen) do blen[i] := xlen[i] od;
+Xtable := table();
+
+X0 :=  Xarray( t1, [] ) * AF;
+r := [];
+for i to length(blen) do
+    X := Xarray( t1, [i] ) * AF;
+    Xi := -sum( X[j]/X0[j], j=1..length(X0) );
+    if xlen[i] <= minlen and Xi >= 0 or
+       xlen[i] >= 1000 and Xi <= 0 then r := append(r,0)
+    else r := append( r, Xi ) fi
+od;
+r
+end:
+
+LogLik2 := proc( xlen:list ) external blen, Xtable;
+for i to length(xlen) do xlen[i] := max(minlen,min(1000,xlen[i])) od;
+if max(xlen)=minlen or min(xlen)=1000 then return(FAIL) fi;
+n := length(xlen);
+for i to n do blen[i] := xlen[i] od;
+Xtable := table();
+
+X0 :=  Xarray( t1, [] ) * AF;
+X := CreateArray(1..n);
+for i to n do X[i] := Xarray( t1, [i] ) * AF od;
+r := CreateArray(1..n,1..n);
+for i to n do for j from i to n do
+    if (xlen[i] <= minlen or xlen[i] >= 1000) or
+	(xlen[j] <= minlen or xlen[j] >= 1000) then
+	r[i,j] := r[j,i] := If( i=j, 1, 0 );  next fi;
+    Xij := Xarray( t1, [i,j] ) * AF;
+    r[i,j] := r[j,i] := -sum( Xij[k]/X0[k] - X[i,k]*X[j,k]/X0[k]^2,
+	k=1..length(X0) )
+od od;
+r
+end:
+
+
+#if not TestGradHessian(LogLik,LogLik1,LogLik2,iniblen,
+#	'Tolerance'=100) then return(t) fi;
+
+r := EvoMinimize( LogLik, LogLik1, LogLik2, iniblen, 0.1, 1e-12 );
+flen := r[1];
+MLBranches_LogL := -r[2];
+
+proc( t:Tree, h )
+  nh := h + If( t[position]>=1, flen[t[position]], 0 );
+  if type(t,Leaf) then Leaf(t[1],nh)
+  else Tree( procname(t[1],nh), nh, procname(t[3],nh) )
+  fi end( t1, 0 );
+end:
+
+
+

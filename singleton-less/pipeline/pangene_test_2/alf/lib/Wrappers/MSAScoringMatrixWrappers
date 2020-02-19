@@ -1,0 +1,1585 @@
+
+module external MafftMSA;
+local alignedSeqs;
+
+###############################################################################
+#
+#   MafftMSA
+#
+#   MafftMSA is a wrapper function to compute MSAs by Mafft. See
+#   http://align.bmr.kyushu-u.ac.jp/mafft/software/
+#   for program homepage and for publications:
+#
+#   Katoh and Toh (Bioinformatics 23:372-374, 2007) PartTree: an algorithm
+#   to build an approximate tree from a large number of unaligned sequences
+#   (describes the PartTree algorithm).
+#
+#   Katoh, Misawa, Kuma and Miyata (Nucleic Acids Res. 30:3059-3066,
+#   2002) MAFFT: a novel method for rapid multiple sequence alignment
+#   based on fast Fourier transform (describes the FFT-NS-1, FFT-NS-2 and
+#   FFT-NS-i strategies)
+#
+#                                        Adrian Altenhoff, Dec 5, 2007
+###############################################################################
+
+MafftMSA := proc( seqs:list(string);
+                'arguments'=((arguments=''):string),
+                'binary'=((binary=''):string ),
+                labels:list(string),
+                dm:DayMatrix)
+global alignedSeqs;
+local seqin, seqout, matfile, stdout;
+    pid    := getpid():
+    seqin  := GetTmpDir().'seqs.fa.' . pid:
+    seqout := GetTmpDir().'seqs.afa.'. pid:
+    matfile := GetTmpDir().'matfile.'. pid:
+    stdout := GetTmpDir().'std.out.' . pid:
+    cleanup := sprintf('rm -f %s %s %s %s',seqin, seqout, matfile, stdout):
+
+    N := length(seqs):
+    if N<2 then error(sprintf('Not enough sequences: %d',N)) fi:
+    if assigned(labels) then
+        if N<>length(labels) then
+            error('Number of labels does not match number of sequences')
+        fi:
+        lab := labels:
+    else
+        lab := [seq( sprintf('%d',i), i=1..N )];
+    fi:
+
+    # write a fasta file
+    gcp := Set(printgc=false):
+    OpenWriting(seqin);
+    for i to N do
+        l := length(seqs[i]); rows := ceil( l/80 );
+        printf('>%s\n',lab[i]);
+        for j to rows do
+            printf('%s\n', seqs[i, (j-1)*80+1..min(j*80,l)]);
+        od:
+    od:
+    OpenWriting(previous):
+    # call to mafft
+    if assigned(dm) then
+        # write dayhoff matrix to a file. format needs to be as following:
+        #        A   R   N ....
+        #   A   33  11   5 ....
+        #   R   11  33   9
+        #
+        # only AA mutation matrices are allowed.
+        if dm[Mapping] <> AToInt or length(dm[Sim])<>20 then
+            CallSystem(cleanup):
+            error('Only AA scoring matrices supported in mafft.\n');
+        fi:
+
+        OpenWriting(matfile):
+        for i to length(dm[Sim]) do printf(' %a', IntToA(i)) od:
+        for i to length(dm[Sim]) do
+            printf('\n%a', IntToA(i));
+            for j to length(dm[Sim]) do
+                printf(' %d', round(100*dm[Sim,i,j]));
+            od:
+        od:
+        OpenWriting(previous):
+
+        mArgs := sprintf('--amino --retree 2 --maxiterate 1000 --globalpair '.
+            '--aamatrix %s --lop %d --lep %d %s 1>%s 2>%s', matfile,
+            round(100*dm[FixedDel]), round(100*dm[IncDel]), seqin, seqout,
+            stdout);
+    elif arguments <> '' then
+        mArgs := sprintf('%s %s 1> %s 2> %s', arguments, seqin, seqout, stdout);
+    else
+        mArgs := sprintf('--retree 2 --maxiterate 0 %s 1>%s 2>%s',
+                    seqin, seqout, stdout);
+    fi;
+    selection := GetWrapperChoice('MSA/mafft-6.843-with-extensions/scripts/mafft',
+                                                'mafft', binary,
+                                                'relPath32'='MSA/mafft-6.843-with-extensions_32/scripts/mafft');
+
+    cputime := time('all');
+    if selection = BINARY_HARDCODED then
+        # use binary given in mPath
+        offset := SearchString('/scripts',binary);
+        setenv('MAFFT_BINARIES', binary[1..offset].'/binaries');
+        res := TimedCallSystem( sprintf('%s %s', binary, mArgs) ):
+    elif selection = BINARY_IN_PATH then
+        res := TimedCallSystem( sprintf('%s %s', 'mafft', mArgs) ):
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        # use default location in standard folder
+        setenv('MAFFT_BINARIES', GetWrapperDir().'MSA/mafft-6.843-with-extensions/binaries');
+        res := TimedCallSystem( sprintf('%s %s', GetWrapperDir().'MSA/mafft-6.843-with-extensions/scripts/mafft', mArgs) ):
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        # use alternative 32bit version in standard folder
+        setenv('MAFFT_BINARIES', GetWrapperDir().'MSA/mafft-6.843-with-extensions_32/binaries');
+        res := TimedCallSystem( sprintf('%s %s', GetWrapperDir().'MSA/mafft-6.843-with-extensions_32/scripts/mafft', mArgs) ):
+
+    fi;
+    cputime := time('all') - cputime;
+
+    Set(printgc=gcp):
+
+    if res[1] <> 0 then
+        err := ReadRawFile(stdout):
+        CallSystem(cleanup);
+        error( sprintf('ERROR in mafft: %s', err) );
+    fi:
+
+
+    # Mafft has a problem with too short sequences. Then, it doesn't do
+    # anything in quiet mode.
+    if FileStat(seqout)[st_size]=0 then
+        minLen := min( seq( length(seqs[i]), i=1..N) ):
+        err := ReadRawFile(stdout):
+        printf('%s',err);
+        CallSystem(cleanup):
+        if minLen < 5 then
+            error( sprintf('At least one sequence is too short for MAFFT: '.
+                           'MinSeqLen=%d < 5',minLen));
+        else
+            error( sprintf('Unknown error in MAFFT:\n%s', err) );
+        fi
+    fi:
+    alignedSeqs := ReadFastaWithNames( seqout );
+
+    # cleanup
+    CallSystem(cleanup):
+
+    # check, that order and number of labels is still the same.
+    if length(alignedSeqs[2])<>N then
+        error(sprintf('ERROR: Not the same number of seqs after aligning: '.
+                      '%d instead of %d', length(alignedSeqs[2]), N) );
+    fi:
+
+    aSeqs := CreateArray(1..N):
+    for i to N do
+        k := SearchArray(alignedSeqs[2,i], lab);
+        if k=0 then  error('Label unknown:' . alignedSeqs[2,i]) fi:
+        aSeqs[k] := alignedSeqs[1,i]:
+        for j to length(aSeqs[k]) do
+            if aSeqs[k,j]='-' then aSeqs[k,j] := '_' fi
+        od:
+    od:
+    msa := MAlignment(seqs, aSeqs, lab, 'Time'=cputime, 'method' = 'Mafft'):
+    return( msa ):
+end:
+
+end: #module
+
+module external Mafft7MSA;
+local alignedSeqs;
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+Mafft7MSA := proc(seqs:list(string);
+                labels:list(string),
+                'gtree'=((gtree=Tree(Leaf(FakeB),1,Leaf(FakeA))):Tree),
+                'arguments'=((arguments=''):string),
+                'binary'=((binary=''):string),
+                dm:DayMatrix)
+## Version 7 should not set MAFFT_BINARIES
+## If using provided gtree, the longest distance from root to leaf can not be
+## longer than 10 by default. Change the distance to 200 in newick2mafft.rb.
+global alignedSeqs;
+local seqin, seqout, matfile, stdout, gtreenewickfile, gtreemafftfile;
+    pid    := getpid():
+    seqin  := GetTmpDir().'seqs.fa.' . pid:
+    seqout := GetTmpDir().'seqs.afa.'. pid:
+    matfile := GetTmpDir().'matfile.'. pid:
+    stdout := GetTmpDir().'std.out.' . pid:
+    gtreenewickfile := GetTmpDir().'gtree.newick.'. pid:
+    gtreemafftfile := GetTmpDir().'gtree.mafft.'. pid:
+    cleanup := sprintf('rm -f %s %s %s %s %s %s',seqin, seqout, matfile, stdout, gtreenewickfile, gtreemafftfile):
+    N := length(seqs):
+    if N<2 then error(sprintf('Not enough sequences: %d',N)) fi:
+    if assigned(labels) then
+        if N<>length(labels) then
+            error('Number of labels does not match number of sequences')
+        fi:
+        mapping := table():
+        mapping2 := table():
+        lab := CreateArray(1..length(labels)):
+        for i to length(labels) do
+          lab[i] := sprintf('%d',i):
+          mapping[lab[i]] := labels[i]:
+          mapping2[labels[i]] := lab[i];
+        od;
+#lab := labels:
+    else
+        lab := [seq( sprintf('%d',i), i=1..N )];
+    fi:
+    # write a fasta file
+    gcp := Set(printgc=false):
+    print(seqin);
+    OpenWriting(seqin);
+    for i to N do
+        l := length(seqs[i]); rows := ceil( l/80 );
+        printf('>%s\n',lab[i]);
+        for j to rows do
+            printf('%s\n', seqs[i, (j-1)*80+1..min(j*80,l)]);
+        od:
+    od:
+    OpenWriting(previous):
+    ## guide tree arguments
+    guidetreeArgs := '';
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+      guidetreeArgs := guidetreeArgs.'--treein '.gtreemafftfile;
+      gtree2 := copy(gtree);
+      for n in Leaves(gtree2) do
+        n['Label'] := mapping2[n['Label']];
+      od;
+      WriteTreeNewick(gtreenewickfile, gtree2);
+    fi;
+    # call to mafft
+    if assigned(dm) then
+        # write dayhoff matrix to a file. format needs to be as following:
+        #        A   R   N ....
+        #   A   33  11   5 ....
+        #   R   11  33   9
+        #
+        # only AA mutation matrices are allowed.
+        print('assigned dm');
+        if dm[Mapping] <> AToInt or length(dm[Sim])<>20 then
+            CallSystem(cleanup):
+            error('Only AA scoring matrices supported in mafft.\n');
+        fi:
+
+        OpenWriting(matfile):
+        for i to length(dm[Sim]) do printf(' %a', IntToA(i)) od:
+        for i to length(dm[Sim]) do
+            printf('\n%a', IntToA(i));
+            for j to length(dm[Sim]) do
+                printf(' %d', round(100*dm[Sim,i,j]));
+            od:
+        od:
+        OpenWriting(previous):
+
+        mArgs := sprintf('--amino --retree 2 --maxiterate 1000 --globalpair '.
+            '--aamatrix %s --lop %d --lep %d %s 1>%s 2>%s', matfile,
+            round(100*dm[FixedDel]), round(100*dm[IncDel]), seqin, seqout,
+            stdout);
+    elif arguments <> '' then
+        mArgs := sprintf('%s %s %s 1> %s 2> %s', arguments, guidetreeArgs, seqin, seqout, stdout);
+    else
+        mArgs := sprintf('--retree 2 --maxiterate 0 %s %s 1>%s 2>%s',
+                    guidetreeArgs, seqin, seqout, stdout);
+    fi;
+    selection := GetWrapperChoice('MSA/mafft-7.158-with-extensions/scripts/mafft',
+                                                'mafft', binary,
+                                                'relPath32'='MSA/mafft-6.843-with-extensions_32/scripts/mafft');
+
+    cputime := time('all');
+    if selection = BINARY_HARDCODED then
+        # use binary given in mPath
+        offset := SearchString('/scripts',binary);
+#setenv('MAFFT_BINARIES', binary[1..offset].'/binaries');
+        if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+          newick2mafft := binary[1..offset].'/core/newick2mafft.rb';
+          res1 := TimedCallSystem(sprintf('ruby %s %s > %s', newick2mafft, gtreenewickfile, gtreemafftfile));
+        fi;
+        cmd := sprintf('%s %s', binary, mArgs);
+        prints(cmd);
+        res := TimedCallSystem(cmd):
+    elif selection = BINARY_IN_PATH then
+        if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+          CallSystem(cleanup);
+          error('The binary has to be specified!');
+        fi;
+        res := TimedCallSystem( sprintf('%s %s', 'mafft', mArgs) ):
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        # use default location in standard folder
+#setenv('MAFFT_BINARIES', GetWrapperDir().'MSA/mafft-6.843-with-extensions/binaries');
+        offset := SearchString('/scripts', GetWrapperDir().'MSA/mafft-7.158-with-extensions/scripts/mafft');
+        binary := GetWrapperDir().'MSA/mafft-7.158-with-extensions/scripts/mafft';
+        if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+          newick2mafft := binary[1..offset].'/core/newick2mafft.rb';
+          cmd := sprintf('ruby %s %s > %s', newick2mafft, gtreenewickfile, gtreemafftfile);
+          print(cmd);
+          res1 := TimedCallSystem(cmd);
+        fi;
+        cmd := sprintf('%s %s', GetWrapperDir().'MSA/mafft-7.158-with-extensions/scripts/mafft', mArgs);
+        prints(cmd);
+        res := TimedCallSystem(cmd):
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        # use alternative 32bit version in standard folder
+#setenv('MAFFT_BINARIES', GetWrapperDir().'MSA/mafft-6.843-with-extensions_32/binaries');
+        if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+          CallSystem(cleanup);
+          error('32 bit binary not supported!');
+        fi;
+        res := TimedCallSystem( sprintf('%s %s', GetWrapperDir().'MSA/mafft-6.843-with-extensions_32/scripts/mafft', mArgs)):
+    fi;
+    cputime := time('all') - cputime;
+    Set(printgc=gcp):
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+      if res1[1] <> 0 then
+        err := ReadRawFile(stdout):
+        CallSystem(cleanup);
+        error( sprintf('ERROR in mafft: %s', err) );
+      fi;
+    fi;
+    if res[1] <> 0 then
+        err := ReadRawFile(stdout):
+        CallSystem(cleanup);
+        error( sprintf('ERROR in mafft: %s', err) );
+    fi:
+
+
+    # Mafft has a problem with too short sequences. Then, it doesn't do
+    # anything in quiet mode.
+    if FileStat(seqout)[st_size]=0 then
+        minLen := min( seq( length(seqs[i]), i=1..N) ):
+        err := ReadRawFile(stdout):
+        printf('%s',err);
+        CallSystem(cleanup):
+        if minLen < 5 then
+            error( sprintf('At least one sequence is too short for MAFFT: '.
+                           'MinSeqLen=%d < 5',minLen));
+        else
+            error( sprintf('Unknown error in MAFFT:\n%s', err) );
+        fi
+    fi:
+    alignedSeqs := ReadFastaWithNames( seqout );
+
+    # cleanup
+    CallSystem(cleanup):
+
+    # check, that order and number of labels is still the same.
+    if length(alignedSeqs[2])<>N then
+        error(sprintf('ERROR: Not the same number of seqs after aligning: '.
+                      '%d instead of %d', length(alignedSeqs[2]), N) );
+    fi:
+
+    aSeqs := CreateArray(1..N):
+    for i to N do
+        k := SearchArray(alignedSeqs[2,i], lab);
+        if k=0 then  error('Label unknown:' . alignedSeqs[2,i]) fi:
+        aSeqs[k] := alignedSeqs[1,i]:
+        for j to length(aSeqs[k]) do
+            if aSeqs[k,j]='-' then aSeqs[k,j] := '_' fi
+        od:
+    od:
+    if assigned(mapping) then
+      lab2 := CreateArray(1..length(lab)):
+      for i to length(lab) do
+        lab2[i] := mapping[lab[i]];
+      od;
+      lab := lab2;
+    fi;
+    msa := MAlignment(seqs, aSeqs, lab, 'Time'=cputime, 'method' = 'Mafft', 'tree'=gtree):
+    return( msa ):
+end:
+
+end: #module
+
+module external ClustaloMSA;
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+# /home/darwin/WrapperBinaries/MSA/clustal-omega-1.0.3
+#
+# clustalo --auto -o <filename> -i <fasta file>
+#
+ClustaloMSA := proc(seqs:list(string), labels:list(string);
+                 'gtree'=((gtree=Tree(Leaf(FakeB),1,Leaf(FakeA))):Tree),
+                 'binary'=((binary=''):string),
+                 'opts'=((opts='--auto'):string)
+)
+    pid    := getpid():
+    seqin  := GetTmpDir().'tmpseqs_in.'.pid.'.fa':
+#print(seqin);
+    seqout := GetTmpDir().'tmpseqs_out.'.pid.'.fa':
+    newickin := GetTmpDir().'tmptree_in.'.pid.'.nw':
+    newickout := GetTmpDir().'tmptree_out.'.pid.'.nw':
+
+    pathExec := '';
+    selection := GetWrapperChoice('MSA/clustal-omega-1.0.3/clustalo_64', 'clustalo', binary, relPath32='MSA/clustal-omega-1.0.3/clustalo_32');
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'clustao';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/clustal-omega-1.0.3/clustalo_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'MSA/clustal-omega-1.0.3/clustalo_32';
+    else
+        error('no such selection known');
+    fi;
+#mapping := table():
+    labels2 := CreateArray(1..length(labels)):
+    #labels2 = [seq(sprintf('%d',i),i=1..length(labels))]:
+
+#for i to length(labels) do
+#        labels2[i] := sprintf('S%d',i):
+#        mapping[labels2[i]] := labels[i]:
+#    od:
+    labels2 := labels;
+    WriteFasta(seqs, labels2, seqin);
+    cmd := sprintf('%s %s -o %s -i %s --guidetree-out=%s', pathExec, opts, seqout, seqin, newickout):
+    cputime := 0;
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+	WriteTreeNewick(newickin, gtree):
+	cmd := cmd . sprintf(' --guidetree-in=%s ', newickin):
+    fi:
+
+    #lprint(cmd):
+    cputime := time('all') - cputime;
+    prints(cmd);
+    res := TimedCallSystem(cmd):
+    cputime := time('all') - cputime;
+
+    if mod(res[1],256) <> 0 then error('could not run ClustalO: '.res[2].'; code='.res[1]) fi:
+
+    #rawresult := ReadRawFile(seqout):
+    #printf('%s\n',rawresult):
+
+    DeleteFiles([seqin]):
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+      DeleteFiles([newickin]):
+    else
+      gtree := ParseNewickTree(ReadRawFile(newickout));
+    fi:
+    DeleteFiles([newickout]):    
+    aSeqs := ReadFastaWithCheck(seqout, labels2);
+    DeleteFiles([seqout]):
+#for l in Leaves(gtree) do
+#        l['Label'] := mapping[l['Label']]:
+#    od:
+
+    return(MAlignment(seqs, aSeqs, labels, 'method'='ClustalOmega', 'tree'=gtree, 'Time'=cputime)):
+end:
+
+end: #ClustalO module
+
+ 
+module external PrankMSA, Prank081202MSA, Prank091016CMSA, Prank091016PMSA, Prank091016MSA, Prank100802MSA, Prank111130MSA, Prank140603MSA, ProgressiveGraphMSA;
+
+
+PrankGeneric_lib := proc(seqs:list(string);
+                  'opts'=((opts=''):string),
+                  'doF'=((doF='false'):boolean),
+                  'OutputStage'=((OutputStage=2):integer),
+                  'computePost'=((computePost=false):boolean),
+                  'binary'=((binary=''):string),
+                  labels:list(string),
+                  dm:DayMatrix,
+                  gtree:Tree
+                  )
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs'.pid.'.fa';
+    seqout := GetTmpDir().'seqs'.pid.'.afa';
+    matfile := GetTmpDir().'matfile.'. pid:
+    ogt0fn := GetTmpDir().'seqs'.pid.'.afa.1.dnd';
+    ogtfn := GetTmpDir().'seqs'.pid.'.afa.2.dnd';
+
+    WriteFasta(seqs, [seq(string(i),i=1..length(seqs))], seqin);
+    selection := GetWrapperChoice('MSA/prank/prank.091016/prank', 'prank', binary);
+
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'prank';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/prank/prank.091016/prank';
+    fi;
+    #print('path to exec');
+    #print(pathExec);
+    cmd := sprintf('%s -d=%s -o=%s -noxml -uselogs %s %s',
+        pathExec, seqin, seqout, If(computePost,'','-nopost '),opts);
+
+    OutputStage_ := OutputStage;
+    if type(gtree,Tree) then
+        for f in Leaves(gtree) do
+            for i to length(labels) do
+                if labels[i] = f[1] then
+                    f[1] := string(i);
+                    break;
+                fi;
+            od;
+            if i > length(labels) then error('The gtree provided has labels which do not appear in labels!'); fi;
+        od;
+        OutputStage_ := 1;
+        t_newick := GetTmpDir().'newick'.pid;
+        gcp := Set(printgc=false);
+        OpenWriting(t_newick);
+        printf('%s;',  Tree_Newick(gtree));
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        cmd := cmd.sprintf(' -t=%s ', t_newick);
+    fi;
+    if doF then cmd := cmd.' +F ' fi;
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented');
+        cmd := cmd.sprintf(' -m=%s -gaprate=%.5f -gapext=%.5f',
+               matfile, gr, ge);
+    fi;
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then
+        printf('%s\n',res[2]);
+        error('could not run prank');
+    fi;
+    seqout := seqout.'.'.string(OutputStage_).'.fas';
+    aSeqs := ReadFastaWithCheck(seqout, [seq(string(i),i=1..length(seqs))]);
+    DeleteFiles([seqin, seqout]);
+
+    if type(gtree,Tree) then
+        ogt := gtree;
+    else
+        ogt := ParseNewickTree(ReadRawFile(ogtfn));
+    fi;
+    for f in Leaves(ogt) do f[1] := labels[parse(f[1])]; od;
+    ogt0 := ParseNewickTree(ReadRawFile(ogt0fn));
+    for f in Leaves(ogt0) do f[1] := labels[parse(f[1])]; od;
+
+    return(MAlignment(seqs, aSeqs, labels, 'method'='Prank', 'tree'=ogt, 'Time'=cputime, 'tree0'=ogt0));
+end:
+
+PrankMSA := proc(seqs:list(string), labels:list(string) ;
+                 'opts'=((opts=''):string),
+                 'doF'=((doF=true):boolean),
+                 'OutputStage'=((OutputStage=2):integer),
+                 'binary'=((binary=''):string),
+                 gtree:Tree)
+
+    return(PrankGeneric_lib(seqs, labels, 'binary'=binary, 'opts'=opts,
+                            'doF'=doF ,If(type(gtree,Tree), gtree,NULL)));
+end:
+
+if assigned(ETHMachines) = false then ReadLibrary('ETHMachines'); fi;
+GetExtension := proc()
+    if type(ETHMachines[hostname()], structure) then
+        if ETHMachines[hostname()]['CpuBits']=32 and relPath32 <> '' then
+            return('linneus55');
+        fi;
+    fi;
+    return('');
+end:
+
+Prank091016MSA := proc(seqs:list(string), labels:list(string) ;
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer)
+    return(PrankGeneric_lib(
+        seqs,labels,
+        'opts'=opts,
+        'doF'=doF,
+        If(type(dm,DayMatrix),dm,NULL),
+        If(type(gtree,Tree),gtree,NULL),
+        'binary'=GetWrapperDir().'MSA/prank/prank.091016/prank'.
+		           GetExtension()
+    ));
+end:
+
+Prank100802MSA := proc(seqs:list(string), labels:list(string) ;
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer)
+    return(PrankGeneric_lib(
+        seqs,labels,
+        'opts'=opts,
+        'doF'=doF,
+        If(type(dm,DayMatrix),dm,NULL),
+        If(type(gtree,Tree),gtree,NULL),
+        'binary'=GetWrapperDir().'MSA/prank/prank.100802/prank'.
+		           GetExtension()
+    ));
+end:
+
+Prank091016PMSA := proc(seqs:list(string), labels:list(string) ;
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer)
+    return(PrankGeneric_lib(
+        seqs,labels,
+        'opts'=opts,
+        'doF'=doF,
+        If(type(dm,DayMatrix),dm,NULL),
+        If(type(gtree,Tree),gtree,NULL),
+        'computePost'=true,
+        'binary'='/home/darwin/WrapperBinaries/MSA/prank/prank.091016/prank'.
+		           GetExtension()
+    ));
+end:
+
+Prank091016CMSA := proc(seqs:list(string), labels:list(string) ;
+                       'seqtype'=((seqtype='AA'):string),
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer)
+    if type(gtree,Tree) then
+        error('This variant uses Clustal to compute the guide tree');
+    fi;
+    gtree := ClustalMSA(seqs,labels,seqtype,'returnTree'=true)[3];
+    return(PrankGeneric_lib(
+        seqs,labels,
+        'opts'=opts.' -nopost -twice',
+        'doF'=doF,
+        If(type(dm,DayMatrix),dm,NULL),
+        If(type(gtree,Tree),gtree,NULL),
+        'binary'='/home/darwin/WrapperBinaries/MSA/prank/prank.091016/prank'.
+		           GetExtension()
+    ));
+end:
+
+Prank081202MSA := proc(seqs:list(string), labels:list(string) ;
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer)
+    return(PrankGeneric_lib(
+        seqs,labels,
+        'opts'=opts,
+        'doF'=doF,
+        If(type(dm,DayMatrix),dm,NULL),
+        If(type(gtree,Tree),gtree,NULL),
+        'binary'='/home/darwin/WrapperBinaries/MSA/prank/prank.081202/prank'.
+		           GetExtension()
+    ));
+end:
+
+
+Prank111130MSA := proc(seqs:list(string), labels:list(string) ;
+                       (doF=false):boolean, gtree:Tree,
+                       dm:DayMatrix, (opts=''):string,
+                       (OutputStage=2):integer,
+                       'binary'=((binary=''):string)
+                  )
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs'.pid.'.fa';
+    seqout := GetTmpDir().'seqs'.pid.'.afa';
+    matfile := GetTmpDir().'matfile.'. pid:
+    ogt0fn := GetTmpDir().'seqs'.pid.'.afa.1.dnd';
+    ogtfn := GetTmpDir().'seqs'.pid.'.afa.2.dnd';
+
+    WriteFasta(seqs, [seq(string(i),i=1..length(seqs))], seqin);
+    selection := GetWrapperChoice('MSA/prank/prank.111130/src/prank'.GetExtension(), 'prank'.GetExtension(), binary);
+
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'prank'.GetExtension();
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/prank/prank.111130/src/prank'.GetExtension();
+    fi;
+    print('path to exec');
+    print(pathExec);
+    cmd := sprintf('%s -d=%s -o=%s -showtree %s',
+        pathExec, seqin, seqout, opts);
+
+    OutputStage_ := OutputStage;
+    if type(gtree,Tree) then
+        for f in Leaves(gtree) do
+            for i to length(labels) do
+                if labels[i] = f[1] then
+                    f[1] := string(i);
+                    break;
+                fi;
+            od;
+            if i > length(labels) then error('The gtree provided has labels which do not appear in labels!'); fi;
+        od;
+        OutputStage_ := 1;
+        t_newick := GetTmpDir().'newick'.pid;
+        gcp := Set(printgc=false);
+        OpenWriting(t_newick);
+        printf('%s;',  Tree_Newick(gtree));
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        cmd := cmd.sprintf(' -t=%s ', t_newick);
+    fi;
+    if doF then cmd := cmd.' +F ' fi;
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented');
+        cmd := cmd.sprintf(' -m=%s -gaprate=%.5f -gapext=%.5f',
+               matfile, gr, ge);
+    fi;
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then
+        printf('%s\n',res[2]);
+        error('could not run prank');
+    fi;
+    seqout := seqout.'.'.string(OutputStage_).'.fas';
+    aSeqs := ReadFastaWithCheck(seqout, [seq(string(i),i=1..length(seqs))]);
+    DeleteFiles([seqin, seqout]);
+
+    if type(gtree,Tree) then
+        ogt := gtree;
+    else
+        ogt := ParseNewickTree(ReadRawFile(ogtfn));
+    fi;
+    for f in Leaves(ogt) do f[1] := labels[parse(f[1])]; od;
+    ogt0 := ParseNewickTree(ReadRawFile(ogt0fn));
+    for f in Leaves(ogt0) do f[1] := labels[parse(f[1])]; od;
+
+    return(MAlignment(seqs, aSeqs, labels, 'method'='Prank', 'tree'=ogt, 'Time'=cputime, 'tree0'=ogt0));
+end:
+
+Prank140603MSA := proc(seqs:list(string), labels:list(string) ;
+                    'gtree'=((gtree=Tree(Leaf(FakeB),1,Leaf(FakeA))):Tree),
+                    'opts'=((opts=''):string),
+                       (doF=false):boolean, 
+                       dm:DayMatrix, 
+                       (OutputStage=2):integer,
+                       'binary'=((binary=''):string)
+                  )
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs'.pid.'.fa';
+    seqout := GetTmpDir().'seqs'.pid.'.afa';
+    matfile := GetTmpDir().'matfile.'. pid:
+    ogt0fn := GetTmpDir().'seqs'.pid.'.afa.1.dnd';
+    ogtfn := GetTmpDir().'seqs'.pid.'.afa.best.dnd';
+    WriteFasta(seqs, [seq(string(i),i=1..length(seqs))], seqin);
+    selection := GetWrapperChoice('MSA/prank/prank.140603/src/prank'.GetExtension(), 'prank'.GetExtension(), binary);
+
+    pathExec := '';
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'prank'.GetExtension();
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/prank/prank.140603/src/prank'.GetExtension();
+    fi;
+    print('path to exec');
+    print(pathExec);
+    cmd := sprintf('%s -d=%s -o=%s -showtree %s',
+        pathExec, seqin, seqout, opts);
+    OutputStage_ := OutputStage;
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+        for f in Leaves(gtree) do
+            for i to length(labels) do
+                if labels[i] = f[1] then
+                    f[1] := string(i);
+                    break;
+                fi;
+            od;
+            if i > length(labels) then error('The gtree provided has labels which do not appear in labels!'); fi;
+        od;
+        OutputStage_ := 1;
+        t_newick := GetTmpDir().'newick'.pid;
+        gcp := Set(printgc=false);
+        OpenWriting(t_newick);
+        printf('%s;',  Tree_Newick(gtree, 'scale'=0.01, 'printBootstrapInfo'=false));
+        OpenWriting(previous);
+        Set(printgc=gcp);
+        cmd := cmd.sprintf(' -t=%s ', t_newick);
+    fi;
+    if doF then cmd := cmd.' +F ' fi;
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented');
+        cmd := cmd.sprintf(' -m=%s -gaprate=%.5f -gapext=%.5f',
+               matfile, gr, ge);
+    fi;
+    prints(cmd);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then
+        printf('%s\n',res[2]);
+        error('could not run prank');
+    fi;
+    #seqout := seqout.'.'.string(OutputStage_).'.fas';
+    seqout := seqout.'.best.fas';
+    aSeqs := ReadFastaWithCheck(seqout, [seq(string(i),i=1..length(seqs))]);
+    DeleteFiles([seqin, seqout]);
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+        ogt := gtree;
+    else
+        ogt := ParseNewickTree(ReadRawFile(ogtfn));
+    fi;
+    for f in Leaves(ogt) do f[1] := labels[parse(f[1])]; od;
+    #ogt0 := ParseNewickTree(ReadRawFile(ogt0fn));
+    #for f in Leaves(ogt0) do f[1] := labels[parse(f[1])]; od;
+    DeleteFiles([ogtfn]);
+    return(MAlignment(seqs, aSeqs, labels, 'method'='Prank', 'tree'=ogt, 'Time'=cputime));
+    #, 'tree0'=ogt0));
+end:
+
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+# /home/darwin/WrapperBinaries/MSA/ProGraphMSA
+#
+# ProGraphMSA -o <filename> <fasta file>
+#
+ProgressiveGraphMSA := proc(seqs:list(string), labels:list(string) ;
+                 gtree:Tree,
+                 'seqtype'=((seqtype='AA'):string),
+                 'iterations'=((iterations=2):posint),
+                 'binary'=((binary=''):string),
+                 'kappa'=((kappa=10.0):positive),
+                 'opts'=((opts='--darwin --mldist --estimate_aafreqs'):string),
+                 'trdetector'=((trdetector=GetWrapperDir().'TRD/TRUST/trust2treks.py'):string),
+                 'cslib'=((cslib=GetWrapperDir().'MSA/ProGraphMSA/K4000.lib'):string),
+                 'keep_gaps'=((keep_gaps=false):boolean)
+)
+    pid    := getpid():
+    seqin  := GetTmpDir().'tmpseqs.fa.'.pid:
+    seqout := GetTmpDir().'tmpseqs.stk.'.pid:
+    newickin := GetTmpDir().'tmptree.nw.'.pid:
+    errout := GetTmpDir().'tmperr.'.pid:
+    cmatrix := GetTmpDir().'cmatrix.'.pid:
+
+    pathExec := '':
+    selection := GetWrapperChoice('MSA/ProGraphMSA/ProGraphMSA_64', 'ProGraphMSA', binary, relPath32='MSA/ProGraphMSA/ProGraphMSA_32'):
+    if selection = BINARY_HARDCODED then
+        pathExec := binary:
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'ProGraphMSA':
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/ProGraphMSA/ProGraphMSA_64':
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'MSA/ProGraphMSA/ProGraphMSA_32':
+    else
+        error('no such selection known'):
+    fi:
+
+    mapping := table():
+    labels2 := CreateArray(1..length(labels)):
+    #labels2 = [seq(sprintf('%d',i),i=1..length(labels))]:
+    
+    for i to length(labels) do
+        labels2[i] := sprintf('S%d',i):
+        mapping[labels2[i]] := labels[i]:
+    od:
+
+    if trdetector <> '' then
+        opts := opts.' --repeats':
+        if trdetector <> 'internal' then
+        	opts := opts.' --custom_tr_cmd "'.trdetector.'"':
+        else
+            pid := getpid():
+            repeats_file := GetTmpDir().'repeats.treks.'.pid:
+            repeats := DetectRepeatsInSeqs(seqs,labels2):
+            WriteTreks(repeats,repeats_file):
+            opts := opts.' --no_force_align --read_repeats "'.repeats_file.'"':
+        fi:
+    fi:
+
+    if keep_gaps = true then
+        opts := opts.' -l 0':
+    fi:
+
+    if cslib <> '' then
+        opts := opts.' --cs_profile "'.cslib.'"':
+    fi:
+
+    if seqtype = 'AA' then
+        cmodel := '':
+    elif seqtype = 'DNA' then
+        cmodel := sprintf('--dna --custom_matrix %s',cmatrix):
+	OpenWriting(cmatrix):
+	printf('%f\n1 1\n1 1 %f\n\n.25 .25 .25 .25',kappa,kappa):
+	OpenWriting(previous):
+    elif seqtype = 'Codon' then
+        cmodel := '--codon':
+    else
+        error('sequence type '.seqtype.' not supported.'):
+    fi:
+
+    WriteFasta(seqs, labels2, seqin);
+    cmd := sprintf('%s --all_trees --iterations %d %s %s -o %s %s', pathExec, iterations, cmodel, opts, seqout, seqin):
+
+    cputime := 0;
+    if type(gtree,Tree) then
+	WriteTreeNewick(newickin, gtree):
+	cmd := cmd . sprintf(' -t %s ', newickin):
+    fi:
+
+    cmd := cmd . ' 2> ' . errout:
+    printf('%s\n',cmd):
+    cputime := time('all') - cputime:
+    res := TimedCallSystem(cmd):
+    cputime := time('all') - cputime:
+
+    stderr := ReadRawFile(errout):
+    DeleteFiles([errout]):
+    #lprint(stderr):
+
+    if mod(res[1],256) <> 0 then error('could not run ProGraphMSA: '.stderr.'; code='.res[1]) fi:
+
+    #rawresult := ReadRawFile(seqout):
+    #printf('%s\n',rawresult):
+
+    if type(gtree,Tree) then
+        DeleteFiles([newickin]):
+    fi:
+    DeleteFiles([seqin]):
+
+    if tandem_repeats = true and trdetector = 'internal' then
+        DeleteFiles([repeats_file]):
+    fi:
+
+    result := [ReadStockholmAlignment(seqout, labels2)]:
+
+    DeleteFiles([seqout]):
+
+    trees := []:
+    for n from 0 to iterations do
+        t := result[3,'guide_tree_iteration_'.n]:
+        if t = unassigned then
+            break:
+        fi:
+        #for l in Leaves(t) do
+        #    l['Label'] := mapping[l['Label']]:
+        #od:
+        trees := append(trees,t):
+    od:
+    gtree := result[3,'guide_tree']:
+    for l in Leaves(gtree) do
+	lab := l['Label']:
+	mlab := mapping[lab]:
+
+        #printf('%s -> %s\n',lab,mlab):
+        for ld in ['(',','] do for rd in [')',','] do
+            op := ld . lab . rd:
+            rp := ld . mlab . rd:
+            stderr := ReplaceString(op,rp,stderr):
+        od: od:
+        l['Label'] := mlab:
+    od:
+
+    return(MAlignment(seqs, result[1], labels, 'method'='ProgressiveGraphMSA', 'tree'=gtree, 'tree0'=trees, 'Time'=cputime, 'comment'=stderr)):
+end:
+
+end: #module
+
+module external PoaMSA;
+
+PoaMSA := proc(seqs:list(string), labels:list(string) ;
+                 'binary'=((binary=''):string)
+                 )
+    pid    := getpid():
+    seqin  := GetTmpDir().'tmpseqs.fa.'.pid:
+    seqout := GetTmpDir().'tmpseqs.pir.'.pid:
+    scoringmatrix := GetWrapperDir().'MSA/poaV2/blosum80.mat';
+
+    pathExec := '';
+    selection := GetWrapperChoice('MSA/poaV2/poa_64', 'poa', binary, relPath32='MSA/poaV2/poa_32');
+    if selection = BINARY_HARDCODED then
+        pathExec := binary;
+    elif selection = BINARY_IN_PATH then
+        pathExec := 'poa';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        pathExec := GetWrapperDir().'MSA/poaV2/poa_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        pathExec := GetWrapperDir().'MSA/poaV2/poa_32';
+    else
+        error('no such selection known');
+    fi;
+
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s -do_global -do_progressive -preserve_seqorder -pir %s -read_fasta %s %s', pathExec, seqout, seqin, scoringmatrix):
+
+    cputime := 0;
+    cputime := time('all') - cputime;
+    res := TimedCallSystem(cmd):
+    cputime := time('all') - cputime;
+
+    if mod(res[1],256) <> 0 then error('could not run POA: '.res[2].'; code='.res[1]) fi:
+    result := ReadFastaWithNames(seqout):
+    aseqs := result[1];
+    aseqs := [seq(ReplaceString('.', '_', aseqs[i]),i=1..length(result[1]))];
+    alabels := result[2];
+
+    if length(alabels) <> length(labels) then error('wrong number of sequences in result') fi:
+
+    DeleteFiles([seqin, seqout]):
+    return(MAlignment(seqs, aseqs, labels, 'method'='POA', 'Time'=cputime)):
+end:
+
+end: #module
+
+module external ClustalMSA, Clustalw18MSA;
+
+###############################################################################
+#
+#   ClustalMSA
+#
+#   ClustalMSA is a wrapper function to compute MSAs by clustalw2. See
+#   http://www.clustal.org/
+#   for program homepage.
+#
+#                                        Stefan Zoller, Nov 15, 2010
+###############################################################################
+
+ClustalMSA := proc(seqs:list(string) ;
+    labels:list(string),
+    # general settings
+    'align'=((align=true):boolean),                 # do full multiple alignment
+    'tree'=((tree=false):boolean),                  # calculate NJ tree
+    'bootstrap'=((bootstrap=-1):numeric),         # bootstrap a NJ tree (n= number of bootstraps)
+    'quicktree'=((quicktree=false):boolean),        # use FAST algorithm for the alignment guide tree
+    'seqtype'=((seqtype=''):{'PROTEIN','DNA',''}),  # PROTEIN or DNA sequences
+    'negative'=((negative=false):boolean),          # protein alignment with negative values in matrix
+
+    # settings for fast pairwise alignment
+    'ktuple'=((ktuple=-1):numeric),                 # word size
+    'topdiags'=((topdiags=-1):numeric),             # number of best diags.
+    'window'=((window=-1):numeric),                 # window around best diags.
+    'pairgap'=((pairgap=-1):numeric),               # gap penalty
+    'score'=((score=''):{'PERCENT','ABSOLUTE',''}),
+
+    # settings for slow pairwise alignment
+    'pwmatrix'=((pwmatrix=''):{DayMatrix, CodonMatrix, '','BLOSUM','PAM','GONNET','ID'}), # protein weight matrix
+    'pwgapopen'=((pwgapopen=-1):numeric),     # gap opening penalty
+    'pwgapext'=((pwgapext=-1):numeric),       # gap extension penalty
+
+    # settings for multiple alignments
+    'msamatrix'=((msamatrix=''):{DayMatrix, CodonMatrix, '','BLOSUM','PAM','GONNET','ID'}), # protein weight matrix
+    'gapopen'=((gapopen=-1):numeric),                   # gap opening penalty
+    'gapext'=((gapext=-1):numeric),                     # gap extension penalty
+    'endgaps'=((endgaps=false):boolean),                # no end gap separation pen.
+    'gapdist'=((gapdist=-1):numeric),                   # gap separation pen. range
+    'nogap'=((nogap=false):boolean),                    # residue-specific gaps off
+    'nohgap'=((nohgap=false):boolean),                  # hydrophilic gaps off
+    'maxdiv'=((maxdiv=-1):numeric),                     # % ident. for delay
+    'transweight'=((transweight=-1):numeric),           # transitions weighting
+    'iteration'=((iteration='NONE'):{'none','tree','alignment'}),
+    'numiter'=((numiter=-1):numeric),                   # maximum number of iterations to perform
+
+    # settings for structure alignments
+    'helixgap'=((helixgap=-1):numeric),                 # gap penalty for helix core residues
+    'strandgap'=((strandgap=-1):numeric),               # gap penalty for strand core residues
+    'loopgap'=((loopgap=-1):numeric),                   # gap penalty for loop regions
+    'terminalgap'=((terminalgap=-1):numeric),           # gap penalty for structure termini
+    'helixendin'=((helixendin=-1):numeric),             # number of residues inside helix to be treated as terminal
+    'helixendout'=((helixendout=-1):numeric),           # number of residues outside helix to be treated as terminal
+    'strandendin'=((strandendin=-1):numeric),           # number of residues inside strand to be treated as terminal
+    'strandendout'=((strandendout=-1):numeric),         # number of residues outside strand to be treated as terminal
+
+    # trees
+    'seed'=((seed=-1):numeric),                         # seed number for bootstraps.
+    'kimura'=((kimura=false):boolean),                  # use Kimura's correction.
+    'tossgaps'=((tossgaps=false):boolean),              # ignore positions with gaps.
+    'clustering'=((clustering=''):{'','NJ','UPGMA'}),
+
+    'binary'=((binary=''):string))
+
+    fnPre := GetTmpDir().'/t'.string(getpid()).'_'.string(Rand(1..1e8));
+    CallSystem('mkdir -p '.fnPre);
+
+    # path to executable
+    selection := GetWrapperChoice('MSA/clustalw-2.0.10/src/clustalw2_64', 'clustalw2', binary, relPath32='MSA/clustalw-2.0.10/src/clustalw2_32');
+    clustalfn := '';
+    if selection = BINARY_HARDCODED then
+        clustalfn := binary;
+    elif selection = BINARY_IN_PATH then
+        clustalfn := 'clustalw2';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        clustalfn := GetWrapperDir().'MSA/clustalw-2.0.10/src/clustalw2_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        clustalfn := GetWrapperDir().'MSA/clustalw-2.0.10/src/clustalw2_32';
+    else
+        error('no such selection known');
+    fi;
+
+    # write fasta file
+    if(not assigned(labels)) then labels := [seq(string(i),i=1..length(seqs))]; fi;
+    WriteFasta(seqs,[seq(string(i),i=1..length(seqs))],fnPre.'/temp.fasta');
+
+    # write matrix files if needed
+    if (msamatrix<>'' and (type(msamatrix)=DayMatrix or type(msamatrix)=CodonMatrix)) then
+      WriteClustalMatrix(fnPre.'/msamatrix.txt', msamatrix);
+    fi;
+
+    if (pwmatrix<>'' and (type(pwmatrix)=DayMatrix or type(pwmatrix)=CodonMatrix)) then
+      WriteClustalMatrix(fnPre.'/pwmatrix.txt', pwmatrix);
+    fi;
+
+    # create list of parameters used
+    # create list of parameters used
+    paramlist := ['-infile='.fnPre.'/temp.fasta', '-newtree='.fnPre.'/temp.ph', '-OUTORDER=INPUT',
+                If(align=true, '-align', NULL), If(tree=true, '-tree', NULL),
+                If(bootstrap>-1, '-bootstrap='.bootstrap, NULL), If(quicktree=true, '-quicktree', NULL),
+                If(seqtype<>'', '-type='.seqtype, NULL), If(negative=true, '-negative', NULL),
+                If(ktuple>-1, '-ktuple='.ktuple, NULL), If(topdiags>-1, '-topdiags='.topdiags, NULL),
+                If(window>-1, '-window='.window, NULL), If(pairgap>-1, '-pairgap='.pairgap, NULL),
+                If(score<>'', '-score='.score, NULL), If(pwgapopen>-1, '-pwgapopen='.pwgapopen, NULL),
+                If(pwgapext>-1, '-pwgapext='.pwgapext, NULL), If(gapopen>-1, '-gapopen='.gapopen, NULL),
+                If(gapext>-1, '-gapext='.gapext, NULL), If(endgaps=true, '-endgaps', NULL),
+                If(gapdist>-1, '-gapdist='.gapdist, NULL), If(nogap=true, '-nogap', NULL),
+                If(nohgap=true, '-nohgap', NULL), If(maxdiv>-1, '-maxdiv='.maxdiv, NULL),
+                If(transweight>-1, '-transweight='.transweight, NULL), '-ITERATION='.iteration,
+                If(numiter>-1, '-NUMITER='.numiter, NULL), If(helixgap>-1, '-helixgap='.helixgap, NULL),
+                If(strandgap>-1, '-strandgap='.strandgap, NULL), If(loopgap>-1, '-loopgap='.loopgap, NULL),
+                If(terminalgap>-1, '-terminalgap='.terminalgap, NULL),
+                If(helixendin>-1, '-helixendin='.helixendin, NULL),
+                If(helixendout>-1, '-helixendout='.helixendout, NULL),
+                If(strandendin>-1, '-strandendin='.strandendin, NULL),
+                If(strandendout>-1, '-strandendout='.strandendout, NULL),
+                If(seed>-1, '-seed='.seed, NULL), If(kimura=true, '-kimura', NULL),
+                If(tossgaps=true, '-tossgaps', NULL),
+                If(clustering<>'', '-clustering='.clustering, NULL) ];
+
+    if msamatrix<>'' then
+      if type(msamatrix)=string then
+        paramlist := append(paramlist, '-matrix='.msamatrix);
+      elif(type(msamatrix)=DayMatrix or type(msamatrix)=CodonMatrix) then
+        paramlist := append(paramlist, '-matrix='.fnPre.'/msamatrix.txt');
+      fi;
+    fi;
+
+    if pwmatrix<>'' then
+      if type(pwmatrix)=string then
+        paramlist := append(paramlist, '-pwmatrix='.pwmatrix);
+      elif(type(pwmatrix)=DayMatrix or type(pwmatrix)=CodonMatrix) then
+        paramlist := append(paramlist, '-pwmatrix='.fnPre.'/pwmatrix.txt');
+      fi;
+    fi;
+
+    params := string(seq(string(i).' ', i = paramlist), '-output=PIR');
+
+    # call binary
+    cmd := sprintf('%s %s', clustalfn, params);
+    cmd := 'cd '.fnPre.'; '.cmd;
+    if printlevel >= 2 then
+        printf('%s\n',cmd);
+    fi;
+
+    cputime := time('all');
+    res := TimedCallSystem(cmd, 259200):
+    cputime := time('all') - cputime;
+
+    if res[1] <> 0 then error('unsuccessful call: '.cmd) fi;
+
+    # read PIR format for alignment (adapted from MBA_Toolkit)
+    al := ReadPirFormat(fnPre.'/temp.pir');
+    assert(al[1] = [seq(string(i),i=1..length(seqs))]);
+    msanames := labels;
+    msaseqs := al[2];
+
+    # get the tree
+    clustaltree := ParseNewickTree(ReadRawFile(fnPre.'/temp.ph'));
+
+    # check that order and number of labels is still the same.
+    if length(msaseqs)<>length(seqs) then
+        error(sprintf('ERROR: Not the same number of seqs after aligning: '.
+                      '%d instead of %d', length(msaseqs), length(seqs)));
+    fi:
+
+    msa := MAlignment(seqs, msaseqs, msanames, 'method'='clustalw', 'tree'=clustaltree,'Time'=cputime);
+
+    CallSystem('rm -rf '.fnPre);
+
+    return(msa);
+end:
+
+Clustalw18MSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string, 'binary'=((binary=''):string))
+    global tmpDir, Clustalw1Fn;
+
+    pid    := getpid();
+    seqin  := tmpDir.'seqs.fa.'.pid;
+    seqout := tmpDir.'seqs.afa.'.pid;
+    matfile := tmpDir.'matfile.'. pid:
+
+    selection := GetWrapperChoice('MSA/clustalw1.83/clustalw_64', 'clustalw2', binary, relPath32='MSA/clustalw1.83/clustalw_32');
+    Clustalw1Fn := '';
+    if selection = BINARY_HARDCODED then
+        Clustalw1Fn := binary;
+    elif selection = BINARY_IN_PATH then
+        Clustalw1Fn := 'clustalw';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        Clustalw1Fn := GetWrapperDir().'MSA/clustalw1.83/clustalw_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        Clustalw1Fn := GetWrapperDir().'MSA/clustalw1.83/clustalw_32';
+    else
+        error('no such selection known');
+    fi;
+
+    WriteFasta(seqs, labels, seqin);
+    if seqtype = 'AA' then
+        sst := 'PROTEIN';
+    elif seqtype = 'DNA' then
+        sst := 'DNA';
+    else
+        error('unsupported data type');
+    fi;
+    cmd := sprintf(
+        '%s -INFILE=%s -OUTPUT=GCG -OUTORDER=INPUT -OUTFILE=%s -TYPE=%s',
+                   Clustalw1Fn, seqin, seqout, sst);
+    if type(dm,DayMatrix) then
+        WriteDayMatrixClustal(matfile, dm);
+        cmd := cmd.sprintf(' -MATRIX=%s -GAPOPEN=%d -GAPEXT=%d',
+               matfile, round(100*dm[FixedDel]), round(100*dm[IncDel]));
+    fi;
+
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run clustalw: '.res[2]) fi;
+    aSeqs := ReadGCGWithCheck(seqout, labels);
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+WriteClustalMatrix := proc(filename:string, mat:{DayMatrix,CodonMatrix})
+  if mat[Mapping] <> AToInt or length(mat[Sim])<>20 then
+    CallSystem(cleanup):
+    error('Only AA scoring matrices supported in clustalw.\n');
+  fi:
+
+  OpenWriting(filename):
+  for i to length(mat[Sim]) do printf(' %a', IntToA(i)) od:
+  print(' *'):
+  minarray := CreateArray(1..length(mat[Sim]), DBL_MAX):
+  for i to length(mat[Sim]) do
+    tempmin := DBL_MAX;
+    for j to length(mat[Sim]) do
+      entry := round(100*mat[Sim,i,j])/100;
+      if entry<tempmin then tempmin := entry: fi:
+      if entry<minarray[j] then minarray[j] := entry: fi:
+      printf(' %a', entry);
+    od:
+    printf(' %a\n', tempmin);
+  od:
+  for i to length(mat[Sim]) do
+    printf(' %a', minarray[i]);
+  od;
+  printf(' %a\n', min(minarray));
+  OpenWriting(previous):
+end:
+
+ReadPirFormat := proc(filename:string)
+  msaseqs := [];
+  msanames := [];
+  pirinput := ReadRawFile(filename);
+  offset := 0;
+  do
+      seqnamestart := CaseSearchString(';', pirinput[(offset+1)..-1])+2+offset;
+      if seqnamestart < (2+offset) then
+          break
+      fi;
+      seqnameend := CaseSearchString('\n\n', pirinput[(offset+1)..-1])+offset;
+      seqname := pirinput[seqnamestart..seqnameend];
+      msanames := append(msanames, seqname);
+
+      nextseqstart := seqnameend+3;
+      nextseqend := CaseSearchString('*', pirinput[nextseqstart..-1]) - 2 + nextseqstart;
+      nextseq := pirinput[nextseqstart..nextseqend];
+      msaseqs := append(msaseqs, nextseq);
+
+      offset := nextseqend + 1;
+  od;
+
+  # change '-' to '_'
+  for i to length(msaseqs) do
+      for j to length(msaseqs[i]) do
+          if msaseqs[i,j]='-' then
+              msaseqs[i,j] := '_';
+          fi:
+      od:
+      msaseqs[i] := string(seq(string(i), i = SearchDelim('\n', msaseqs[i])));
+  od:
+
+  return([msanames, msaseqs]);
+end:
+
+end: # clustalw module
+
+module external DialigntMSA, DialigntxMSA;
+
+DialigntMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string, 'binary'=((binary=''):string), 'dialigntConfDir'=((dialigntConfDir=''):string))
+
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+
+    selection := GetWrapperChoice('MSA/dialign/DIALIGN-T_0.2.2/bin/dialign-t', 'dialign-t', binary);
+    if selection = BINARY_HARDCODED then
+        if dialigntConfDir = '' then
+            error('You have to provide the dialign-t configuration folder.');
+        fi;
+        DialigntConfDir := dialigntConfDir;
+        DialigntFn := binary;
+    elif selection = BINARY_IN_PATH then
+        if dialigntConfDir = '' then
+            error('You have to provide the dialign-t configuration folder.');
+        fi;
+        DialigntConfDir := dialigntConfDir;
+        DialigntFn := 'dialign-t';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        DialigntConfDir := GetWrapperDir().'MSA/dialign/DIALIGN-T_0.2.2/conf/';
+        DialigntFn := GetWrapperDir().'MSA/dialign/DIALIGN-T_0.2.2/bin/dialign-t';
+    fi;
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented yet');
+    fi;
+
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s %s %s %s %s', DialigntFn, DialigntConfDir,
+                             If(seqtype='DNA','-D',''), seqin, seqout);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+
+    if res[1] <> 0 then error('could not run dialign-t: '.res[2]) fi;
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+DialigntxMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string, 'binary'=((binary=''):string), 'dialigntxConfDir'=((dialigntxConfDir=''):string))
+
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+
+    selection := GetWrapperChoice('MSA/dialign/DIALIGN-TX_1.0.1/bin/dialign-tx', 'dialign-tx', binary);
+    if selection = BINARY_HARDCODED then
+        if dialigntxConfDir = '' then
+            error('You have to provide the dialign-tx configuration folder.');
+        fi;
+        DialigntxConfDir := dialigntxConfDir;
+        DialigntxFn := binary;
+    elif selection = BINARY_IN_PATH then
+        if dialigntxConfDir = '' then
+            error('You have to provide the dialign-tx configuration folder.');
+        fi;
+        DialigntxConfDir := dialigntxConfDir;
+        DialigntxFn := 'dialign-tx';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        DialigntxConfDir := GetWrapperDir().'MSA/dialign/DIALIGN-TX_1.0.1/conf/';
+        DialigntxFn := GetWrapperDir().'MSA/dialign/DIALIGN-TX_1.0.1/bin/dialign-tx';
+    fi;
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented yet');
+    fi;
+
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s %s %s %s %s', DialigntxFn, DialigntxConfDir,
+                             If(seqtype='DNA','-D',''), seqin, seqout);
+
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run dialign-tx: '.res[2]) fi;
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+end:
+
+module external KalignMSA, DcaMSA;
+
+KalignMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix, 'binary'=((binary=''):string))
+    global tmpDir, KalignFn;
+
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+
+    if type(dm,DayMatrix) then
+        error('use of imported matrix not implemented yet');
+    fi;
+
+    selection := GetWrapperChoice('MSA/kalign2/kalign', 'kalign', binary);
+    if selection = BINARY_HARDCODED then
+        KalignFn := binary;
+    elif selection = BINARY_IN_PATH then
+        KalignFn := 'kalign';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        KalignFn := GetWrapperDir().'MSA/kalign2/kalign';
+    fi;
+
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s -i %s -o %s', KalignFn, seqin, seqout);
+
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+
+    if res[1] <> 0 then error('could not run kalign: '.res[2]) fi;
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+    #OpenWriting(seqout): OpenWriting(previous):
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+## This is not (yet) working - giving up for the moment.
+DcaMSA := proc(seqs:list(string), labels:list(string) ; dm:DayMatrix,
+    (seqtype='AA'):string)
+global DcaFn, DcaCostAAFn, DcaCostDNAFn;
+
+    if type(dm,DayMatrix) then error('option dm not implemented') fi;
+    pid    := getpid();
+    seqin  := GetTmpDir().'seqs.fa.'.pid;
+    seqout := GetTmpDir().'seqs.afa.'.pid;
+    matfile := GetTmpDir().'matfile.'. pid:
+
+    DcaFn := GetWrapperDir().'MSA/dca/bin/dca';
+    DcaCostAAFn := GetWrapperDir().'MSA/dca/cost/blosum62';
+    DcaCostDNAFn := GetWrapperDir().'MSA/dca/cost/dna';
+
+    if seqtype='AA' then DcaCostFn := DcaCostAAFn;
+    elif seqtype = 'DNA' then DcaCostFn := DcaCostDNAFn;
+    else error('unsupported data type');
+    fi;
+    WriteFasta(seqs, labels, seqin);
+    cmd := sprintf('%s -q -o -c %s %s > %s', DcaFn, DcaCostFn, seqin, seqout);
+    print(cmd);
+    cputime := time('all');
+    res := TimedCallSystem(cmd);
+    cputime := time('all') - cputime;
+    if res[1] <> 0 then error('could not run dca: '.res[2]) fi;
+    aSeqs := ReadFastaWithCheck(seqout, labels);
+
+    DeleteFiles([seqin, seqout]);
+
+    return(MAlignment(seqs, aSeqs, labels, 'Time'=cputime)):
+end:
+
+end:
+
+module external MuscleMSA;
+
+WriteTreeNewick := proc(fn, t:Tree)
+   ts := Tree_Newick(t,'scale'=0.01,'printBootstrapInfo'=false);
+   OpenWriting(fn);
+   printf('%s;',ts);
+   OpenWriting(previous);
+end:
+
+MuscleMSA := proc( seqs:list(string) ; labels:list(string) , dm:DayMatrix,
+    (seqtype='auto'):string, 
+    'gtree'=((gtree=Tree(Leaf(FakeB),1,Leaf(FakeA))):Tree), 
+    'binary'=((binary=''):string),
+    'opts'=((opts=''):string))
+
+    pid    := getpid():
+    seqin  := GetTmpDir().'seqs.fa.' . pid:
+    seqout := GetTmpDir().'seqs.afa.'. pid:
+    matfile := GetTmpDir().'matfile.'. pid:
+    ogtfn := GetTmpDir().'gtreeout.'. pid:
+
+    selection := GetWrapperChoice('MSA/muscle3.8.31/src/muscle_64', 'muscle', binary, 'relPath32'='MSA/muscle3.8.31/src/muscle_32');
+    if selection = BINARY_HARDCODED then
+        MuscleFn := binary;
+    elif selection = BINARY_IN_PATH then
+        MuscleFn := 'muscle';
+    elif selection = BINARY_IN_WRAPPER_FOLDER then
+        MuscleFn := GetWrapperDir().'MSA/muscle3.8.31/src/muscle_64';
+    elif selection = BINARY_IN_WRAPPER_FOLDER_32 then
+        MuscleFn := GetWrapperDir().'MSA/muscle3.8.31/src/muscle_32';
+    else
+        error(sprintf('no such selection: %A',selection));
+    fi;
+
+
+    gtree_cmd := '-tree2 '.ogtfn;
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+        t_newick := GetTmpDir().'newick'.pid;
+        WriteTreeNewick(t_newick, gtree); 
+        gtree_cmd := ' -usetree_nowarn '.t_newick.' ';
+    fi;
+
+    N := length(seqs):
+    if assigned(labels) then
+        if N<>length(labels) then
+            error('Number of labels does not match number of sequences');
+	fi:
+        lab := labels:
+    else
+        lab := [seq( sprintf('%d',i), i=1..N )];
+    fi:
+
+    # write a fasta file
+    WriteFasta(seqs, lab, seqin);
+
+    # call to muscle
+    if type(dm,DayMatrix) then
+        if length(dm[Sim]) <> 20 then
+            error('only protein alignments are currently supported by'.
+                  ' the wrapper');
+        fi;
+        OpenWriting(matfile):
+        for i to 20 do printf(' %a', IntToA(i)) od:
+        printf(' B Z X *');
+        for i to 20 do
+            printf('\n%a', IntToA(i));
+            for j to 20 do printf(' %d', round(100*dm[Sim,i,j])); od ;
+            printf(' -10000 -10000 -10000 -10000');
+        od:
+        for i in ['B','Z','X','*'] do
+            printf('\n%s',i);
+            for j to 24 do printf(' -10000'); od;
+        od:
+        OpenWriting(previous):
+
+        setenv('MUSCLE_MXPATH',GetTmpDir());
+        cmd := MuscleFn.' -in '.seqin.' -out '.seqout.' -matrix '.
+			SearchDelim('/',matfile)[-1].' -gapopen '.
+			string(100*dm[FixedDel]).' -gapextend '.string(100*dm[IncDel])
+                        .' -center 0 -seqtype '.seqtype.' '.gtree_cmd.' '.opts;
+    else
+        cmd := MuscleFn.' -in '.seqin.' -out '.seqout.' -seqtype '.seqtype.' '.gtree_cmd.' '.opts;
+    fi;
+    cputime := time('all');
+    prints(cmd);
+    res := TimedCallSystem(cmd):
+    cputime := time('all') - cputime;
+
+    if res[1] <> 0 then error( sprintf('ERROR in muscle: %s', res[2]) ); fi:
+
+    alignedSeqs := ReadFastaWithNames( seqout );
+
+    # check, that order and number of labels is still the same.
+    if length(alignedSeqs[2])<>N then
+        ErrorHandler(sprintf('ERROR: Not the same number of seqs after aligning: %d instead of %d',
+                        length(alignedSeqs[2]), N) );
+    fi:
+
+    aSeqs := CreateArray(1..N):
+    for i to N do
+        k := SearchArray(alignedSeqs[2,i], lab);
+        if k=0 then ErrorHandler('Label unknown:' . alignedSeqs[2,i]) fi:
+        aSeqs[k] := uppercase(alignedSeqs[1,i]):
+    od:
+
+    # cleanup
+    CallSystem('rm -f '.seqin.' '.seqout):
+
+    if gtree <> Tree(Leaf(FakeB),1,Leaf(FakeA)) then
+        DeleteFiles([t_newick]);
+        m := MAlignment(seqs, aSeqs, labels, 'tree'=gtree);
+    else
+        ogt := ParseNewickTree(ReadRawFile(ogtfn));
+        m := MAlignment(seqs, aSeqs, labels, 'tree'=ogt);
+    fi;
+    m['Time'] := cputime;
+    return(m):
+end:
+
+end:

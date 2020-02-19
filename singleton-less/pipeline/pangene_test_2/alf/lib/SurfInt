@@ -1,0 +1,95 @@
+# Excerpt from Thomas F. Jenny Structure Prediction Package:
+
+########################################################################
+#  Basic package for computer assisted secondary structure prediction  #
+#                                                Thomas F. Jenny 1994  #
+########################################################################
+
+# ------------------------------------------------------------------------------
+
+ReadLibrary ('Local/StructurePrediction'):
+
+# ------------------------------------------------------------------------------
+
+SurfInt := proc (ma, t:Tree)
+
+  description 'Surface/Interior assignment';
+
+  nalign := length (ma);
+  seqlen := length (ma[1]);
+
+  # Run SI active site prediction.
+  
+  Prediction:= CreateString(seqlen, '.');
+
+  Surf:= [];
+  Int:= [];
+  ThresholdMin:= -0.0;
+  ThresholdMax:= 0.2;
+
+  SurfAA:= ['KRED', 'KREND', 'KRENDH', 'KRENDHQ', 'KRENDHQT'];
+  IntAA:= ['FAMILYVW', 'FAMILYVWC', 'FAMILYVWCHQT'];
+  ActAA:= 'CHQSTKREND';
+
+  MaxPW:= PamWindows(t);
+  MA:= SortedMA (ma, t);
+
+  Cluster:= ClusterRelPam(t, MaxPW);
+
+  ActMatrixOut:= ActOut (MA, ActAA);
+
+  AlignedMatrixOut:= AlignedSeq (MA);
+
+  IntMatrix:= Interior(Cluster, MA, MaxPW, IntAA, ActMatrixOut);
+  IntMatrixTot:= InteriorTot(IntMatrix);
+  IntMatrixOut:= IntOut(IntMatrix, IntMatrixTot);
+  IntMatrixOut:= IntNorm(IntMatrixOut);
+  
+  SurfMatrix:= Surface(Cluster, MA, MaxPW, SurfAA, ActMatrixOut);
+  SurfMatrixTot:= SurfaceTot(SurfMatrix);
+  SurfMatrixOut:= SurfOut(SurfMatrix, SurfMatrixTot);
+  SurfMatrixOut:= SurfNorm(SurfMatrixOut);
+
+  #Further transformations:
+
+  SurfIntAct:= SurfMatrixOut[1] - IntMatrixOut[1];
+
+  for Pos to length(MA[1]) do
+    if SurfIntAct[Pos] > 0 then Surf:= append (Surf, SurfIntAct[Pos]) fi;
+    if SurfIntAct[Pos] < 0 then Int:= append (Int, SurfIntAct[Pos]) fi
+  od;
+
+  SurfMean:= sum (Surf) / length (Surf);
+  IntMean:= sum (Int) / length (Int);
+
+  for Pos to length(MA[1]) do
+    tmp := APC (ma, Pos);
+    if tmp = ' 'then
+
+      if SurfIntAct[Pos] < ThresholdMin then
+	if SurfIntAct[Pos] <= IntMean then 
+	  Prediction[Pos]:= 'I'
+	else
+	  Prediction[Pos]:= 'i'
+	fi
+      elif SurfIntAct[Pos] > ThresholdMax then
+	if SurfIntAct[Pos] >= SurfMean then 
+	  Prediction[Pos]:= 'S'
+	else
+	  Prediction[Pos]:= 's'
+	fi
+      fi
+    elif CaseSearchString (tmp, 'FAMILYVWPG') <> -1 then
+      Prediction[Pos]:= 'i'
+    elif CaseSearchString (tmp, 'KREND') <> -1 then
+      Prediction[Pos] := 's'
+    else
+      Prediction[Pos] := '.'
+    fi
+  od;
+
+  Prediction
+end:
+
+NULL;
+# ------------------------------------------------------------------------------

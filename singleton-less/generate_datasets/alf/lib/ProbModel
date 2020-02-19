@@ -1,0 +1,357 @@
+#
+# PrintPV: print a probability vector in a readable form
+#
+# Usage:  PrintPV( vect [, bound] );
+#
+#   where   vect is an array(1..20) of positive numeric
+#		values which are understood as probabilities.
+#
+#	    bound is an optional numerical argument.  If present
+#		only the values larger than bound will be printed.
+#
+#	    The output is a printed line with all the amino acids
+#		with probability higher than 0.1%
+#
+#			Gaston H. Gonnet (Dec 1990)
+#
+PrintPV := proc( a, bound )
+if nargs=2 and type(bound,numeric) then b := bound else b := 0.001 fi;
+if type(a,array(numeric,20)) then
+     suma := sum(a);
+     if suma <= 0 then error('invalid probability vector') fi;
+     sorta := sort(a);
+     for i from 20 by -1 to 1 while sorta[i]/suma > b do
+	j := SearchArray(sorta[i],a);
+	printf(' %c=%3.1f',IntToA(j),a[j]*100/suma) od;
+     printf('\n');
+elif type(a,list) then
+     printf('Probability vectors of the most ancestral sequence\n');
+     if assigned(Title) then printf('of %s\n',Title) fi;
+     lprint(date());
+     if b > 0 then
+	printf('  (printing only probabilities larger than %g%%)\n\n',
+				b*100 ) fi;
+     lprint('[');
+     for i to length(a) do printf('%3d ',i);  PrintPV(a[i],b) od;
+     lprint(']')
+else printf(' ');  lprint(a) fi;
+NULL
+end:
+#
+# PrintPM: print probabilistic match
+PrintPM := proc( m:[numeric,posint,posint,string,string,string])
+lt := length(m[4]);
+width := Set(screenwidth=80);  Set(screenwidth=width);
+lprint('Alignment of the probabilistic ancestral sequences');
+if assigned(Title) then printf('for %s\n\n',Title) else lprint() fi;
+printf('cost=%3.1f, lengths=%d,%d\n',m[1],m[2],m[3]);
+for i to round(lt/width+0.5) do
+	lprint( m[4,width*i-width+1 .. min(width*i,lt)] );
+	lprint( m[5,width*i-width+1 .. min(width*i,lt)] );
+	lprint( m[6,width*i-width+1 .. min(width*i,lt)] );
+	lprint()
+	od;
+lprint();
+lprint('Notes on the encoding:');
+lprint('   (1) An amino acid printed with a capital letter indicates that');
+lprint('	this amino acid appears with probability at least 90%');
+lprint('   (2) An amino acid printed with a lower case letter indicates');
+lprint('	that this amino acid appears with a probability between');
+lprint('	50% and 90%');
+lprint('   (3) An amino acid printing as a dot (.) indicates that all the');
+lprint('	possible choices had probability less than 50%');
+lprint('   (4) A vertical bar (|) in the middle row indicates an exact');
+lprint('	match of highly probable amino acids');
+lprint('   (5) An exclamation mark (!) in the middle row indicates a very');
+printf('	good match with Dayhoff-similarity larger than %3.1f\n',
+	DM[MaxOffDiag]/2);
+lprint('   (6) A colon (:) in the middle row indicates a good matching');
+printf('	with Dayhoff-similarity between 0 and %3.1f\n',
+	DM[MaxOffDiag]/2);
+lprint('   (7) A dot (.) in the middle row indicates a poor matching');
+printf('	with Dayhoff-similarity between %3.1f and 0\n',
+	DM[MinSim]/2);
+lprint('   (8) A blank space in the middle row indicates a very poor');
+printf('	matching with Dayhoff-similarity lower than %3.1f\n',
+	DM[MinSim]/2);
+end:
+
+#
+# Find most probable aminoacid and return an encoding for it
+MostProbAA := proc( p:array(numeric,20) )
+
+imx := 1;
+for i from 2 to 20 do if p[i] > p[imx] then imx := i fi od;
+if p[imx] > 0.9 then IntToA(imx)
+elif p[imx] > 0.5 then arndcqeghilkmfpstwyv[imx]
+else '.' fi
+end:
+
+#
+#  ProbTree( t:Tree )
+#
+#	Compute a probabilistic ancestral sequence for the
+#	given tree.
+#
+#	Returns a list with two components.
+#	 The first component is the probability vectors of
+#		the ancestral sequence
+#	 The second component is an array of the resulting
+#		multiple alignment
+#
+#				Gaston H. Gonnet (Mar 1991)
+#
+AllOnes := CreateArray(1..20,1):
+ProbTree := proc( t:Tree )
+
+if not type(AF,array(numeric,20)) then
+    error('AF should be assigned the amino acid frequencies') fi;
+res := ProbTreeR( t, t[2] );
+l := length(res[1]);
+for i to l do
+    for j to 20 do res[1,i,j] := res[1,i,j]*AF[j] od;
+    od;
+
+# minor corrections to the multiple alignment
+for i to length(res[2]) do
+    m := res[2,i];
+    if length(m) <> l then error('incorrect string length') fi;
+    for j to l while m[j]='_' do m[j] := ' ' od;
+    for j from l by -1 to 1 while m[j]='_' do m[j] := ' ' od;
+    for j to l-1 do if m[j]='-' and m[j+1]='_' then m[j+1] := '-' fi od;
+    for j from l by -1 to 2 do if m[j]='-' and m[j-1]='_' then m[j-1] := '-' fi od;
+    od;
+
+if VariabilityIndex = true then
+    for i to length(res[1]) do
+	printf('[%d,%.2f],\n', i, -10*log10( res[1,i]*AF ) );
+	od
+    fi;
+
+res
+end:
+
+ProbTreeR := proc( t:Tree, val:numeric )
+if op(0,t)=Leaf then
+     # external node
+     M := exp( max( 0, val - If( type(t,string), 0, t[2]) ) * NewLogPAM1 );
+     tt := If( type(t,string), t, t[1] );
+     res := CreateArray(1..length(tt));
+     for i to length(tt) do
+	res[i] := If( tt[i]=X, AllOnes, M[AToInt(tt[i])] ) od;
+     return( [res,[tt]] )
+else
+     v1 := ProbTreeR( t[1], min(val,t[2]) );
+     v3 := ProbTreeR( t[3], min(val,t[2]) );
+     M := exp( max(0,val-t[2]) * NewLogPAM1 );
+     pam := min(val,t[2])-t[1,2] + min(val,t[2])-t[3,2];
+     dyp := ProbDynProg( v1[1], v3[1], AF, max (length(v1[1]), length(v3[1])),
+			 -37.64 + 7.434*log10(pam), -1.3961);
+	
+     lo := length(dyp[4]);
+     if printlevel > 3 then
+         lprint('ProbTreeR, result of ProbDynProg:');
+         printf('%150.150s\n%150.150s\n%150.150s\n', dyp[4],dyp[5],dyp[6]);
+         printf('left size %d, pam length=%g\n', length(v1[2]),
+	    min(val,t[2])-t[1,2]);
+         printf('right size %d, pam length=%g\n', length(v3[2]),
+	    min(val,t[2])-t[3,2]);
+	 fi;
+
+     # Border condition:
+     #    1:  AAAA / bbbb / AAAA
+     #    2:  AAAA / bbbb / ____
+     #    3:  ____ / bbbb / AAAA
+     #   48:  AAAA / ---- / AAAA   (and dyp[6] is chopped)
+     #   49:  AAAA / ---- / AAAA   (and dyp[4] is chopped)
+     #   58:  AAAA /   -- / __AA   (and dyp[6] is chopped)
+     #   59:  AAAA /   -- / __AA   (and dyp[4] is chopped)
+     #   68:  __AA /   -- / AAAA   (and dyp[6] is chopped)
+     #   69:  __AA /   -- / AAAA   (and dyp[4] is chopped)
+
+     # compute end conditions and compute length of the answer
+     # first do the left end
+     for i1 to lo while dyp[4,i1]='_' do od;
+     for i2 to lo while dyp[5,i2]=' ' do od;
+     if dyp[5,i2] <> '-' then i2 := lo+1 fi;
+     for i3 to lo while dyp[6,i3]='_' do od;
+
+     if i1=i3 then lcond := If(dyp[5,1]='-',4,1)
+     elif i3>1 then lcond := If( i2>i3, 2, 5 )
+     else lcond := If( i2>i1, 3, 6 ) fi;
+     if lcond>3 then
+	for i4 from i2 while dyp[5,i4+1] = '-' do od;
+	lcond := 10*lcond + If( MultipleCount(v1[2],i4-i1+1) >
+				MultipleCount(v3[2],i4-i3+1), 8, 9 )
+     else i4 := i2+1
+	fi;
+
+     # Now do the right end
+     for j1 from lo by -1 to 1 while dyp[4,j1]='_' do od;
+     for j2 from lo by -1 to 1 while dyp[5,j2]=' ' do od;
+     if dyp[5,j2] <> '-' then j2 := 0 fi;
+     for j3 from lo by -1 to 1 while dyp[6,j3]='_' do od;
+
+     if j1=j3 then rcond := If(dyp[5,lo]='-',4,1)
+     elif j3<lo then rcond := If( j2<j3, 2, 5 )
+     else rcond := If( j2<j1, 3, 6 ) fi;
+     if rcond>3 then
+	for j4 from j2 by -1 while dyp[5,j4-1] = '-' do od;
+	rcond := 10*rcond + If( MultipleCount(v1[2],j4-j1) >
+				MultipleCount(v3[2],j4-j3), 8, 9 )
+     else j4 := j2-1
+	fi;
+
+     if mod(lcond,10)=8 then
+	if printlevel > 3 then
+	    printf('erasing from right match from %d to %d\n',i3,i4) fi;
+	for i from i3 to i4 do dyp[6,i] := '-' od fi;
+     if mod(rcond,10)=8 then
+	if printlevel > 3 then
+	    printf('erasing from right match from %d to %d\n',j4,j3) fi;
+	for i from j4 to j3 do dyp[6,i] := '-' od fi;
+     if mod(lcond,10)=9 then
+	if printlevel > 3 then
+	    printf('erasing from left match from %d to %d\n',i1,i4) fi;
+	for i from i1 to i4 do dyp[4,i] := '-' od fi;
+     if mod(rcond,10)=9 then
+	if printlevel > 3 then
+	    printf('erasing from left match from %d to %d\n',j4,j1) fi;
+	for i from j4 to j1 do dyp[4,i] := '-' od fi;
+
+     # Cases where the length of the total matching is shortened
+     if lcond=59 then
+	dyp[4] := dyp[4,i2..-1];
+	dyp[5] := dyp[5,i2..-1];
+	dyp[6] := dyp[6,i2..-1];
+	v1[1] := v1[1,i2..-1];
+	for i to length(v1[2]) do v1[2,i] := v1[2,i,i2..-1] od;
+     elif lcond=68 then
+	dyp[4] := dyp[4,i2..-1];
+	dyp[5] := dyp[5,i2..-1];
+	dyp[6] := dyp[6,i2..-1];
+	v3[1] := v3[1,i2..-1];
+	for i to length(v3[2]) do v3[2,i] := v3[2,i,i2..-1] od;
+	fi;
+
+     if rcond=59 then
+	dyp[4] := dyp[4,1..j2-lo-1];
+	dyp[5] := dyp[5,1..j2-lo-1];
+	dyp[6] := dyp[6,1..j2-lo-1];
+	v1[1] := v1[1,1..j2-lo-1];
+	for i to length(v1[2]) do v1[2,i] := v1[2,i,1..j2-lo-1] od;
+     elif rcond=68 then
+	dyp[4] := dyp[4,1..j2-lo-1];
+	dyp[5] := dyp[5,1..j2-lo-1];
+	dyp[6] := dyp[6,1..j2-lo-1];
+	v3[1] := v3[1,1..j2-lo-1];
+	for i to length(v3[2]) do v3[2,i] := v3[2,i,1..j2-lo-1] od;
+	fi;
+     lo := length(dyp[4]);
+
+     res := CreateArray(1..lo);
+     i1 := i3 := 1;
+
+     for i to lo do
+	if dyp[6,i]='_' then res[i] := v1[1,i1]*M;  i1 := i1+1
+	elif dyp[6,i]='-' then res[i] := v1[1,i1]*M;  i1 := i1+1;  i3 := i3+1
+	elif dyp[4,i]='_' then res[i] := v3[1,i3]*M;  i3 := i3+1
+	elif dyp[4,i]='-' then res[i] := v3[1,i3]*M;  i3 := i3+1;  i1 := i1+1
+	else res[i] := zip(v1[1,i1]*v3[1,i3])*M;
+	     i1 := i1+1;  i3 := i3+1;
+	     fi;
+	res[i] := res[i]/sum(res[i]);
+	od;
+     if i1-1 <> length(v1[1]) or i3-1 <> length(v3[1]) then
+	error('assertion V failed') fi;
+
+     return( [res, [ ExpandAlignment(dyp[4],v1[2]),
+		     ExpandAlignment(dyp[6],v3[2]) ]] )
+     fi
+end:
+
+#
+# MultipleCount: count how many aminoacids are in the aligned strings
+#
+#	(count overlaps basically, not just aminoacids)
+#
+MultipleCount := proc( a:array(string), lo:integer )
+tot := If( lo>0, -lo, lo-1 ) * 0.9;
+for s in a do
+    s := If( lo>0, s[1..lo], s[lo-1..-1] );
+    for j to length(s) do
+	if AToInt(s[j]) > 0 then tot := tot+1 fi od od;
+tot
+end:
+
+#
+# ConvertTree: Transform a MinSquareTree into a similar tree
+#  but with the sequences in place
+#
+# Usage: SequenceTree := ConvertTree( t );
+#
+#   where:  t is a phylogenetic tree with distances, as
+#		produced by MinSquareTree (of type Tree)
+#
+#	    This function will use the global array AllAll to
+#		select the longest text for each entry
+#
+#			Gaston H. Gonnet (Feb 1991)
+#
+ConvertTree := proc( t:Tree )
+
+if op(0,t)=Leaf then
+    tent := '';
+    for j to t[3]-1 do 
+	m := AllAll[t[3],j];
+	if type(m,Match) and m[Length2] > length(tent) then
+	     tent := m[Offset2] + DB[string];  tent := tent[1..m[Length2]]
+	elif type(m,Alignment) and m[Length2] > length(tent) then
+	     tent := m[Seq2]
+	fi
+    od;
+    for j from t[3]+1 to length(AllAll) do
+	m := AllAll[t[3],j];
+	if type(m,Match) and m[Length1] > length(tent) then
+	    tent := m[Offset1] + DB[string];  tent := tent[1..m[Length1]]
+	elif type(m,Alignment) and m[Length1] > length(tent) then
+	     tent := m[Seq1]
+	fi
+    od;
+    return( Leaf(copy(tent),t[2],t[3]) )
+
+else return( Tree( ConvertTree(t[1]), t[2], ConvertTree(t[3]) ) ) fi
+end:
+
+#
+#  ExpandAlignment: Expand a multiple alignment text vector
+#		   according to the information given by
+#		   dynamic programming.
+#
+#  The result is an expression sequence of aligned strings
+#
+#			Gaston H. Gonnet (Mar 1991)
+#
+ExpandAlignment := proc( o:string, T:array(string) )
+
+lo := length(o);
+t := T;
+
+for i to lo do
+
+    if o[i] = '-' then
+	for n to length(t) do t[n,i] := '-' od
+
+    elif o[i] = '_' then
+	for j from i to lo-1 while o[j+1] = '_' do od;
+	# o[i..j] is all underscores
+	for n to length(t) do
+	    t[n] := t[n,1..i-1] . o[i..j] . t[n,i..-1] od;
+	i := j
+	fi
+    od;
+
+if length(t[1]) <> lo then error('assertion VI failed') fi;
+op(t)
+end:
+

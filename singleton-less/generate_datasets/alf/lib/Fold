@@ -1,0 +1,355 @@
+# Purpose: Read brk and dssp files
+# Author:  Lukas Knecht
+# Created: 17 Jun 1994
+#
+PR_capAAA := enum(20): PR_capAAA := zip(uppercase(IntToAAA(PR_capAAA))):
+Fold := proc ()
+
+  if type ([args], list(string=anything)) then
+    return (noeval (Fold (args)))
+  fi;
+  error ('Invalid Fold format')
+end:
+Fold_type := noeval(structure(anything,Fold)):
+Fold_select := proc (p, sel, val) option internal;
+  for i to length (p) while op(1,p[i]) <> sel do od;
+  if i > length (p) then
+    error ('Invalid selector', sel)
+  fi;
+  if nargs = 3 then
+    p[i] := sel = val; val
+  else
+    op (2, p[i])
+  fi
+end:
+Fold_print := proc ()
+  global PR_capAAA;
+  option internal;
+  for x in [args] do
+    tag := op (1, x);
+    content := op (2, x);
+    if type (content, string) then
+      p := 1;
+      while p <= length (content) do
+	e := CaseSearchString ('\n', content[p..-1]);
+	if e < 0 then e := length (content) - p + 1fi;
+	printf ('%-10s%s\n', tag, content[p..p+e-1]);
+	p := p + e + 1
+      od
+    elif tag = 'CHAINS' then
+      for c in content do
+	seq := c[SEQ];
+	len := length (seq);
+	for i to trunc ((len + 12) / 13) do
+	  printf ('SEQRES%4d %c%5d ', i, c[ID], len);
+	  for j from 13 * i - 12 to min (13 * i, len) do
+	    printf (' %s', PR_capAAA[AAAToInt(seq[j,AA])])
+	  od;
+	  printf ('\n')
+	od
+      od;
+      for c in content do
+	print (c)
+      od
+    else
+      print (content)
+    fi
+  od
+end:
+  
+Chain := proc ()
+
+  if type ([args], list(string=anything)) then
+    return (noeval (Chain (args)))
+  fi;
+  error ('Invalid Chain format')
+end:
+Chain_type := noeval(structure(anything,Chain)):
+Chain_select := proc (c, sel, val) option internal;
+  for i to length (c) while op(1,c[i]) <> sel do od;
+  if i > length (c) then
+    if sel = 'string' then
+      seq := c[SEQ];
+      str := CreateString (length (seq));
+      for i to length (seq) do
+	str[i] := If (seq[i] = 'NULL', 'X', IntToA (AAAToInt (seq[i,AA])))
+      od;
+      return (str)
+    fi;
+    error ('Invalid selector', sel)
+  fi;
+  if nargs = 3 then
+    c[i] := sel = val; val
+  else
+    op (2, c[i])
+  fi
+end:
+Chain_print := proc () option internal;
+  c := noeval (Chain (args));
+  seq := c[SEQ];
+  nr := 0;
+  for i to length (seq) do
+    for atom in seq[i] do
+      coord := op (2, atom);
+      if type (coord, list) then
+	nr := nr + 1;
+	printf ('ATOM%7d  %-4s%-4s%c%4d    ',
+		nr, op (1, atom), PR_capAAA[AAAToInt(seq[i,AA])], c[ID], i);
+	for j to 3 do
+	  printf ('%8.3f', coord[j])
+	od;
+	for j from 4 to length (coord) do
+	  printf ('%6.2f', coord[j])
+	od;
+	printf ('\n')
+      fi
+    od
+  od
+end:
+
+Residue := proc ()
+
+  if type ([args], list(string=anything)) then
+    return (noeval (Residue (args)))
+  fi;
+  error ('Invalid Residue format')
+end:
+Residue_type := noeval(structure(anything,Residue)):
+Residue_select := proc (c, sel, val) option internal;
+  for i to length (c) while op(1,c[i]) <> sel do od;
+  if i > length (c) then
+    if sel = 'NormAcc' then
+      surf := [111.6, 231.4, 151.2, 154.7, 136.9, 183.2, 179.9,  75.6, 187.2,
+	       188.4, 192.2, 209.9, 196.6, 210.6, 146.2, 123.2, 145.8, 242.1,
+	       218.0, 164.8];
+      return (100 * c[ACC] / surf[AAAToInt (c[AA])])
+    fi;
+    error ('Invalid selector', sel)
+  fi;
+  if nargs = 3 then
+    c[i] := sel = val; val
+  else
+    op (2, c[i])
+  fi
+end:
+
+ReadBrk := proc (file: string)
+  global PR_capAAA, chains;
+
+  compressed := false;
+  tags := ['HEADER', 'SOURCE', 'SEQRES', 'ATOM'];
+  for i from 2 to nargs do
+    if type (args[i], string=boolean) and op (1, args[i]) = 'compressed' then
+      compressed := op (2, args[i])
+    elif type (args[i], string=list[string]) and op (1, args[i]) = 'tags' then
+      tags := op (2, args[i])
+    else
+      error ('Invalid option', args[i])
+    fi
+  od;
+  if compressed then
+    OpenPipe ('zcat file')
+  else
+    OpenReading (file)
+  fi;
+  final := NULL;
+  res := [];
+  lasttag := id := '';
+  chains := []; chainOffset := [];
+  do
+    t := ReadLine ();
+    if t = EOF or length (t) >= 3 and t[1..3] = 'END' then
+      if lasttag <> '' then
+	res := append (res, lasttag=lastdata)
+      fi;
+      for c in chains do
+	seq := c[SEQ];
+	for len from length (seq) by -1 to 1 while seq[len] = 'NULL' do od;
+	for i to len do
+	  if seq[i] <> 'NULL' then
+	    seq[i] := Residue(op(seq[i]))
+	  fi
+	od;
+	c[SEQ] := seq[1..len]
+      od;
+      res := append (res, CHAINS=chains);
+      final := final,noeval (Fold(op(res)));
+      if t= EOF then break fi;
+      res := [];
+      lasttag := id := '';
+      chains := []; chainOffset := [];
+      next
+    fi;
+    if length (id) = 0 then
+      for j from length (t) by -1 to 1 while t[j] = ' ' do od;
+      for k from j by -1 to 1 while t[k] <> ' ' do od;
+      id := t[k+1..j];
+      if length (id) > 0 then
+	res := append (res, ID=id)
+      fi
+    fi;
+    tag := sscanf (t, '%s');
+    if length (tag) = 0 or SearchArray (tag[1], tags) = 0 then next fi;
+    tag := tag[1];
+    if tag <> lasttag and lasttag <> '' then
+      res := append (res, lasttag=lastdata)
+    fi;
+    if tag = 'SEQRES' then
+      for i to length (chains) while chains[i,ID] <> t[12] do od;
+      len := atoi (t[14..17]);
+      if i > length (chains) then
+	seq := CreateArray(1..len, 'NULL');
+	chains := append (chains, Chain (ID=t[12], SEQ=seq));
+	chainOffset := append (chainOffset, 0)
+      else
+	seq := chains[i,SEQ]
+      fi;
+      ofs := 13 * (atoi (t[7..10]) - 1);
+      for j to 13 do
+	aa := t[4*j+16..4*j+18];
+	if aa <> '   ' then
+	  p := SearchArray (aa, PR_capAAA);
+	  if p = 0 then
+	    error ('Unknown residue', aa, 'in', t)
+	  fi;
+	  seq[ofs+j] := ['AA'=IntToAAA(p)]
+	fi
+      od;
+      tag := ''
+    elif tag = 'ATOM' then
+      for i to length (chains) while chains[i,ID] <> t[22] do od;
+      if i > length (chains) then
+	printf ('Warning: Created unknown chain ''%c''\n', t[22]);
+ 	seq := CreateArray(1..10000, 'NULL');
+	chains := append (chains, Chain (ID=t[22], SEQ=seq));
+	chainOffset := append (chainOffset, 0)
+      fi;
+      seq := chains[i,SEQ];
+      p := SearchArray (t[18..20], PR_capAAA);
+      if p = 0 then
+	error ('Unknown residue', t[18..20], 'in', t)
+      fi;
+      aa := IntToAAA(p);
+      nr := atoi (t[23..26]);
+      if seq[chainOffset[i]+nr] = 'NULL' then
+	seq[chainOffset[i]+nr] := ['AA'=aa]
+      elif op (2, seq[chainOffset[i]+nr,1]) <> aa then
+	for j from nr by -1 to 1 while op (2, seq[j,1]) <> aa do od;
+	if j = 0 then
+	  error ('Could not find residue', t[18..20], 'in', t)
+	fi;
+	chainOffset[i] := j - nr;
+	lprint ('Warning: chain', chains[i,ID], 'numbering shifted by',
+		-chainOffset[i])
+      fi;
+      name := sscanf (t[13..17], '%s')[1];
+      coord := sscanf (t[31..min (66, length (t))], '%g%g%g%g%g');
+      seq[chainOffset[i]+nr] := append (seq[chainOffset[i]+nr],
+					copy (name) = coord);
+      tag := ''
+    else
+      for i from 11 to length (t) while t[i] = ' ' do od;
+      for j from min (length (t), 72) by -1 to 1 while t[j] = ' ' do od;
+      t := t[i..j];
+      if tag = lasttag then
+	lastdata := lastdata.'\n'.t
+      else
+	lastdata := t
+      fi
+    fi;
+    lasttag := tag
+  od;
+  final
+end:
+
+ReadDssp := proc (file: string)
+  global PR_capAAA, chains;
+
+  compressed := false;
+  tags := ['HEADER', 'SOURCE'];
+  for i from 2 to nargs do
+    if type (args[i], string=boolean) and op (1, args[i]) = 'compressed' then
+      compressed := op (2, args[i])
+    elif type (args[i], string=list[string]) and op (1, args[i]) = 'tags' then
+      tags := op (2, args[i])
+    else
+      error ('Invalid option', args[i])
+    fi
+  od;
+  if compressed then
+    OpenPipe ('zcat file')
+  else
+    OpenReading (file)
+  fi;
+  res := [];
+  lasttag := '';
+  chains := []; last := []; shift := [];
+  inResidues := false;
+  do
+    t := ReadLine ();
+    if t = EOF then break fi;
+    if not inResidues then
+      tag := sscanf (t, '%s');
+      if length (tag) = 0 then next fi;
+      tag := tag[1];
+      if tag <> lasttag and lasttag <> '' then
+	res := append (res, lasttag=lastdata);
+	lasttag := ''
+      fi;
+      if tag = '#' then
+        inResidues := true
+      else
+	if tag = 'HEADER' then
+	  for i from length (t) by -1 to 1 while t[i] = '.' or t[i] = ' ' do od;
+	  for j from i by -1 to 1 while t[i] <> ' ' do od;
+	  res := append (res, ID=t[j+i..i])
+	fi;
+	if SearchArray (tag, tags) = 0 then next fi;
+	for i from 11 to length (t) while t[i] = ' ' do od;
+	for j from length (t) by -1 to 1 while t[j] = '.' or t[j] = ' ' do od;
+	t := t[i..j];
+	if tag = lasttag then
+	  lastdata := lastdata.'\n'.t
+	else
+	  lastdata := t
+	fi
+      fi;
+      lasttag := tag
+    elif t[14] <> '!' then
+      for i to length (chains) while chains[i,ID] <> t[12] do od;
+      if i > length (chains) then
+	seq := CreateArray(1..10000, 'NULL');
+	chains := append (chains, Chain (ID=t[12], SEQ=seq));
+	last := append (last, 0);
+	shift := append (shift, 0)
+      else
+	seq := chains[i,SEQ]
+      fi;
+      if t[14] >= 'a' then
+	p := AToInt('C')
+      else
+	p := AToInt(t[14]);
+	if p = 0 then
+	  error ('Unknown residue', t[14], 'in', t)
+	fi
+      fi;
+      nr := atoi (t[7..10]);
+      if nr = last[i] then shift[i] := shift[i] + 1 fi;
+      last[i] := max (last[i], nr);
+      acc := sscanf (t[35..38], '%d');
+      phi := sscanf (t[96..101], '%g');
+      psi := sscanf (t[102..107], '%g');
+      coord := sscanf (t[108..-1], '%g%g%g');
+      seq[shift[i]+nr] := Residue (AA=IntToAAA(p), SECONDARY=t[17], CA=coord,
+				   PHI=phi[1], PSI=psi[1], ACC=acc[1], NR=nr)
+    fi
+  od;
+  if lasttag <> '' then
+    res := append (res, lasttag=lastdata)
+  fi;
+  for i to length (chains) do
+    chains[i,SEQ] := chains[i,SEQ][1..last[i]+shift[i]]
+  od;
+  res := append (res, CHAINS=chains);
+  noeval (Fold(op(res)))
+end:

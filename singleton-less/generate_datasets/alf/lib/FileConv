@@ -1,0 +1,104 @@
+# Purpose: Several file conversion routines (used for multiple alignments)
+# Author:  Chantal Korostensky (5.1.95)
+# Modif:   AR (April 2007)
+# Info:   The executable files must be either in /home/rutishauser/oed4/darwin.hpux/bin/
+#         (turings) or /a/rutishauser/export/project/oed/oed4/darwin/bin (mendel)
+
+# Purpose: Convert an array of sequences to fasta format
+WriteFasta := proc( seqs:list(string); labs:list(string), 
+                    filename='temp.fasta':string )
+  ne := length(seqs);
+  if assigned(labs) and ne <> length(labs) then 
+    error ('Sequence and label array lengths differ') fi;
+  if not assigned(labs) then labs:=seq(i,i=1..ne) fi;
+  OpenWriting(filename);
+  for i to ne do
+    printf('>%s\n%s\n',labs[i],seqs[i]);
+  od; 
+  OpenWriting(previous);
+  NULL;
+end:
+  
+# Purpose: Reads a map sequence file, returns an array of sequences
+ReadMap:=proc()
+  global order, temp;
+
+  if nargs>0 then Filename:=args[1] else Filename:='/tmp/seq' fi;
+  code:=CallSystem('maptodar '.Filename.'.map '.Filename.'.map.dar');
+  if code<>0 then printf('ReadMap: returncode %d',code);fi;
+  ReadProgram(Filename.'.map.dar');
+  temp:=OrderArray(temp,order); 
+  DashtoDel(temp);
+  temp;
+end:
+
+ReadMsaFasta := proc(fname: string);
+  refs := copy([]);
+  seqs := copy([]);
+  OpenPipe ('cat ' .  fname);
+  do
+    t := ReadLine ();
+    if t = EOF then break; fi;
+    print(t);
+    if t <> '' then
+      if t[1] = '>' then refs := append (refs,t[3..-2]);
+      else seqs := append (seqs,t);
+      fi;
+    fi;
+ od;
+ msa := MultiAlign(seqs, refs);
+ return(msa);
+end:
+
+# Purpose: Read a fasta sequence file, returns an array of sequences
+ReadFasta:=proc(fn:string) 
+    ReadFastaWithNames(fn) 
+end:
+
+# Purpose: Read a pir (clustalw) sequence file, returns an array of sequences
+ReadPir:=proc()
+  global  temp;
+
+  if nargs>0 then Filename:=args[1] else Filename:='/tmp/seq' fi;
+  code:=CallSystem('pirtodar '.Filename.'.pir '.Filename.'.pir.dar');
+  if code<>0 then printf('ReadPir: returncode %d',code);fi;
+  ReadProgram(Filename.'.pir.dar');
+  DashtoDel(temp);
+  print(temp);
+  temp;
+end:
+
+ReadMsa:=proc(n: posint)
+global temp;
+
+ if nargs>1 then Filename:=args[2] else Filename:='/tmp/seq' fi;
+ code:=CallSystem('msatodar '.Filename.'.msa '.Filename.'.msa.dar');
+ if code<>0 then printf('ReadMsa: returncode %d',code);fi;
+ ReadProgram(Filename.'.msa.dar');
+ if length(temp)<n then return(0);fi;
+ tmp:=temp[1..n];
+ for i to length(temp)/n-1 do
+    for j to n do tmp[j]:=tmp[j].temp[j+i*n]; od;
+ od;
+ DashtoDel(tmp);
+ tmp;
+end:
+
+# Purpose: Read a .pima sequence file, returns an array of sequences
+ReadPima:=proc(n: posint)
+global order, temp;
+
+ if nargs>1 then Filename:=args[2] else Filename:='/tmp/seq' fi;
+ code:=CallSystem('pimatodar '.Filename.'-ML.pima '.Filename.'.pima.dar');
+ if code<>0 then printf('ReadPima: returncode %d',code);fi;
+ ReadProgram(Filename.'.pima.dar');
+ temp:=OrderArray(temp,order); 
+ DashtoDel(temp);
+ temp;
+end:
+
+DashtoDel := proc(Seq: array(string));
+ for i to length(Seq) do for j to length(Seq[i]) do
+   if Seq[i, j] = '-' or Seq[i, j] = ' ' then Seq[i, j] := '_' fi;
+ od od;
+end:

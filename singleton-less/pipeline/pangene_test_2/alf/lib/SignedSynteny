@@ -1,0 +1,339 @@
+#
+#   SignedSynteny is an implementation of the algorithm described in
+#   
+#       @inproceedings{314318,
+#       author = {Haim Kaplan and Ron Shamir and Robert E. Tarjan},
+#       title = {Faster and simpler algorithm for sorting signed
+#                permutations by reversals},
+#       booktitle = {SODA '97: Proceedings of the eighth annual ACM-SIAM 
+#                    symposium on Discrete algorithms},
+#       year = {1997}, isbn = {0-89871-390-0} pages = {344--351},
+#       location = {New Orleans, Louisiana, United States},
+#       publisher = {Society for Industrial and Applied Mathematics},
+#       address = {Philadelphia, PA, USA},}
+#
+#   except for the algorithm to find the connected components of the
+#   overlap graph; in the following paper a faster one is described:
+#
+#       @inproceedings{673354,
+#       author = {David A. Bader and Bernard M. E. Moret and Mi Yan},
+#       title = {A Linear-Time Algorithm for Computing Inversion Distance 
+#                between Signed Permutations with an Experimental Study},
+#       booktitle = {WADS '01: Proceedings of the 7th International Workshop
+#                    on  Algorithms and Data Structures},
+#       year = {2001}, isbn = {3-540-42423-7}, pages = {365--376},
+#       publisher = {Springer-Verlag}, address = {London, UK},}
+#
+#   SignedSynteny runs in O(n), where n = 2*ns+2 and ns is the length
+#   of the signed input permutation.
+#
+#
+#   Manuel Gil (Mar 2005)
+
+module external SignedSynteny;
+
+IsCorrectPerm := proc(p:array(integer))
+# Check if permutation contains all integers from 1 to lp ignoring the sign 
+    lp := length(p);
+    intExists := CreateArray(1..lp, 0);
+    for i in |p| do 
+        if i > lp or i < 1 then return(false) fi;
+        intExists[i] := 1 
+    od;
+    if sum(intExists) <> lp then return(false) fi;
+    return(true);
+end:
+
+Signed2UnsignedPerm := proc(ps:array(integer))
+# Remap the signed permutation to an unsigned one
+    lps := length(ps);
+    lp := 2*lps + 2;
+    p:= CreateArray(1..lp);
+
+    p[1] := 0;
+    for i from 1 to lps do 
+        if ps[i] >  0 then 
+            p[2*i] := 2*ps[i] - 1;
+            p[2*i+1] := 2*ps[i];
+        else    
+            p[2*i] := -2*ps[i];
+            p[2*i+1] := -2*ps[i] - 1;
+        fi;
+    od; 
+    p[lp] := lp-1;
+
+    return(p);
+end:
+
+NumBreakpoints := proc(p:array(integer))
+# Find the number of breakpoints
+    b := 0;
+    for i to length(p)-1 do 
+        if |p[i]-p[i+1]| > 1 then b := b + 1 fi; 
+    od;
+    return(b);
+end:
+
+Cycles := proc(p:array(integer))
+# Find all cycles in the breakpoint graph. 
+    lp := length(p);
+
+    # Inverse permutation (Plus 1 because we can not index 0)
+    invPlus1 := CreateArray(1..lp);
+    off := 1; #offset
+    for i to lp do invPlus1[p[i] +off] := i od;
+
+    # Find grey edges
+    greyEdges := CreateArray(1..lp, -1);
+    i1 := invPlus1[1 +off];
+    if i1 <> 2 then greyEdges[1] := i1 fi;
+    for i from 2 to lp-1 by 2 do
+        if p[i] < p[i+1] then
+            i1 := invPlus1[p[i]-1 +off];
+            i2 := invPlus1[p[i]+2 +off];
+        else
+            i1 := invPlus1[p[i]+1 +off];
+            i2 := invPlus1[p[i]-2 +off];
+        fi;
+        if i1 <> i-1 then greyEdges[i] := i1 fi;
+        if i2 <> i+2 then greyEdges[i+1] := i2 fi;
+    od;
+    i1 := invPlus1[lp-2 +off];
+    if i1 <> lp-1 then greyEdges[lp] := i1 fi;
+
+    # Count the number of cycles
+    isDone := CreateArray(1..lp, false);
+    cycle := CreateArray(1..lp);
+    numCycles := 0;
+    for i to lp do
+        if not isDone[i] and greyEdges[i] <> -1 then
+            # Starting point of circular tour
+            cycle[i] := i;
+            isDone[i] := true;
+            nex := i;
+
+            # The tour
+            onTour := true;
+            while onTour do 		
+                if mod(nex, 2) = 1 then nex := nex + 1
+                else nex := nex - 1 fi;
+                isDone[nex] := true;
+                cycle[nex] := i;
+                nex := greyEdges[nex];
+                isDone[nex] := true;
+                cycle[nex] := i;
+                if nex = i then onTour := false fi;
+            od;
+            numCycles := numCycles + 1;
+        fi;
+    od;
+    
+    res := table(unknown);
+    res[NumCycles] := numCycles;
+    res[Cycles] := cycle;
+    res[GreyEdges] := greyEdges;
+    return(res);
+end:
+
+ConnectedComponent := proc(cycle:array(integer), greyEdges:array(integer))
+# Find the connected components in the overlap graph
+    lp := length(greyEdges);
+    
+    #            | i is left end of interval of a cycle: right end of interval
+    # range[i]= -|
+    #            |                                 else: 0
+  
+    range :=  CreateArray(1..lp, 0);
+    for i to lp do
+        if greyEdges[i] <> -1 then range[cycle[i]] := i fi;
+    od;
+    
+    numComponents := 0;
+    components := [];
+    rootStack := CreateArray(1..lp);
+    rangeStack := CreateArray(1..lp);
+    stackPtr := 0;
+    for i to lp do 
+        if greyEdges[i] = -1 then next fi;
+        if cycle[i] = i then 
+            stackPtr := stackPtr + 1;
+            rootStack[stackPtr] := i;
+            rangeStack[stackPtr] := range[i];
+        else
+            right := i;
+            while rootStack[stackPtr] > cycle[i] do
+                cycle[rootStack[stackPtr]] := cycle[i];
+                right := max(right, rangeStack[stackPtr]);
+                stackPtr := stackPtr - 1;
+            od;
+            rangeStack[stackPtr] := max(rangeStack[stackPtr], right);
+            if rangeStack[stackPtr] <= i then
+                numComponents := numComponents + 1;
+                components := append(components, table(unknown));
+                components[numComponents][Index] := rootStack[stackPtr];
+                stackPtr := stackPtr - 1;
+            fi;
+        fi;
+    od;
+
+    nex := CreateArray(1..lp, -1);
+    cc := rangeStack;
+    for i to lp do
+        if greyEdges[i] = -1 then
+            cc[i] := -1
+        elif i <> cycle[i] then
+            nex[i] := nex[cycle[i]];
+            nex[cycle[i]] := i;
+        fi;
+    od;
+
+    for i to numComponents do
+        t := components[i][Index];
+        while t <> -1 do
+            cc[t] := i;
+            t := nex[t];
+        od;
+    od;
+
+    res := table(unknown);
+    res[CC] := cc;
+    res[Range] := range;
+    res[Cycle] := cycle;
+    res[Components] := components;
+    return(res);
+end:
+
+NumHurdlesAndFortress := proc(p:array(integer), cycleGraph)
+# Find hurdles and determine whether the graph is a fortress
+    cycles := cycleGraph[Cycles];
+    greyEdges := cycleGraph[GreyEdges];  
+    lp := length(greyEdges);
+
+    ConComp := ConnectedComponent(cycles, greyEdges);
+    cc := ConComp[CC];
+    cycle := ConComp[Cycle];
+    components := ConComp[Components];
+    if length(components) = 0 then return([0,0]) fi;
+
+    # Determine for any grey edge if it is oriented (if and only if
+    # i+j is even)
+    oriented := CreateArray(1..lp, false);
+    for i to lp do
+        j := greyEdges[i];   
+        if j <> -1 and i < j and mod(j-i,2) = 0 then
+            oriented[i] := true;
+            oriented[j] := true;
+        fi; 
+    od;
+
+    # If a connected component contains an oriented grey edge it is an
+    # oriented c. c.
+    for c in components do c[Oriented] := false od;
+    for i to lp do 
+        if oriented[i] then components[cc[i]][Oriented] := true fi;
+    od;
+
+    numOriented := 0;
+    for c in components do 
+        if not c[Oriented] then numOriented := numOriented + 1 fi;
+    od;
+    if numOriented = 0 then return([0,0]) fi;
+
+    for c in components do
+        c[Blocks] := 0;
+        c[Hurdle] := false;
+        c[GreatHurdle] := false;
+        c[SuperHurdle] := false;
+        c[Left] := -1;
+        c[Right] := -1;
+    od;
+    
+    # For unoriented components, check if all vertices that are endpoints
+    # of their grey edges occur consecutively in the permutation 
+    firstC := -1;
+    lastC := -1;
+    numBlock := -1;
+    for i to lp do
+        ci := cc[i];
+        if ci <> -1 and not components[ci][Oriented] and ci <> lastC then
+            if lastC = -1 then
+                firstC := ci;
+            else
+                components[lastC][Right] := ci;
+                components[ci][Left] := lastC;
+            fi;
+            lastC := ci;
+            numBlock := numBlock + 1;
+            components[ci][Blocks] := components[ci][Blocks] + 1;
+        fi;
+    od:
+    
+    # Hurdle: unoriented component having all vertices that are endpoints
+    #         of their grey edges consecutively in the permutation   
+    numHurdles := 0;
+    for c in components do
+        if not c[Oriented] and c[Blocks] = 1 then 
+            c[Hurdle] := true;
+            numHurdles := numHurdles + 1;
+        fi;   
+    od;
+
+    # Allow wrap around
+    if firstC = lastC and components[firstC][Blocks] = 2 then
+        components[firstC][Hurdle] := true;
+        components[firstC][GreatHurdle] := true;
+        numHurdles := numHurdles + 1;
+    fi;
+    if numHurdles < 3 then return([numHurdles, 0]) fi;
+
+    # SuperHurdle: if deletions of a hurdle creates a new one, it is
+    #              a super hurdle
+    numSuperHurdles := 0;
+    for c in components do
+        if c[Hurdle] then
+            if c[Left] <> -1 and c[Left] = c[Right] then
+                if components[c[Left]][Blocks] = 2 and
+                   components[c[Left]][GreatHurdle] then
+                    c[SuperHurdle] := true;
+                    numSuperHurdles := numSuperHurdles + 1;
+                else
+                    return(numHurdles, 0);
+                fi;
+            else
+                return(numHurdles, 0);
+            fi;
+        fi;
+    od;
+
+    # Fortress, if odd number of hurdles all of which are super
+    numFortress := 0;   
+    if numHurdles = numSuperHurdles and mod(numHurdles,2) = 1 then
+        numFortress := 1;
+    fi;
+    
+    return([numHurdles, numFortress]);
+end:
+
+
+SignedSynteny := proc(ps:array(integer))
+    if not IsCorrectPerm(ps) then
+        error('incorrect permutation');
+    fi;
+    
+    p := Signed2UnsignedPerm(ps);
+    
+    b := NumBreakpoints(p);
+    r := Cycles(p);
+    c := r[NumCycles];
+    hf := NumHurdlesAndFortress(p, r);
+    
+    #printf('The permutation contains ');
+    #printf('%d Breakpoints, %d Cycles, %d Hurdles\nand is%sa Fortress. ',
+    #        b, c, hf[1], If(hf[2]=1, ' ', ' not '));
+    #printf('The reversal distance to the identity is %d.\n', 
+    #        b-c+hf[1]+hf[2]);   
+
+    return(b - c + hf[1] + hf[2]);
+end:
+
+end: # end module

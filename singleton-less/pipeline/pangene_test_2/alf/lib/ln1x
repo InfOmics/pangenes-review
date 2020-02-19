@@ -1,0 +1,27 @@
+#
+#  ln1x == ln(1+x)
+#  expx1 == exp(x)-1
+#
+#	Computed acccurately when x is very small
+#
+#			Gaston Gonnet (May 12, 2002)
+#			Gaston Gonnet (Dec 07, 2004)
+#
+ln1x := proc( x:numeric )
+local i;
+if |x| > 0.125 then ln(1+x)
+elif |x| > 0.01 then
+     x - x^2/2 - sum( (-x)^i/i, i=3..18 )
+else x - (0.5-(1/3+(-1/4+(1/5+(-1/6+(1/7-x/8)*x)*x)*x)*x)*x)*x^2
+     fi
+end:
+
+
+expx1 := proc( x:numeric )
+if |x| > 0.6931 then exp(x)-1
+elif |x| > 0.0433217 then
+     t := procname(x/16);
+     to 4 do t := 2*t+t^2 od;
+     t
+else (1+(1+(1+(1+(1+(1+(1+x/8)*x/7)*x/6)*x/5)*x/4)*x/3)*x/2)*x fi
+end:

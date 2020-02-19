@@ -1,0 +1,107 @@
+# Purpose: Standard routine for ParExecute slave
+# Author:  Lukas Knecht
+# Created:  1 Nov 1993
+#
+Set(printgc=false):
+error_string := proc ()
+  global tmpfile, PE_oldnames, PE_job;
+  option internal;
+  res := '';
+  for i to nargs do
+    if type (args[i], string) or type (args[i], integer) then
+      res := res.' '.args[i]
+    fi
+  od;
+  errfile := tmpfile.'.Input';
+  OpenWriting (errfile);
+  printf ('#Global variables when job %d terminated:\n', PE_job);
+  for v in {names ()} minus {PE_oldnames} minus {DM, DMS} do
+    if CaseSearchString('_', v) < 0 then
+      vv := eval (v);
+      if not type (vv, procedure) then
+	if not type (vv, database) and type (vv, string) then
+	  if vv <> v then
+	    printf ('%s := ''', v);
+	    for i to length (vv) do
+	      if vv[i] = '''' then printf ('''') fi;
+	      printf ('%c', vv[i])
+	    od;
+	    printf (''':\n')
+	  fi
+	else
+	  printf ('%s := %a:\n', v, vv)
+	fi
+      fi
+    fi
+  od;
+  OpenAppending (tmpfile);
+  res[2..-1].' (input in '.errfile.')'
+end:
+
+ParExecSlave := proc (timeout: posint, nice: integer)
+  global nojob, tmpfile, PE_job, PE_oldnames;
+  option internal;
+ # option trace;
+ # OpenAppending('~cbrg/debug/cbrg.trace');
+ # lprint('Entering ParExecSlave', timeout);
+  nojob := false;
+  pid := getpid ();
+  tmpfile := '/tmp/ParExec'.pid;
+  ConnectTcp ('/tmp/.ipc/darwin', true); 
+  n := If (nargs = 1, 19, nice);
+  if n > 0 then
+    # Check for HP/UX machines (dirty, but it is all we can do)
+    h := hostname();
+    if h[1..2] = 'ee' or length(h) >= 6 and h[1..6] = 'turing' then
+      CallSystem ('renice -n '.n.' '.pid)
+    else
+      CallSystem ('renice +'.n.' '.pid)
+    fi
+  fi;
+  PE_oldnames := names ();
+  host := ReadTcp (timeout);
+  if host = NULL then error ('Could not get data') fi;
+  if traperror (init ()) = lasterror then
+    PE_job := 0;
+    SendDataTcp (host[1], host[2], 'RERROR 0:'.error_string(lasterror))
+  else
+    t0 := time ();
+    SendDataTcp (host[1], host[2], sprintf ('INIT DONE %g', t0));	
+    do
+      PE_job := 0;
+      r := ReadTcp (timeout);
+      if nojob then break fi;
+      if r = NULL then
+	SendDataTcp (host[1], host[2], 'CONTINUE');
+	r := ReadTcp (timeout);
+	if r = NULL or nojob then break fi
+      fi;
+      if PE_job > 0 then 
+#	OpenAppending('~cbrg/debug/cbrg.trace');
+#	lprint('starting job in paarexecslave:');
+	res := traperror (job ()); 
+#	OpenAppending('~cbrg/debug/cbrg.trace');
+#	lprint('result in parexecslave:', res);
+	if res = lasterror then
+	  SendDataTcp (host[1], host[2], 
+		       sprintf ('RERROR %d:%s', PE_job, 
+				error_string(lasterror)));
+	  break
+	elif not type (res, string) then
+	  SendDataTcp (host[1], host[2],
+		       sprintf ('RERROR %d:job () did not return string',
+				PE_job));
+	  break
+	fi;
+	t1 := time ();
+	SendDataTcp (host[1], host[2], 
+		     sprintf ('RESULT %d %g:', PE_job, t1 - t0) . res);
+	t0 := t1
+      fi
+    od
+  fi;
+#  CallSystem ('rm '.tmpfile);
+  CallSystem ('rm '.tmpfile.'*'); 
+  CallSystem ('rm /tmp/'.pid.'*');
+  DisconnectTcp ()
+end:

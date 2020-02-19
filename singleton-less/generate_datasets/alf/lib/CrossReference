@@ -1,0 +1,59 @@
+#
+#  Function to create a cross-reference between entries and
+#  short names (to be used for plotting).
+#
+#  The argument to CrossReference is an array of offsets
+#   of the entries to be described
+#
+#				Gaston H. Gonnet (Dec 1990)
+CrossReference := proc( en:array(integer) )
+
+if not type(DB,database) then error('DB has to be assigned a database') fi;
+
+lprint();
+if assigned(Title) then lprint(Title);  lprint() fi;
+printf('Cross reference (%s):',date());  lprint();
+res := ShortNames(length(en));
+
+for i to length(en) do
+
+    entr := Entry(GetEntryNumber(en[i]));
+    r := SearchTag('AC',entr);
+    if r = '' then
+	 j0 := CaseSearchString('P1;',entr);
+	 if j0 >= 0 then
+	      j1 := CaseSearchString(' ',j0+entr);
+	      j2 := CaseSearchString('$',j0+entr);
+	      j1 := min(If(j1<0,length(entr),j1+j0),
+		        If(j2<0,length(entr),j2+j0));
+	      r := entr[j0+4..j1]
+	 else r := 'entry ' . (GetEntryNumber(en[i]))
+	      fi
+    else r := r[1..-2]
+	 fi;
+    r := res[i] . ' -- (' . r . ')';
+    t := SearchTag('ID',entr);
+    if t <> '' then r := r . '  ' . (sscanf (t, '%s')[1]) fi;
+    t := SearchTag('DE',entr);
+    if t <> '' then r := r . '  ' . t fi;
+    t := SearchTag('OS',entr);
+    if t <> '' then r := r . '  ' . t fi;
+    print(Paragraph(r,-10))
+    od;
+res
+end:
+
+ShortNames := proc( n:integer )
+
+singlet := 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
+ls := length(singlet);
+res := CreateArray(1..n);
+for i to n do
+    if i <= ls then # a single letter is enough
+	res[i] := singlet[i];
+    elif i <= ls*(ls+1) then # two letters
+	res[i] := singlet[ round(i/ls-0.5) ] . singlet[ mod(i-1,ls)+1 ];
+    else error('too many sequences to cross-reference') fi;
+    od;
+res
+end:

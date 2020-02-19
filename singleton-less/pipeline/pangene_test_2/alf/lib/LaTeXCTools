@@ -1,0 +1,418 @@
+#
+# Purpose:  LaTeXC Components for building LaTeX documents
+#
+# Author:   Peter von Rohr
+# started:  Fri Mar 14 18:12:41 CET 2003
+#
+
+
+LaTeX := proc( a, titl:string, auth:string )  option polymorphic;
+
+  if type(a,string) then
+    r := GetFileInfo('%'):
+    r := r . '\\documentclass{article}\n':
+    ### # per default we include html- and color-package, and we fix the 
+    ### #  paragraph indentation to 5pt.
+    r := r . '\\usepackage{html,color,epsfig}\n\\setlength{\\parindent}{5pt}\n\n':
+    r := r . '\\begin{document}\n':
+    if nargs > 1 then
+      r := r . '\\title{' . titl . '}\n':
+    fi:
+    if nargs > 2 then
+      r := r . '\\author{' . auth . '}\n\\maketitle\n':
+    fi:
+    r := r . a . '\n\\end{document}\n':
+  else
+    for f in [LaTeXC,string] do
+      t := traperror(f(a));
+      if t <> lasterror and not type(t,structure(anything,LaTeXC)) then
+        if nargs >= 2 then return( LaTeX(t,args[2..nargs]) ) fi;
+        t2 := traperror(a[title]);
+        if t2 <> lasterror then return( LaTeX(t,t2) ) fi;
+        t2 := traperror(a[Title]);
+	      if t2 <> lasterror then return( LaTeX(t,t2) ) fi;
+        t3 := traperror(a[author]);
+        if t3 <> lasterror then return( LaTeX(t,t2,t3) ) fi;
+        t3 := traperror(a[Author]);
+        if t3 <> lasterror then return( LaTeX(t,t2,t3) ) fi;
+        return( LaTeX(t) )
+	    fi;
+	 od;
+   noeval( LaTeX(args) ):
+  fi:
+end:
+latex := eval(LaTeX):
+
+### ############################################### ###
+
+LaTeXC := proc() option polymorphic, internal;
+noeval( procname(args) )
+end:
+
+### ############################################## ###
+
+HyperLink_LaTeXC :=  proc( hy:HyperLink ) option internal;
+  '\\htmladdnormallink{'.hy[text].'}{'.hy[URL].'}' end:
+
+### ############################################## ###
+
+LastUpdatedBy_LaTeXC := proc( lub:LastUpdatedBy ) option internal;
+  if length(lub) = 0 then 
+    '\\\nLast updated on ' . date() . '\n'
+  else '\\\nLast updated on ' . date() . ' by ' . 
+    string( lub[who] ) . '\n' 
+  fi:
+end:
+
+### ############################################## ###
+
+Copyright_LaTeXC := proc( copr:Copyright ) option internal;
+d := date();
+if length(copr) = 0 then
+     sprintf( '\\copyright %s\n', d[-4..-1] )
+else sprintf( '\\copyright %s by %s\n', d[-4..-1], copr[who] ) fi
+end:
+
+### ############################################## ###
+
+Paragraph_LaTeXC := proc( p:Paragraph ) option internal;
+  r := '\n':
+  ### # In LaTeX the paragraph indent was fixed to 5 pt which 
+  ### #  corresponds to about 1 character with font size 11pt. 
+  ### # W.r.t indents we distinguish 3 separate cases:
+  ### #  (1) indent = 0 ==> use \noindent
+  ### #  (2) indent > 0 ==> insert \indent <indent> times
+  ### #  (3) indent < 0 ==> combine \flushright, \parbox, and \hspace
+ 
+  ### # use \noindent for indent=0
+  if p[indent] = 0 then
+    r := r . '\\noindent ':
+  ### # insert \indent's for p[indent] > 0
+  elif p[indent] > 0 then
+    to p[indent] do
+      r := r . '\\indent ':
+    od:
+  else  ### # i.e. p[indent] < 0
+  ### # negative indents are implemented as a box which is flushed right,
+  ### #  the width of the box depends on the indent. assuming the 
+  ### #  textwidth to be 360 pt, and a char about 5 pt, so per char 
+  ### #  that we have to indent the text, the box is reduced in width at 
+  ### #  about 1/72. The first line has then a horizontal space.
+  r := r . '\\begin{flushright}\n':
+  r := r . '  \\parbox[l]{' . sprintf('%.3f\\textwidth}{\\hspace{%dex}',
+         (1+p[indent]/72) ,p[indent] ):
+  fi:
+  for i from 2 to length(p) do 
+    r := r . LaTeXC(p[i]):
+  od:
+  if p[indent] < 0 then
+    r := r . '}\n\\end{flushright}':
+  fi:
+  return(r . '\n'):
+end:
+
+### ############################################## ###
+
+TextBlock_LaTeXC := proc( b:TextBlock ) option internal;
+    r := '\n\\begin{' . b[1] . '}';
+    for i from 2 to length(b) do
+        if type(b[i]) <> equal then    
+            r := r . LaTeXC(b[i]):
+        fi:
+    od:
+    r := r . '\\end{' . b[1] . '}\n\n';
+end:
+
+
+### ############################################## ###
+
+DocEl_LaTeXC := proc( d:DocEl ) option internal;
+    r := '\\'.d[1].'{';
+    for i from 2 to length(d) do
+        if type(d[i]) <> equal then
+            r := r.LaTeXC(d[i]);
+        fi:
+    od:
+    r := r.'}';
+end:
+
+### ############################################## ###
+
+Table_LaTeXC := proc( t:Table ) option internal;
+  ### # implement Table as a LaTeX component as in HTMLC. This is 
+  ### #  also based on Markus Friberg's version of Table_latex	
+  opts := {};
+  colal := NULL;
+  tit := NULL;
+  rows := [];
+  ### # in latex, we do not need a gutter per default as in html. 
+  ### #  so we use the gutter for column widths specified via p{xxcm}
+  ### #  where xx is the number passed via the gutter argument.
+  gut := NULL;
+	wid := NULL;
+	### # parse arguments
+  for z in t do
+	   if member(z,{center,border,hastitlerow}) then opts := opts union {z};
+     elif type(z,structure({string,structure(posint,noeval(p))},ColAlign)) then colal := copy(z)
+     elif type(z,'title'=string) then tit := op(2,z)
+     elif type(z,'gutter'={0,posint}) then gut := op(2,z)
+     elif type(z,'wid'={0,posint}) then wid := op(2,z)
+     elif type(z,'width'={0,posint}) then wid := op(2,z)
+     elif type(z,structure(anything,Row)) then rows := append(rows, z)
+     elif z = rowwise then error('Values not yet implemented in html')
+     elif type(z,'gutter'=list({0,posint})) then
+	     gut := error('gutter list not yet implemented in html')
+     elif type(z,structure(string,Values)) then
+	     error('Values not yet implemented in html')
+     elif z='Rule' then rows := append(rows, z)
+     else error(z,'is an invalid argument of Table') fi
+  od;
+ 
+  # ignore the p(xx) verison of ColAlign
+  if colal<>NULL then 
+	for i to length(colal) do
+	     if type(colal[i],structure(posint,noeval(p))) then colal[i] := 'l' fi;
+   	od;
+  fi;
+ 
+  ### # start setting up the table
+  out := '\\begin{table}[!ht]\n';
+  out := out . If( member(center, opts), '\\begin{center}\n', '' );
+  out := out . '\\begin{tabular}{';
+	### # check for equal number of columns in all rows
+  for z in rows do
+     if z <> 'Rule' then
+        if assigned(ncols) then
+           if ncols <> length(z) then
+              error(ncols,'Rows have different number of columns') fi;
+        else ncols := length(z) fi fi
+     od;
+  ### # do separator and column alignment, gutter is ignored, since we 
+  ### #  do not know how to convert this to latex. another thing that is 
+  ### #  unknown is how to combine ColAl and wid arguments. For now 
+  ### #  priority is given to ColAl which overrules wid.
+  sep := If( member(border, opts), '|', ' ' );
+  out := out . sep;
+  if colal<>NULL then
+       for a to length(colal) do out := out . colal[a] . sep od:
+  elif wid<>NULL then ### # wid is specified in nr of character.
+                      ### #  we assume 0.2 cm per character.
+       to ncols do out := out . sprintf('p{%.1fcm}', 0.2*wid) . sep od:
+  else ### # fix column alignmnents to just 'c'
+       to ncols do out := out . 'c' . sep od:
+  fi:
+  out := out . '}\n';
+  ### # add in table content
+  out := out . If( member(border, opts), '\\hline\n', '' );
+  for z in rows do
+    if z = 'Rule' then
+        out := out . '\\hline\n';
+    else
+	out2 := '';
+	for j to ncols do
+	    if z[j] = 'SpanPrevious' then next fi;
+	    for k from j+1 to ncols while z[k] = 'SpanPrevious' do od;
+	    out3 := If( z[j]='', ' ', LaTeXC(z[j]) );
+	    if k > j+1 then out3 := sprintf( '\\multicolumn{%d}{%s%s%s}{%s}',
+		k-j, If( out2='', sep, '' ), If( colal<>NULL, colal[j], 'c' ),
+		sep, out3 ) fi;
+	    out2 := If( out2='', out3, out2 . ' & ' . out3 )
+	od;
+        out := out . out2 . '\\\\\n';
+    fi:
+  od:
+  out := out . If( member(border, opts), '\\hline\n', '' );
+  ### # finish up table
+  out := out . '\\end{tabular}\n';
+  out := out . If( tit<>NULL, '\\caption{' . tit . '}\n', '' );
+  out := out . If( member(center, opts), '\\end{center}\n', '' );
+  out := out . '\\end{table}\n';
+end:
+
+### ############################################## ###
+
+List_LaTeXC := proc( lst:List ) option internal;
+  ### # check for min nr of elements in list
+	ll := length(lst);
+	if ll < 2 then
+	    error('List should have at least two arguments') fi;
+  	f := lst[1];
+  ### # if the first element is of type procedure, then
+  ### #  we do nothing here, but just let the procedure 
+  ### #  generate the pattern. Otherwise the pattern is 
+  ### #  generated.
+	if type(f,procedure) then
+	elif type(f,string) and SearchString('%',f) >= 0 then 
+	     pat := f;  f := x -> sprintf( pat, x )
+	elif type(f,string) then pat := f;  f := x -> pat fi;
+  ### # generate the labels from the pattern
+	labels := [ seq(string(f(i)), i=1..ll-1 ) ];
+  ### # check type of labes to be a list of strings
+	if not type(labels,list(string)) then
+	    error('labelling function does not produce strings',labels) fi;
+  ### # set up List header. Lists are converted to itemize
+  ### #  environment.
+  r := '\n\\begin{itemize}\n';
+  for i from 2 to ll do
+    r := r . '\\item[' . labels[i-1] . ']' . LaTeXC(lst[i]) .'\n';
+  od;
+  return( r . '\\end{itemize}\n' ):
+end:
+
+### ############################################## ###
+
+Indent_LaTeXC := proc( ind:Indent ) option internal;
+t := '';
+if length(ind) < 2 or not type(ind[1],integer) then
+    error(ind,'invalid arguments')
+elif ind[1] < 0 then error('not implemented yet') fi;
+if ind[1]=0 then
+     for i from 2 to length(ind) do t := t . LaTeXC(ind[i]) od;
+     return( t ) fi;
+return( '\n' . LaTeXC( Indent( max(0,ind[1]-5), ind[2..-1] )) . '\n' )
+end:
+
+
+### ############################################## ###
+
+Document_LaTeXC := proc( doc ) option internal;
+  r := '':
+  for z in doc do
+    t := traperror(LaTeXC(z)):
+    if t=lasterror or not type(t,string) then
+      t := sprintf( 'LaTeXC did not convert from %A to %A', z, t):
+    fi:
+    r := r . t:
+  od:
+  return(r):
+end:
+
+### ############################################## ###
+
+Alignment_LaTeXC := proc( al ) option internal;
+  wid := Set(screenwidth=80);
+  r := '\\begin{verbatim}\n' . string(al) . '\n\\end{verbatim}\n':
+  Set(screenwidth=wid);
+  return(r):
+end:
+
+### ############################################## ###
+
+Code_LaTeXC := proc( al ) option internal;
+  r := '\\begin{verbatim}\n':
+  # for verbatim, do not do any latexing, it will NOT be translated
+  for d in al do r := r . string(d) od:
+  return( r . '\n\\end{verbatim}\n'):
+end:
+
+### ############################################## ###
+
+TT_LaTeXC := proc( al ) option internal;
+  r := '\\texttt{':
+  for d in al do r := r . LaTeXC(d) od:
+  return( r.'}'):
+end:
+
+IT_LaTeXC := proc( al ) option internal;
+  r := '\\textit{':
+  for d in al do r := r . LaTeXC(d) od:
+  return( r.'}'):
+end:
+
+Bold_LaTeXC := proc( al ) option internal;
+  r := '\\textbf{':
+  for d in al do r := r . LaTeXC(d) od:
+  return( r.'}'):
+end:
+
+
+### ############################################## ###
+
+Color_LaTeXC := proc( col:Color(string,anything) ) option internal;
+  r := sprintf('{\\color[rgb]{%.4g,%.4g,%.4g}\n%a}', 
+               op(GetColorMap(lowercase(col[1]))), LaTeXC(col[2])):
+  return(r . '\n'):
+end:
+
+### ############################################## ###
+
+#	Protect special characters, gg: Tue Feb  8 15:38:57 CET 2011
+string_LaTexC_table := table():
+string_LaTexC_table['&'] := '\\&':
+string_LaTexC_table['%'] := '\\%':
+string_LaTexC_table['#'] := '\\#':
+string_LaTexC_table['{'] := '\\{':
+string_LaTexC_table['}'] := '\\}':
+string_LaTexC_table['_'] := '\\_':
+string_LaTexC_table['>'] := '$>$':
+string_LaTexC_table['<'] := '$<$':
+string_LaTexC_table['>='] := '$\\geq$':
+string_LaTexC_table['<='] := '$\\leq$':
+string_LaTexC_table['<<'] := '$\\ll$':
+string_LaTexC_table['>>'] := '$\\gg$':
+string_LaTexC_table['+-'] := '$\\pm$':
+string_LaTexC_table['[['] := '\\cite{':
+string_LaTexC_table[']]'] := '}':
+# the \ should not be converted to allow escaped latex to work (like $\alpha$)
+# the $ should not be converted to allow math to work without a macro e,g, $x$
+
+string_LaTeXC := proc( h:string ) option internal;
+if h='' then '\n' 
+else r := CreateString( 2*length(h)+10 );
+     j := 0;
+     for i to length(h) do
+	if i=1 or h[i-1] <> '\\' then
+	    if i < length(h) then
+	        v := string_LaTexC_table[h[i..i+1]];
+	        if v <> unassigned then
+	            for k to length(v) do j := j+1;  r[j] := v[k] od;
+	            i := i+1;
+	            next
+	        fi
+	    fi;
+	    v := string_LaTexC_table[h[i]];
+	    if v <> unassigned then
+	        for k to length(v) do j := j+1;  r[j] := v[k] od;
+	        next
+	    fi;
+	fi;
+	j := j+1;  r[j] := h[i];
+     od;
+     r[1..j]
+fi end:
+
+### ############################################## ###
+
+numeric_LaTeXC := proc( h ) option internal; string(h) end:
+integer_LaTeXC := proc( h ) option internal; string(h) end:
+float_LaTeXC := proc( h ) option internal; string(h) end:
+
+### ############################################## ###
+
+symbol_LaTeXC := proc( h ) option internal; h end:
+
+### ############################################## ###
+
+### ######################################################## ###
+###                                                          ###
+###  Purpose:  Determine information about when, where, and  ###
+###            by whom a file was create. This is done by    ### 
+###            collecting the output from some system        ###
+###            commands.                                     ### 
+###  Author:   Peter von Rohr                                ###
+###  started:  Mon Mar 10 13:29:30 MET 2003                  ###
+###                                                          ###
+### ######################################################## ###
+
+GetFileInfo := proc( CommentString:string )
+	description 'Determines some information about where when and by 
+	whom a file has been created.';
+	
+	finfo := CommentString . ' automatically generated by Darwin\n':
+	t2 := CommentString . '  prepared on ' . date() . '\n';
+	t3 := CommentString . '  running on ' . hostname() . '\n';
+	t4 := TimedCallSystem( 'whoami' ):
+	t4 := If( t4[1]=0, CommentString . '  by user ' . t4[2], '' ):
+	return(finfo . t2 . t3 . t4):
+
+end:

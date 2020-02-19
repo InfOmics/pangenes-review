@@ -1,0 +1,362 @@
+#
+#	ETHMachine class - description of hardware
+#			with a special setup for the computers
+#			available at the CBRG.ethz.ch
+#
+#	IMPORTANT: when a machine is renamed or removed, comment
+#		out the entry, but do not delete it (for historical
+#		purposes).
+#
+#	The command ComputeETHMachine produces a basic entry when
+#	run in the target machine which is quite accurate.
+#
+#					Gaston H. Gonnet (July 7, 2005)
+#
+
+module external ETHMachines, ETHMachine;
+
+ETHMachines := table():
+ETHMachine := proc(
+	Name:string,		# short name
+	FullName:string,	# internet name
+	Processors:posint,	# number of processors
+	CpuGhz:positive,	# rated clock of the cpu as in /proc/cpuinfo
+	DarwinGhz:positive,	# result of gigahertz()
+	PowerClass:integer,	# class of the processor - a higher number
+				# means that it is worth stopping a job running
+				# at a lower class to restart it in a higher
+				# class.  Likely to be at least a factor of 2
+				# in additional power to be in different classes
+	VendorId:string,	# manufacturer as in vendor_id in /proc/cpuinfo
+	ModelName:string,	# model as in model name in /proc/cpuinfo
+	Uname:string,		# operating system as in unix uname
+	MemoryGB:positive, 	# amount of main memory in 2^30 units
+	CpuBits:{32,64} )	# cpu bits 
+
+if nargs=11 then noeval( procname(args) )
+elif nargs=0 then ComputeETHMachine()
+else error('invalid arguments') fi
+end:
+
+# machines from the systems group (Sep/2011)
+ETHMachines['linneus01-01'] := ETHMachine('linneus01-01','linneus01-01.ethz.ch',4,2.2000,2.2200,1,'AuthenticAMD','Dual Core AMD Opteron(tm) Processor 275','Linux',3.7500,64):
+ETHMachines['linneus01-02'] := ETHMachine('linneus01-02','linneus01-02.ethz.ch',4,1,2.2100,1,'AuthenticAMD','Dual Core AMD Opteron(tm) Processor 275','Linux',3.7500,64):
+ETHMachines['linneus01-03'] := ETHMachine('linneus01-03','linneus01-03.ethz.ch',4,1,2.2100,1,'AuthenticAMD','Dual Core AMD Opteron(tm) Processor 275','Linux',3.7500,64):
+ETHMachines['linneus01-04'] := ETHMachine('linneus01-04','linneus01-04.ethz.ch',4,1,2.2200,1,'AuthenticAMD','Dual Core AMD Opteron(tm) Processor 275','Linux',3.7500,64):
+
+
+# Cluster characteristics for CBRG
+for i in [3,20] do ETHMachines[linneus.i] :=
+   ETHMachine( linneus.i, linneus.i.'.inf.ethz.ch', 2, 0.8, 0.8, 0,
+	'GenuineIntel', 'Pentium III (Coppermine)', 'Linux', 0.5, 32 )
+od:
+ETHMachines[linneus20,CpuGhz] := ETHMachines[linneus20,DarwinGhz] := 0.7; 
+
+#for i in [23,25,26,31,32,34,35,41] do
+#    ETHMachines[linneus.i] := ETHMachine( linneus.i, linneus.i.'.inf.ethz.ch',
+#	2, 1.8, 1.59, 1, 'AuthenticAMD', 'AMD Athlon(tm) MP 2200+', 'Linux', 2, 32 )
+#od:
+
+#ETHMachines[ru0] := ETHMachine( ru0, 'ru0.inf.ethz.ch', 2, 0.866, 0.87, 0,
+#    'GenuineIntel', 'Pentium III (Coppermine)', 'Linux', 0.5, 32 );
+#ETHMachines[ru6] := ETHMachine( ru6, 'ru6.ethz.ch', 2, 2, 1.76, 1,
+#    'AuthenticAMD', 'AMD Athlon(tm) MP 2400+', 'Linux', 4, 32 );
+#ETHMachines[linneus43] := ETHMachine( linneus43, 'linneus43.inf.ethz.ch', 4,
+#    2.2, 1.85, 1, 'AuthenticAMD', 'Dual-Core AMD Opteron(tm) Processor 2214',
+#    'Linux', 32, 64 );
+
+# retired when we had to vacate D53
+#ETHMachines[shannon] := ETHMachine( shannon, 'shannon.inf.ethz.ch', 4,
+#    2.2, 1.85, 1, 'AuthenticAMD', 'Dual-Core AMD Opteron(tm) Processor 2214',
+#    'Linux', 32, 64 );
+
+#for i in [23] do
+#    ETHMachines[linneus.i,CpuGhz] := 2;
+#    ETHMachines[linneus.i,DarwinGhz] := 1.72;
+#    ETHMachines[linneus.i,ModelName] := 'AMD Athlon(tm) MP 2400+';
+#od:
+
+#ETHMachines[lumberjack] := ETHMachine( lumberjack, 'lumberjack.inf.ethz.ch',
+#    2, 2.5, 1.34, 1, 'PowerPC G5', 'ppc970', 'Darwin', 8, 64 ):
+
+#for i from 45 to 47 do ETHMachines[linneus.i] :=
+#     ETHMachine( linneus.i, linneus.i.'.inf.ethz.ch', 1, 2.07, 1.81, 1,
+#	'AuthenticAMD', 'AMD Athlon(tm) XP 2800+', 'Linux', 2, 32 )
+#od:
+
+# linneus48/49 were the first clusters made of gaming machines by Benjamin
+#for i from 48 to 49 do ETHMachines[linneus.i] :=
+#     ETHMachine( linneus.i, linneus.i.'.inf.ethz.ch', 14, 3.2, 2.33, 1,
+#	'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.20GHz', 'Linux/mosix', 2, 32 )
+#od:
+#ETHMachines[linneus51] := ETHMachine( linneus51, 'linneus51.inf.ethz.ch',
+#    28, 2.8, 2.05, 1, 'GenuineIntel', 'Intel(R) Pentium(R) D CPU 2.80GHz',
+#    'Linux/mosix', 3, 32):
+ETHMachines[linneus52] := ETHMachine( linneus52, 'linneus52.ethz.ch',
+    4, 2.4, 3.20, 1, 'GenuineIntel', 'Intel(R) Core(TM)2 Quad CPU Q6600 @ 2.40GHz',
+    'Linux', 8, 64 ): #adriaal
+#ETHMachines[linneus53] := ETHMachine( linneus53, 'linneus53.inf.ethz.ch',
+#    2, 3.4, 1.57, 1, 'GenuineIntel', 'Intel(R) Pentium(R) D CPU 3.40GHz',
+#    'Linux', 3, 32 ):
+#ETHMachines['linneus54'] := ETHMachine( 'linneus54', 'linneus54.inf.ethz.ch',
+#    4, 1.8, 1.75, 1, 'AuthenticAMD', 'Dual Core AMD Opteron(tm) Processor 265',
+#    'Linux', 8 ): # the old linneus54, might become lin70
+ETHMachines[linneus54] := ETHMachine( linneus54, 'linneus54.inf.ethz.ch',
+    8, 2.0, 1.75, 1, 'AuthenticAMD', 'Quad-Core AMD Opteron(tm) Processor 2350',
+    'Linux', 32, 64 ):
+# linneus55 is broken. I've cannibalized the memory and have added the
+# larger modules to linneus70. Fri Dec 24 10:04:58 CET 2010
+#ETHMachines[linneus55] := ETHMachine( linneus55, 'linneus55.inf.ethz.ch',
+#    4, 1.8, 1.75, 1, 'AuthenticAMD', 'Dual Core AMD Opteron(tm) Processor 265',
+#    'Linux', 12, 64 ):
+#ETHMachines[linneus56] := ETHMachine( linneus56, 'linneus56.inf.ethz.ch',
+#    32, 3.4, 2.64, 1, 'GenuineIntel', 'Intel(R) Pentium(R) D CPU 3.40GHz',
+#    'Linux/mosix', 3, 32 ):
+#ETHMachines[linneus57] := ETHMachine( linneus57, 'linneus57.inf.ethz.ch',
+#    32, 3.4, 2.64, 1, 'GenuineIntel', 'Intel(R) Pentium(R) D CPU 3.40GHz',
+#    'Linux/mosix', 2, 32 ):
+
+# retired when we had to vacate D53
+#ETHMachines[linneus58] := ETHMachine( linneus58, 'linneus58.inf.ethz.ch',
+#    4, 1.8, 1.46, 1, 'AuthenticAMD', 'Dual Core AMD Opteron(tm) Processor 2210',
+#    'Linux', 24, 64 ):
+
+#ETHMachines[linneus59] := ETHMachine( linneus59, 'linneus59.inf.ethz.ch',
+#    2, 2.0, 1.62, 1, 'AuthenticAMD', 'AMD Athlon(tm) MP 2400+',
+#    'Linux', 4, 32 ):
+
+#ETHMachines[linneus61] := ETHMachine( linneus61, 'linneus61.inf.ethz.ch',
+#    2, 1, 2.00, 1, 'AuthenticAMD', 'AMD Athlon(tm) 64 X2 Dual Core Processor 5600+',
+#    'Linux', 8, 64 ): # sadam
+
+# Hardware died -> End of life, Fri May  6 20:58:50 CEST 2011
+#ETHMachines[linneus62] := ETHMachine( linneus62, 'linneus62.inf.ethz.ch',
+#    4, 2.4, 3.79, 1, 'GenuineIntel', 'Intel(R) Core(TM)2 Quad CPU    Q6600  @ 2.40GHz',
+#    'Linux', 8, 64 ): # schneadr
+
+#ETHMachines[linneus63] := ETHMachine( linneus63, 'linneus63.inf.ethz.ch',
+#    4, 1.6, 3.10, 1, 'GenuineIntel', 'Intel(R) Core(TM)2 Quad CPU Q6600 @ 2.40GHz',
+#    'Linux', 8, 64 ): 
+
+#ETHMachines[linneus65] := ETHMachine( linneus65, 'linneus65.inf.ethz.ch',
+#    2, 3.0, 1.30, 1, 'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.00GHz',
+#    'Linux', 2, 32 ):
+
+# random failures, removed
+#ETHMachines[linneus66] := ETHMachine( linneus66, 'linneus66.inf.ethz.ch',
+#    2, 3.0, 1.30, 1, 'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.00GHz',
+#    'Linux', 2, 32 ):
+
+# retired when we had to vacate D53
+#ETHMachines[linneus67] := ETHMachine( linneus67, 'linneus67.inf.ethz.ch',
+#    2, 3.0, 1.30, 1, 'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.00GHz',
+#    'Linux', 2, 32 ):
+
+# retired when we had to vacate D53
+#ETHMachines[linneus68] := ETHMachine( linneus68, 'linneus68.inf.ethz.ch',
+#    2, 3.0, 1.30, 1, 'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.00GHz',
+#    'Linux', 2, 32 ):
+
+# linneus69 was a student-room machine recycled for us.  It became flacky
+# and was removed permanently
+# Now linneus69 is a machine recycled from the Stelling group
+# random failures, removed
+#ETHMachines[linneus69] := ETHMachine( linneus69, 'linneus69.inf.ethz.ch',
+#    2, 3.0, 1.64, 1, 'GenuineIntel', 'Intel(R) Pentium(R) 4 CPU 3.00GHz',
+#    'Linux', 2, 32 ):
+
+# linneus70 was renamed linneus54 and soon oma.inf.ethz.ch
+#ETHMachines[linneus70] := ETHMachine( linneus70, 'linneus70.inf.ethz.ch',
+#    8, 2.0, 1.75, 1, 'AuthenticAMD', 'Quad-Core AMD Opteron(tm) Processor 2350',
+#    'Linux', 32, 64 ):
+# the new linneus70 is the old linneus54 (?)
+# retired when we had to vacate D53
+#ETHMachines[linneus70] := ETHMachine( linneus70, 'linneus70.inf.ethz.ch',
+#     4, 1.8, 1.84, 1, 'AuthenticAMD','Dual Core AMD Opteron(tm) Processor 265',
+#    'Linux',12,64);
+ETHMachines[linneus71] := ETHMachine( linneus71, 'linneus71.inf.ethz.ch',
+    8, 2.0, 1.75, 1, 'AuthenticAMD', 'Quad-Core AMD Opteron(tm) Processor 2350',
+    'Linux', 16, 64 ):
+# linneus72 became a backup fileserver
+#ETHMachines[linneus72] := ETHMachine( linneus72, 'linneus72.inf.ethz.ch',
+#    8, 2.0, 1.75, 1, 'AuthenticAMD', 'Quad-Core AMD Opteron(tm) Processor 2350',
+#    'Linux', 16, 64 ):
+ETHMachines[linneus73] := ETHMachine( linneus73, 'linneus73.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 24, 64 ):
+ETHMachines[linneus73] := ETHMachine( linneus73, 'linneus73.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 24, 64 ):
+ETHMachines[linneus74] := ETHMachine( linneus74, 'linneus74.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 24, 64 ):
+ETHMachines[linneus75] := ETHMachine( linneus75, 'linneus75.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 24, 64 ):
+ETHMachines[linneus76] := ETHMachine( linneus76, 'linneus76.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 24, 64 ):
+ETHMachines[linneus77] := ETHMachine( linneus77, 'linneus77.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 48, 64 ):
+ETHMachines[linneus78] := ETHMachine( linneus78, 'linneus78.inf.ethz.ch',
+    8, 2.27, 3.25, 1, 'GenuineIntel', 'Intel(R) Xeon(R) CPU E5520  @ 2.27GHz',
+    'Linux', 96, 64 ):
+# linneus79 was a special offer from Dell to the systems group
+ETHMachines[linneus79] := ETHMachine( linneus79, 'linneus79.inf.ethz.ch',
+    48, 2.2, 3.22, 1, 'AuthenticAMD', 'AMD Opteron(tm) Processor 6174',
+    'Linux', 128, 64 ):
+# linneus80/81 were built by SA with barebone components
+ETHMachines[linneus80] := ETHMachine( linneus80, 'linneus80.inf.ethz.ch',
+    8, 2.111, 3.08, 1, 'AuthenticAMD',
+    'Quad-Core AMD Opteron(tm) Processor 2372 HE', 'Linux', 16, 64 ):
+ETHMachines[linneus81] := ETHMachine( linneus81, 'linneus81.inf.ethz.ch',
+    8, 2.111, 3.08, 1, 'AuthenticAMD',
+    'Quad-Core AMD Opteron(tm) Processor 2372 HE', 'Linux', 16, 64 ):
+
+
+# broken memory, after replacing doesn't boot no more
+#ETHMachines[linneus44] := ETHMachine( linneus44, 'linneus44.inf.ethz.ch', 2, 1.8, 1.68,
+#    1, 'AuthenticAMD', 'AMD Opteron(tm) Processor 244', 'Linux', 16, 64 ):
+
+# new test machine assembled by Steven, 2010-11-09
+ETHMachines['linneus55-01'] := ETHMachine( 'linneus55-01', 'linneus55-01.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-02'] := ETHMachine( 'linneus55-02', 'linneus55-02.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-03'] := ETHMachine( 'linneus55-03', 'linneus55-03.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-04'] := ETHMachine( 'linneus55-04', 'linneus55-04.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-05'] := ETHMachine( 'linneus55-05', 'linneus55-05.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-06'] := ETHMachine( 'linneus55-06', 'linneus55-06.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-07'] := ETHMachine( 'linneus55-07', 'linneus55-07.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-08'] := ETHMachine( 'linneus55-08', 'linneus55-08.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-09'] := ETHMachine( 'linneus55-09', 'linneus55-09.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-10'] := ETHMachine( 'linneus55-10', 'linneus55-10.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-11'] := ETHMachine( 'linneus55-11', 'linneus55-11.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-12'] := ETHMachine( 'linneus55-12', 'linneus55-12.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-13'] := ETHMachine( 'linneus55-13', 'linneus55-13.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-14'] := ETHMachine( 'linneus55-14', 'linneus55-14.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-15'] := ETHMachine( 'linneus55-15', 'linneus55-15.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-16'] := ETHMachine( 'linneus55-16', 'linneus55-16.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-17'] := ETHMachine( 'linneus55-17', 'linneus55-17.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-18'] := ETHMachine( 'linneus55-18', 'linneus55-18.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-19'] := ETHMachine( 'linneus55-19', 'linneus55-19.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-20'] := ETHMachine( 'linneus55-20', 'linneus55-20.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-21'] := ETHMachine( 'linneus55-21', 'linneus55-21.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-22'] := ETHMachine( 'linneus55-22', 'linneus55-22.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-23'] := ETHMachine( 'linneus55-23', 'linneus55-23.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus55-24'] := ETHMachine( 'linneus55-24', 'linneus55-24.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['porfiau-01'] := ETHMachine( 'porfiau-01', 'porfiau-01.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['porfiau-02'] := ETHMachine( 'porfiau-02', 'porfiau-02.ethz.ch', 6, 2.8, 3.15, 1, 'AuthenticAMD','AMD Phenom(tm) II X6 1055T Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-01'] := ETHMachine( 'linneus50-01', 'linneus50-01.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-02'] := ETHMachine( 'linneus50-02', 'linneus50-02.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-03'] := ETHMachine( 'linneus50-03', 'linneus50-03.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-04'] := ETHMachine( 'linneus50-04', 'linneus50-04.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-05'] := ETHMachine( 'linneus50-05', 'linneus50-05.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-06'] := ETHMachine( 'linneus50-06', 'linneus50-06.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-07'] := ETHMachine( 'linneus50-07', 'linneus50-07.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-08'] := ETHMachine( 'linneus50-08', 'linneus50-08.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-09'] := ETHMachine( 'linneus50-09', 'linneus50-09.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-10'] := ETHMachine( 'linneus50-10', 'linneus50-10.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-11'] := ETHMachine( 'linneus50-11', 'linneus50-11.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-12'] := ETHMachine( 'linneus50-12', 'linneus50-12.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-13'] := ETHMachine( 'linneus50-13', 'linneus50-13.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-14'] := ETHMachine( 'linneus50-14', 'linneus50-14.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-15'] := ETHMachine( 'linneus50-15', 'linneus50-15.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-16'] := ETHMachine( 'linneus50-16', 'linneus50-16.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-17'] := ETHMachine( 'linneus50-17', 'linneus50-17.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-18'] := ETHMachine( 'linneus50-18', 'linneus50-18.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-19'] := ETHMachine( 'linneus50-19', 'linneus50-19.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-20'] := ETHMachine( 'linneus50-20', 'linneus50-20.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-21'] := ETHMachine( 'linneus50-21', 'linneus50-21.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-22'] := ETHMachine( 'linneus50-22', 'linneus50-22.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-23'] := ETHMachine( 'linneus50-23', 'linneus50-23.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['linneus50-24'] := ETHMachine( 'linneus50-24', 'linneus50-24.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['porfiau-03'] := ETHMachine( 'porfiau-03', 'porfiau-03.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+ETHMachines['porfiau-04'] := ETHMachine( 'porfiau-04', 'porfiau-04.ethz.ch', 8, 3.1, 3.73, 1, 'AuthenticAMD','AMD FX(tm)-8120 Eight-Core Processor', 'Linux', 16, 64 ):
+
+ETHMachines['cbrg-vcls-01'] := ETHMachine('cbrg-vcls-01','cbrg-vcls-01.ethz.ch',16,2.1000,2.7800,1,'AuthenticAMD','QEMU Virtual CPU version 1.2.0','Linux',32,64):
+ETHMachines['cbrg-vcls-02'] := ETHMachine('cbrg-vcls-02','cbrg-vcls-02.ethz.ch',16,2.1000,2.7800,1,'AuthenticAMD','QEMU Virtual CPU version 1.2.0','Linux',32,64):
+
+ETHMachines['linneus99-01'] := ETHMachine('linneus99-01','linneus99-01.ethz.ch',64,1.4000,3.99,1,'AuthenticAMD','AMD Opteron(TM) Processor 6272','Linux',252,64):
+ETHMachines['linneus99-02'] := ETHMachine('linneus99-02','linneus99-02.ethz.ch',64,1.4000,3.99,1,'AuthenticAMD','AMD Opteron(TM) Processor 6272','Linux',252,64):
+ETHMachines['linneus99-03'] := ETHMachine('linneus99-03','linneus99-03.ethz.ch',64,1.4000,3.99,1,'AuthenticAMD','AMD Opteron(TM) Processor 6272','Linux',252,64):
+ETHMachines['linneus99-04'] := ETHMachine('linneus99-04','linneus99-04.ethz.ch',64,1.4000,3.99,1,'AuthenticAMD','AMD Opteron(TM) Processor 6272','Linux',252,64):
+#ETHMachines['linneus99-05'] := ETHMachine('linneus99-05','linneus99-05.ethz.ch',64,1.4000,3.99,1,'AuthenticAMD','AMD Opteron(TM) Processor 6272','Linux',252,64):
+
+
+CompleteClass(ETHMachine);
+
+end:  # end module
+
+
+
+######################################################
+# produce an entry for the machine we are running on #
+######################################################
+ComputeETHMachine := proc()
+Set(gc=1e7):
+DarwinGhz := sum( gigahertz(), i=1..10 ) / 10;
+DarwinGhz := round(100*DarwinGhz) * 0.01;
+
+cpu := TimedCallSystem( 'cat /proc/cpuinfo' );
+if cpu[1] <> 0 then error('cat /proc/cpuinfo failed') fi;
+cpu := SearchDelim( '\n', cpu[2] );
+
+Uname := TimedCallSystem( 'uname' );
+if Uname[1] <> 0 then error('uname failed') fi;
+Uname := Uname[2,1..-2];
+
+Processors := 0;
+for w in cpu do if length(w) > 9 and w[1..9] = 'processor' then
+	Processors := Processors+1 fi od;
+
+mem := TimedCallSystem( 'cat /proc/meminfo' );
+if mem[1] <> 0 then error('cat /proc/meminfo failed') fi;
+mem := SearchDelim( '\n', mem[2] );
+
+for w in cpu while length(w) < 9 or w[1..9] <> 'vendor_id' do od;
+if w[1..9] <> 'vendor_id' then VendorId := 'CannotFindVendorInfo'
+else i := SearchString( ':', w );
+     VendorId := w[i+3..-1];
+fi;
+
+for w in cpu while length(w) < 10 or w[1..10] <> 'model name' do od;
+if w[1..10] <> 'model name' then VendorId := 'CannotFindModelName'
+else i := SearchString( ':', w );
+     ModelName := w[i+3..-1];
+fi;
+
+for w in cpu while length(w) < 5 or w[1..5] <> 'flags' do od;
+if w[1..5] <> 'flags' then CpuBits := 32
+else i := SearchString( ' lm ', w );
+     CpuBits := If( SearchString(' lm ',w) > 0, 64, 32 )
+fi;
+
+for w in cpu while length(w) < 7 or w[1..7] <> 'cpu MHz' do od;
+if w[1..7] <> 'cpu MHz' then error('cannot find cpu MHz')
+else i := SearchString( ':', w );
+     CpuMHz := sscanf( w[i+3..-1], '%f' );
+     CpuGhz := round(CpuMHz[1]/100) / 10;
+fi;
+
+for w in mem while length(w) < 9 or w[1..9] <> 'MemTotal:' do od;
+if w[1..9] <> 'MemTotal:' then error('cannot find MemTotal')
+else i := SearchString( ':', w );
+     MemoryKB := sscanf( w[i+3..-3], '%f' );
+     MemoryGB := round(MemoryKB[1]/2^18) / 4;
+fi;
+
+etm := ETHMachine(
+	hostname(),
+	'' . hostname() . '.inf.ethz.ch',
+	Processors,	# number of processors
+	CpuGhz,		# rated clock of the cpu as in /proc/cpuinfo
+	DarwinGhz,	# result of gigahertz()
+	1, 
+	VendorId,	# manufacturer as in vendor_id in /proc/cpuinfo
+	ModelName,	# model as in model name in /proc/cpuinfo
+	Uname,		# operating system as in unix uname
+	MemoryGB, 	# amount of main memory in 2^30 units
+	CpuBits );	# cpu bits 
+printf( 'ETHMachines[%A] := %A:\n', hostname(), etm );
+etm
+end:
